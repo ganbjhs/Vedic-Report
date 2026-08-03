@@ -35,10 +35,13 @@ before every take. See that module for why a stray dialog and a mis-framed
 reply are the same bug.
 
 Returns:
-    {"url", "status", "handle", "screenshot", "text", "overlay", "frame_ok"}
+    {"url", "status", "handle", "screenshot", "text", "overlay", "frame_ok",
+     "parent_lost"}
     status : "ok" | "login_wall" | "not_found" | "age_restricted" | "error: …"
     overlay: True when a dialog was STILL over the post when the shot was taken
     frame_ok: False when the frame did not cover what the crop promised
+    parent_lost: True when the post HAD an ancestor before the scroll but was
+        framed alone anyway — an observed parent loss, not an inference
 """
 import random
 import re
@@ -196,20 +199,32 @@ _ARTICLE_INDEX = """el => Array.from(
     document.querySelectorAll('article[data-testid="tweet"]')).indexOf(el)"""
 
 
-def _locate_focused(page, url: str):
+def _locate_focused(page, url: str, seen=None):
     """(locator, index) of the post the URL names, or (None, -1).
 
     Only that post's own article links to its status id (its timestamp, photo
     and analytics links all carry it), so this identifies it outright — no
     inference, and the locator re-resolves on every use, which the index alone
     does not survive. It is scrolled into view first because X unmounts articles
-    that are off-screen, and an unmounted post cannot be found at all."""
+    that are off-screen, and an unmounted post cannot be found at all.
+
+    `seen` — optional dict, filled with `"idx_before"`: the article index BEFORE
+    that scroll. That is the only moment a virtualised ancestor is still
+    guaranteed to be mounted, and it is what lets `_ensure_parent` tell a
+    genuine root post from a reply whose parent the scroll unmounted. Costs one
+    extra evaluate; omit it and this behaves exactly as it always did.
+    """
     sid = _status_id(url)
     if not sid:
         return None, -1
     loc = page.locator(f'{TWEET_SELECTOR}:has(a[href*="/status/{sid}"])').first
     try:
         loc.wait_for(state="attached", timeout=_FOCUSED_TIMEOUT)
+        if seen is not None:
+            try:
+                seen["idx_before"] = loc.evaluate(_ARTICLE_INDEX)
+            except Exception:
+                seen["idx_before"] = -1
         loc.scroll_into_view_if_needed(timeout=3000)
         idx = loc.evaluate(_ARTICLE_INDEX)
     except Exception:
@@ -350,28 +365,70 @@ def _is_reply(locator) -> bool:
         return False
 
 
-def _ensure_parent(page, url: str, tweet, idx: int):
+_PARENT_ATTEMPTS = 2      # remount rescans when the focused post lands at index 0
+_PARENT_TIMEOUT = 2500    # ms to give X to re-render a virtualised ancestor
+
+# JS: is the focused post preceded by another article right now? Polled after
+# scrolling back to the top, this is the signal that the ancestor has remounted
+# — X fires no event for a virtualised re-render, so it has to be observed.
+_ANCESTOR_ABOVE = """(sid) => {
+  const arts = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
+  const i = arts.findIndex(a => a.querySelector('a[href*="/status/' + sid + '"]'));
+  return i > 0;
+}"""
+
+
+def _ensure_parent(page, url: str, tweet, idx: int, seen=None):
     """Re-resolve a reply that ended up with no ancestor above it.
 
-    X virtualises the conversation column, so scrolling the reply into view can
-    unmount the parent — which lands the reply at index 0. `first` then equals
-    `idx`, the frame silently shrinks to the reply alone, and (when the pick was
-    one article off) to the parent alone. Both are the bug this guards.
+    X virtualises the conversation column, and `_locate_focused` scrolls the
+    focused post into view — which is precisely what unmounts the parent above
+    it. The reply then lands at index 0, `first` equals `idx`, the frame
+    silently shrinks to the reply alone, and (when the pick was one article off)
+    to the parent alone. Both are the bug this guards.
 
-    Scrolling back to the top of the column remounts the ancestors; the focused
-    post is then located again by status id. Returns the original pair when
-    nothing better can be found, so a genuinely parentless post still captures.
+    WHY THE OLD GATE FAILED. This used to bail on `not _is_reply(tweet)`, i.e.
+    on X having rendered a "Replying to" line. X OMITS that line whenever the
+    parent is drawn directly above in conversation view — which is exactly the
+    case this guard exists for — so the guard declined to act on its own target.
+    Over two instrumented 60-link runs, 42 of 42 parent losses took that
+    bail-out branch and not one reached the remount below. See RULEBOOK
+    approved edit 5.
+
+    The trigger is now `seen["idx_before"]` — the index observed BEFORE the
+    scroll, while the ancestor was still mounted. Only a post that HAD an
+    ancestor can have lost one, so a genuine root post takes the same early
+    return it always did: same branch, same timing, same picture. `_is_reply`
+    is kept as a second, weaker trigger for when `idx_before` is unavailable.
+
+    Returns the original pair when nothing better can be found, so a genuinely
+    parentless post still captures.
     """
-    if idx > 0 or not _is_reply(tweet):
+    if idx > 0:
         return tweet, idx
-    try:
-        page.evaluate("() => window.scrollTo(0, 0)")
-        page.wait_for_timeout(600)
-    except Exception:
+    if (seen or {}).get("idx_before", -1) <= 0 and not _is_reply(tweet):
         return tweet, idx
-    again, again_idx = _locate_focused(page, url)
-    if again is not None and again_idx > 0:
-        return again, again_idx
+    sid = _status_id(url)
+    if not sid:
+        return tweet, idx
+    for _ in range(_PARENT_ATTEMPTS):
+        try:
+            page.evaluate("() => window.scrollTo(0, 0)")
+            page.wait_for_function(_ANCESTOR_ABOVE, arg=sid,
+                                   timeout=_PARENT_TIMEOUT)
+        except Exception:
+            continue                # ancestor has not come back yet — try again
+        # Re-read the index WITHOUT scrolling. Calling _locate_focused here
+        # would scroll the reply into view again and unmount the very parent we
+        # just waited for; `_align_top` does the scrolling the frame needs.
+        again = page.locator(
+            f'{TWEET_SELECTOR}:has(a[href*="/status/{sid}"])').first
+        try:
+            again_idx = again.evaluate(_ARTICLE_INDEX)
+        except Exception:
+            continue
+        if isinstance(again_idx, int) and again_idx > 0:
+            return again, again_idx
     return tweet, idx
 
 
@@ -406,16 +463,21 @@ def _expand_text(page, article) -> None:
         return
 
 
-def _frame_covers(clip, tweet, top_el) -> bool:
+def _frame_covers(clip, tweet, top_el, expect_parent: bool = False) -> bool:
     """Does `clip` actually contain what the crop promised?
 
-    Two ways the promise breaks, both of which used to ship silently:
+    Three ways the promise breaks, all of which used to ship silently:
+      * `expect_parent` and there is no `top_el` — the post demonstrably had an
+        ancestor above it, and the frame holds only one article. That is the
+        reply printed without the context the Twitter report exists to show
       * the frame starts BELOW the parent's top edge — the parent's name row is
         cut off, or the parent is missing entirely
       * the frame ends before the reply's own text — the picture is the parent
         with the reply sheared off the bottom (the reported failure)
     """
     if not clip:
+        return False
+    if expect_parent and top_el is None:
         return False
     bottom = clip["y"] + clip["height"]
 
@@ -642,7 +704,8 @@ def capture(page, url: str, shot_path: Path, keep_engagement: bool = False) -> d
     `keep_engagement` keeps every captured post's like/views line in the frame
     (see the module docstring); the default crops them all out."""
     result = {"url": url, "status": "ok", "handle": "", "screenshot": None,
-              "text": "", "overlay": False, "frame_ok": True}
+              "text": "", "overlay": False, "frame_ok": True,
+              "parent_lost": False}
 
     status = _load_tweet(page, url)
     if status != "ok":
@@ -659,13 +722,22 @@ def capture(page, url: str, shot_path: Path, keep_engagement: bool = False) -> d
     age_gated = overlays.dismiss(page)["age_gated"]
 
     articles = page.locator(TWEET_SELECTOR)
-    tweet, idx = _locate_focused(page, url)     # article 0 is the PARENT on a reply
+    seen = {}                                   # what _locate_focused observed
+    tweet, idx = _locate_focused(page, url, seen)  # article 0 is the PARENT on a reply
     if tweet is None:                           # no usable id — fall back to scoring
         idx, _count = _pick_article(page, url)
         tweet = articles.nth(idx)
-    tweet, idx = _ensure_parent(page, url, tweet, idx)   # a reply must have its parent
+    tweet, idx = _ensure_parent(page, url, tweet, idx, seen)  # a reply needs its parent
     first = max(0, idx - _THREAD_ANCESTORS)     # == idx unless this post is a reply
     top_el = articles.nth(first) if first < idx else None
+
+    # A post that demonstrably HAD an ancestor before the scroll, yet is about to
+    # be framed alone, is a parent loss. That is an OBSERVATION, not an
+    # inference — the same standard rule 7 sets for demoting a link — so it is
+    # allowed both to fail the frame check and, if it survives every retake, to
+    # keep the link out of the document rather than ship a reply with no context.
+    parent_expected = seen.get("idx_before", -1) > 0
+    result["parent_lost"] = bool(parent_expected and top_el is None)
 
     # A sensitive-content gate on the parent would blank half the frame, so clear
     # the gate on every post we are about to shoot, not just the linked one — and
@@ -696,18 +768,20 @@ def capture(page, url: str, shot_path: Path, keep_engagement: bool = False) -> d
             _hide_sticky_chrome(page)      # or the "← Post" bar covers the parent
             _align_top(page, top_el)
         clip = _crop_box(page, tweet, top_el, keep_engagement)
-        covers = _frame_covers(clip, tweet, top_el)
+        covers = _frame_covers(clip, tweet, top_el, parent_expected)
         try:
             if clip:
                 _screenshot_clip(page, clip, shot_path)
             else:                               # last resort: whole article
                 tweet.screenshot(path=str(shot_path))
-                covers = top_el is None         # an element shot cannot hold both
+                # an element shot cannot hold both — and if a parent was owed,
+                # a one-article picture does not honour the promise either.
+                covers = top_el is None and not parent_expected
         except Exception:
             # A clip that lands outside the frame must not cost us the post —
             # fall back to the post on its own (engagement bar and all).
             tweet.screenshot(path=str(shot_path))
-            covers = top_el is None
+            covers = top_el is None and not parent_expected
         # Whatever was still painted over the post IS in the pixels (rule 16).
         return covers, overlays.present(page)
 

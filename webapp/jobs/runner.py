@@ -168,6 +168,9 @@ _RE_WORKERS = re.compile(r"^\[runner\]\s+capturing with (\d+) parallel worker")
 _RE_RETRY = re.compile(r"^\[runner\]\s+retrying (\d+) link")
 _RE_QUALITY = re.compile(r"^\[quality\]\s+recapturing (\d+)")
 _RE_BLOCKED = re.compile(r"^\[quality\]\s+dropping (\d+) shot")
+# "dropped", not "dropping" — deliberately distinct from _RE_BLOCKED above, or
+# a parent loss would be reported to the user as a stuck X dialog.
+_RE_PARENT_LOST = re.compile(r"^\[quality\]\s+dropped (\d+) shot\(s\) whose parent")
 _RE_CROPPED = re.compile(r"^\[quality\]\s+(\d+) shot\(s\) may be missing")
 _RE_VERIFY = re.compile(r"^\[verify\]\s+(\d+)/(\d+) links produced")
 _RE_RESULT = re.compile(r"^\s+\[x\]\s+(\S+)\s+(.*)$")
@@ -249,6 +252,12 @@ class _Progress:
                       "every retake — left out rather than shown as a popup.",
                       "warn")
             return
+        m = _RE_PARENT_LOST.match(text)
+        if m:
+            self.note(f"{m.group(1)} reply/replies could not be captured with "
+                      "their parent post and were left out — a reply without "
+                      "the post it answers is misleading evidence.", "warn")
+            return
         m = _RE_CROPPED.match(text)
         if m:
             self.note(f"{m.group(1)} screenshot(s) may not show the whole post "
@@ -319,6 +328,9 @@ _STATUS_REASON = {
                       "cannot be shown in a desktop capture",
     "overlay_blocked": "an X dialog stayed on top of the post through every "
                        "retake, so the screenshot showed the popup instead",
+    "parent_lost": "this post is a reply and its parent post could not be "
+                   "captured, so the screenshot would have shown the reply "
+                   "without the post it answers",
 }
 
 

@@ -113,14 +113,17 @@ def _shot_ok(result) -> bool:
 def _why_poor(result):
     """Why this shot is not trustworthy, or None when it is.
 
-    Three independent checks, strongest evidence first. The first two are facts
+    Four independent checks, strongest evidence first. The first three are facts
     the capture observed in the DOM — a dialog that was still painted over the
-    post, and a frame that did not reach both the parent and the reply it
-    promised. The third is the pixel analyzer, which is the backstop for
-    anything the DOM checks did not anticipate.
+    post, a reply framed without the parent it demonstrably had, and a frame
+    that did not reach both the parent and the reply it promised. The fourth is
+    the pixel analyzer, which is the backstop for anything the DOM checks did
+    not anticipate.
     """
     if result.get("overlay"):
         return "an X dialog was still covering the post"
+    if result.get("parent_lost"):
+        return "the reply was framed without its parent post"
     if result.get("frame_ok") is False:
         return "the frame did not cover the whole post + reply"
     good, why = shot_quality.screenshot_quality(result["screenshot"])
@@ -222,6 +225,19 @@ def main() -> None:
         r["status"] = "overlay_blocked"
     if blocked:
         print(f"[quality] dropping {len(blocked)} shot(s) still covered by an X dialog")
+
+    # A parent loss meets the same evidential standard: the capture SAW an
+    # ancestor above this post before it scrolled, and the frame it produced
+    # holds only one article. A reply printed without the post it answers is
+    # wrong evidence, and wrong evidence is worse than missing evidence with an
+    # explanation — so this demotes too, after every retake has been spent.
+    orphaned = [r for r in by_idx.values()
+                if r.get("status") == "ok" and r.get("parent_lost")]
+    for r in orphaned:
+        r["status"] = "parent_lost"
+    if orphaned:
+        print(f"[quality] dropped {len(orphaned)} shot(s) whose parent post "
+              "could not be captured")
     cropped = [r for r in by_idx.values()
                if r.get("status") == "ok" and r.get("frame_ok") is False]
     if cropped:

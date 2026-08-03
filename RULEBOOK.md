@@ -82,6 +82,31 @@ that looked impossible and wasn't.
 
 ---
 
+## Dead ends — do not retry (append-only)
+
+**Read this before proposing anything.** Every line below was actually tried and
+actually measured in this project, and every one of them is the kind of idea
+that looks obviously correct on a first reading of the code. A future session —
+human or AI — that suggests one of these is not being clever; it is repeating
+work that has already been paid for. If you think one deserves revisiting, bring
+the measurement that overturns the one recorded here.
+
+Append to this list whenever something is tested and rejected. Never delete a
+line: an idea that was wrong once will look attractive again.
+
+| Dead end | Why not | Do instead |
+|---|---|---|
+| **DPR 2 as the global default** (`device_scale_factor` in `src/run_report.py`'s `CTX_KWARGS`) | 4-run benchmark: resolution genuinely doubles (598 -> 1196 px, 122 -> 244 DPI) but parent loss roughly **doubles** with it, 3.5/20 -> 6.5/20 with no overlap between conditions. It also costs +24% wall clock. Memory is *not* the problem the brief predicted (+9.6%/worker) | Ship 2x as an **opt-in high-res profile** owning its own `CTX_KWARGS`. Costs are then paid only by jobs that asked. See rule 20 and `docs/profile-engine.md` §10 |
+| **Monkey-patching `x_capture._THREAD_ANCESTORS`** from a profile runner | It *works* — the constant is read at call time — but it is an invisible hand reaching into frozen module state, which is exactly the surprise rule 1 exists to prevent. Nothing currently needs it | Ask for a proper approved edit adding `capture(..., thread_ancestors=None)`, the `--keep-engagement` pattern. Until then the knob does not exist, and `profiles/registry.py` rejects it by name |
+| **Tuning the retry budget to fix parent loss** (more attempts, longer backoff in `_ensure_parent`) | Instrumented over 120 reply captures: **42 of 42 losses never reached the remount at all**. The bail-out was the bug; the retry budget was never the bottleneck | Check whether a guard's *precondition* is ever true before tuning what happens after it (rule 20) |
+| **Byte- or pixel-identical PDF diffing** to prove a builder change is safe | reportlab embeds timestamps, so byte-identity is impossible; rasterising to compare pixels needs a dependency this project does not have | **Geometry parity**: assert page count and every `(page, x, y, w, h)` placement against the frozen builders' own functions and constants. `profiles/tests/test_parity.py` |
+| **Trusting `frame_ok`, `status="ok"` or `[verify] N/N clean`** as evidence a run was good | All 80 shots across four benchmark runs reported `frame_ok=True`, `overlay=False`, `status="ok"` and `[verify] 20/20` — while shots were visibly missing their parent post, and one showed a loading spinner instead of a video | Rule 3, without exception: **open the images and the documents and look**. A green status only proves the code did not raise |
+| **"Fixing" the absolute paths in `reports/results.json`** | They look like a portability bug and are not. Rule 2 copies the code into the job dir, so `ROOT` resolves inside the job and the paths are self-consistent | Leave them. A consumer **inside** the job subprocess may trust them; a consumer in the **webapp** must glob or rebase, as `publish()` and `_zip_screenshots()` already do |
+| **Running more than ~300 captures a day on one X account** | Measured: after ~320 the same 60-link set went from 0 to 18 retries, 1 to 8 recaptures, produced 598x80 frames, and parent loss hit 38/60 (63%). Nothing raised an error | Rule 21. Rest the account, and treat any run with an unusual retry count as inadmissible rather than as a result |
+| **Averaging a healthy run with a degraded one** | The two zero-cost diagnostic passes were 6.7% and 63.3%. Their mean, 35%, describes neither and would have been reported as the bug's rate | Report the conditions separately, or discard the degraded run and re-measure |
+
+---
+
 ## 2. Isolation copies code; cwd does nothing
 
 ```python

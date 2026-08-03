@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "slug": "contact-sheet",
+  "label": "Contact Sheet",
+  "extends": "twitter",
+  "description": "Six posts per page as a visual index. A 200-link Twitter report is 200 pages; this makes a batch reviewable in a few, which is the cheapest way to obey RULEBOOK rule 3 (open it and look). Pads rather than crops: a reply capture is parent+reply, and cropping it to a tile throws the reply away \u2014 the presentation-layer version of the bug approved edit 5 fixed.",
+  "image": {
+    "max_in": [
+      3.35,
+      2.95
+    ],
+    "aspect": "4:5",
+    "fit": "pad",
+    "background": "#FFFFFF",
+    "radius_pt": 4,
+    "border": {
+      "pt": 0.5,
+      "color": "#E2E8F0"
+    }
+  },
+  "page": {
+    "size": "letter",
+    "orientation": "portrait",
+    "grid": [
+      2,
+      3
+    ],
+    "margins_in": [
+      0.5,
+      0.5,
+      0.5,
+      0.5
+    ]
+  },
+  "content": {
+    "cover": false,
+    "header": "{title}",
+    "footer": "{page} / {pages}",
+    "per_post_fields": [
+      "account_name"
+    ],
+    "metrics": null,
+    "links_table": true
+  },
+  "outputs": [
+    "pdf",
+    "html"
+  ]
+}

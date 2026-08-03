@@ -64,6 +64,18 @@ exactly what the user typed, and `run.py` composes `"<title> <date>"` internally
 where no caller can reach it. Additive: without the switch every existing
 invocation behaves as before.
 
+**Approved edit 5 — a reply must not ship without its parent**
+(`src/capture/x_capture.py`, `src/run_report.py`, plus the reason text in
+`webapp/jobs/runner.py`). See rule 20 for the full write-up. In short: the guard
+that was supposed to prevent this was gated on X rendering a "Replying to" line,
+and X omits that line in precisely the case the guard exists for, so it declined
+to act on its own target. Measured at 4/60 reply captures lost on a healthy
+session and 38/60 on a degraded one — all silent, all `status="ok"`. Cannot be
+fixed from outside `src/`: the ancestor is chosen inside the capture, and only
+the capture holds the page. Additive — every new parameter defaults to the old
+behaviour, and a genuine root post takes the identical early return (verified:
+zero extra scrolls, zero extra waits on that path).
+
 Before you edit anything under `src/`, ask whether you can get the same result
 from outside it. You almost always can — see rules 2 and 8 for two cases where
 that looked impossible and wasn't.
@@ -472,12 +484,116 @@ if it were one.
 
 ---
 
+## 20. A guard gated on rendered text will decline to act on its own target
+
+The Twitter report's defining promise is that a reply is shot together with the
+post it answers (approved edit 1). It was breaking **silently**, on the live
+tool, before any of the DPR work — and every gate said the run was perfect.
+
+**The symptom.** A reply captured alone: no parent, no context. `status="ok"`,
+`frame_ok=True`, `overlay=False`, `[verify] 60/60 links produced a clean
+screenshot`. Nothing in the log, nothing in the UI, nothing in the document to
+say a post had lost half its meaning. Rule 3 again, and it cost a day: the only
+way this was ever going to be found was by *opening the pictures*.
+
+**The mechanism**, in order:
+
+1. `_locate_focused` calls `scroll_into_view_if_needed` — it must, because X
+   unmounts off-screen articles (rule 6.1).
+2. That scroll pushes the **parent** off-screen, and X virtualises it away.
+3. The reply is now the only article, so its index is 0.
+4. `first = max(0, idx - 1)` is also 0, so `top_el` is `None`.
+5. `_frame_covers`' parent check is guarded by `if top_el is not None`, so it
+   never runs. A one-article frame is validated against a one-article promise
+   and passes.
+
+**Why the existing guard did not save us.** `_ensure_parent` was written for
+exactly this failure. It bailed on:
+
+```python
+if idx > 0 or not _is_reply(tweet):      # <- the hole
+```
+
+and `_is_reply` tests for the literal string `"Replying to"`. **X omits that
+line whenever the parent is rendered directly above in conversation view** —
+which is the only situation where step 2 above can happen. So the guard's
+precondition was false in precisely the case it existed to catch.
+
+**The evidence** (two instrumented 60-link runs, DPR 1, an all-reply set):
+
+| | parent lost |
+|---|---|
+| healthy session | 4/60 (6.7%) |
+| degraded session (X throttling) | 38/60 (63.3%) |
+| with ~2s extra settle per capture | **0/60, twice** |
+
+**42 of 42 losses took the `bailed_not_reply` branch. Not one reached the
+remount** — so the single 600 ms attempt was never the bottleneck; control
+simply never got there. Do not "fix" a guard's retry budget before checking
+whether its precondition is ever true.
+
+**The fix** trades rendered text for a structural fact: `_locate_focused` now
+records `idx_before`, the article index from *before* it scrolls, which is the
+only moment a virtualised ancestor is still mounted. Only a post that HAD an
+ancestor can have lost one. A genuine root post has `idx_before == 0`, takes the
+same early return it always did, and pays nothing — no extra scroll, no extra
+wait.
+
+**Demotion is allowed here, and that is a deliberate exception to rule 7.**
+The pixel checks never demote because they infer. This one *observes*: the
+capture saw an ancestor, and the frame it produced has one article. A reply
+printed without the post it answers is **wrong** evidence, and wrong evidence is
+worse than missing evidence with an explanation — so after every retake is
+spent, the link is demoted to `status="parent_lost"` and listed as not-included
+with a plain reason. `report_builder._usable()` drops it with no builder change.
+
+**The fallback lever, if the index-based trigger ever proves flaky:** simply
+giving the page more time made the bug vanish entirely (0/120 above). A settle
+delay before the frame is decided is the blunt instrument that works; it costs
+wall-clock on every capture, which is why it is the fallback and not the fix.
+
+**Not affected:** `influencer/inf_capture.py` has no ancestor logic at all — it
+frames a single post by design — so there is no parallel bug there.
+
+---
+
+## 21. Capture budget: ~320 posts a day and the session starts to rot
+
+Measured on 2026-08-03, one shared account, ~320 captures inside a few hours.
+The tail of that day looked like a different tool:
+
+| | early runs | after ~320 captures |
+|---|---|---|
+| links needing a retry pass | 0 | 18 / 60 |
+| low-quality recaptures | 1 | 8 / 60 |
+| smallest frame produced | 598x152 | **598x80** |
+| parent losses (rule 20) | 4 / 60 | 38 / 60 |
+
+Nothing errored. X simply served slower, thinner pages, and every timing-sensitive
+part of the capture degraded together. Rule 13 says bulk captures get accounts
+rate-limited; this is what that looks like *before* the suspension.
+
+**Consequences:**
+
+* **Benchmark numbers from a throttled session prove nothing.** If a run shows
+  an unusual retry count, throw the numbers away and re-run after a rest — do
+  not average a healthy run with a degraded one.
+* **~320/day is the working ceiling** until someone measures a better one. When
+  scheduling or batch generation is built, that number is the budget, not
+  `MAX_LINKS`.
+* A second capture account buys headroom more cheaply than any code change.
+
+---
+
 ## Checklist before you ship a change
 
 - [ ] `git status` on `run.py`, `src/`, `install.py`, `requirements.txt` is clean
 - [ ] Ran **both** report types end to end
 - [ ] **Opened the PDF and the DOCX and looked at them**
 - [ ] Tested with a reply URL, a video post and an age-restricted post
+- [ ] Confirmed every reply screenshot still shows its **parent post** (rule 20)
+- [ ] Confirmed the run itself was healthy — an unusual retry/recapture count
+      means a throttled session, and its numbers prove nothing (rule 21)
 - [ ] Confirmed no X dialog, action bar or "Hide" toggle is in any screenshot
 - [ ] Checked peak memory if anything touches document building
 - [ ] Confirmed `.env` / `sessions/` are still untracked

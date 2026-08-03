@@ -81,17 +81,17 @@ in a preset.
     "device_scale_factor": 2,         // the unlock; 1 = today's behaviour
     "viewport": {"width": 1280, "height": 1600},
     "keep_engagement": true,
-    "thread_ancestors": 1,            // see §4.2 — the one uncomfortable knob
     "workers": null                   // null = server default for this engine
   },
 
   "image": {
+    "max_in": [3.05, 6.9],            // the placement box, inches — see §5.5
     "aspect": "4:5",                  // "W:H" | null = natural
     "fit": "pad",                     // "pad" | "fit" | "crop-top"
     "background": "#FFFFFF",
-    "radius_px": 12,                  // at MASTER scale, see §5.3
-    "border": {"px": 1, "color": "#E1E8ED"},
-    "shadow": {"blur": 18, "opacity": 0.18, "dy": 6},
+    "radius_pt": 9,                   // POINTS at placement size, see §5.3
+    "border": {"pt": 0.75, "color": "#E1E8ED"},
+    "shadow": {"blur_pt": 13, "opacity": 0.18, "dy_pt": 4.5},
     "watermark": null
   },
 
@@ -111,7 +111,7 @@ in a preset.
     "links_table": true
   },
 
-  "outputs": ["pdf", "docx", "html", "xlsx"]
+  "outputs": ["pdf", "docx", "html"]  // xlsx is global, not a profile output
 }
 ```
 
@@ -157,40 +157,20 @@ and `overlays` are imported read-only, as rule 18 point 3 permits.
 `content.metrics` is non-null and whose `capture.engine` is `"x"` is a
 validation error — catch it in `registry.py`, not at render time.
 
-### 4.2 `thread_ancestors` — the one uncomfortable knob
+### 4.2 `thread_ancestors` — deliberately absent from v1
 
-`x_capture._THREAD_ANCESTORS` is a module constant read at call time
-(`first = max(0, idx - _THREAD_ANCESTORS)`), so the brief is right that a
-profile runner *can* set it before capture. Two ways to do it, and I want a
-decision rather than a default:
+`x_capture._THREAD_ANCESTORS` is a module constant read at call time, so a
+profile runner *could* set it before capture. **It will not.** Reaching into a
+frozen module's private state is invisible from `src/` — the exact shape of
+surprise rule 1 exists to prevent — and none of the launch profiles need thread
+depth. Paying that price for an unrequested feature is a bad trade.
 
-**(a) Scoped monkey-patch, confined to `profiles/`.**
+If a future profile genuinely needs it, the route is **approved edit 6**:
+`capture(..., thread_ancestors=None)`, additive and defaulted, exactly the shape
+approved edit 4 set for `--keep-engagement`. Asked for at that point, not now.
 
-```python
-@contextlib.contextmanager
-def _thread_depth(engine_mod, depth):
-    old = engine_mod._THREAD_ANCESTORS
-    engine_mod._THREAD_ANCESTORS = depth
-    try:
-        yield
-    finally:
-        engine_mod._THREAD_ANCESTORS = old
-```
-
-Safe in practice: each worker is its own process, captures are sequential within
-one, and the value is restored. But it is reaching into a frozen module's
-private state, and it is invisible from `src/` — the exact shape of surprise
-rule 1 exists to prevent.
-
-**(b) Approved edit 6: `capture(..., thread_ancestors=None)`.** Additive,
-defaulted, symmetric with `keep_engagement`'s precedent (approved edit 4), and
-it makes the capability explicit where a reader of `src/` will find it.
-
-**Recommendation: (b), asked for separately, and ship v1 without thread depth at
-all** — none of the four launch profiles need it. Do not take a monkey-patch as
-the price of a feature nothing has requested yet. If (a) is chosen anyway, it
-must be a single documented call site with the context manager above, never a
-bare assignment.
+**No profile may mutate engine module state.** If a capture knob is not a
+parameter of `capture()`, it does not exist to the registry.
 
 ### 4.3 Stdout vocabulary is a hard contract
 
@@ -282,7 +262,17 @@ and (a) makes `device_scale_factor` a breaking change to every decorated
 profile. Name the fields `radius_pt`, `border.pt`, `shadow.blur_pt` so the unit
 is unmissable.
 
-### 5.4 No new dependency
+### 5.4 `image.max_in` is not derivable from the page
+
+The frozen Twitter builder places images in a **4.9 x 7.0 in** box on a letter
+page whose content area is 7.0 x 9.5 in; the Influencer builder uses
+**3.05 x 6.9 in** inside a 3.3 in column. Neither is the cell size — both are
+deliberate, narrower choices. So the placement box is its own field
+(`image.max_in`) rather than something `layout.py` infers from
+`page.size`, `page.margins_in` and `page.grid`. Inferring it would have silently
+changed both existing reports on day one.
+
+### 5.5 No new dependency
 
 Pillow is already installed (it arrives transitively and `src/report_builder.py`
 and `shot_quality.py` both use it). `requirements.txt` is inside the frozen set,
@@ -413,17 +403,30 @@ Steps 1, 2 and most of 4 need **no browser at all**.
 
 ---
 
-## 10. Open questions for you
+## 10. Decisions (all settled — 2026-08-03)
 
-1. **`thread_ancestors`** — approved edit 6 (§4.2b, recommended), scoped
-   monkey-patch (§4.2a), or drop it from v1?
-2. **Decoration units** — `radius_pt` at placement size (§5.3b, recommended) or
-   `radius_px` at master size?
-3. **Do the existing two types route through the engine once parity passes**, or
-   stay on their own entrypoints permanently? I lean *stay*: they are proven,
-   and the parity test gives the benefit without the risk.
-4. **Is `xlsx` output per-profile or global?** It is a data export and barely
-   presentational; it may belong outside the profile schema.
-5. **Registry location** — in-repo JSON (versioned, reviewable) or
-   `data/profiles/` (user-editable without a deploy)? I lean in-repo for v1;
-   user-editable profiles need validation UI and a much stricter parser.
+1. **`thread_ancestors` — dropped from v1 entirely.** No monkey-patch. If a
+   future profile genuinely needs thread depth, it gets a proper **approved edit
+   6** (`capture(..., thread_ancestors=None)`, the `--keep-engagement` pattern)
+   at that point and not before. The knob is absent from the schema.
+2. **Decoration units are points at placement size** (`radius_pt`, `border.pt`,
+   `shadow.blur_pt`). Master px would make `device_scale_factor` a breaking
+   change to every decorated profile, which is intolerable now that DPR is a
+   per-profile knob.
+3. **The two existing report types keep their own entrypoints permanently.**
+   `run.py` and `run_influencer.py` are production-proven; parity buys the
+   confidence without moving the risk. The engine serves *additional* profiles.
+4. **`xlsx` is a global data export, not a profile output.** It carries no
+   presentational content — one row per link, with metric columns only when the
+   influencer engine ran. Keeping it out of `outputs` keeps the schema honestly
+   about presentation.
+5. **Registry is in-repo JSON for v1.** User-editable profiles need a validating
+   UI and a hostile-input parser; that is a feature, not a default.
+
+### Resolution policy (supersedes the earlier DPR plan)
+
+**"Adopt DPR 2 in `CTX_KWARGS`" is cancelled.** The default Twitter path stays at
+DPR 1, untouched. 2x sharpness arrives as an opt-in `high-res` profile that owns
+its own `CTX_KWARGS`. The measured costs (+24% wall clock, +9.6% per-worker RSS,
+~2.1x disk — see the DPR benchmark) are then paid only by jobs that asked for
+them, and the working tool is never the thing under test.

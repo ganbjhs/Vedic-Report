@@ -28,7 +28,10 @@ import prof_builder     # noqa: E402
 import registry         # noqa: E402
 
 SAMPLES = ROOT / "data" / "samples"
-FIXTURE = SAMPLES / "_fixture"
+# The fixture lives OUTSIDE data/samples and persists, so that once it has been
+# seeded from a real run, `make_samples.py` with no arguments keeps working
+# forever — no globbing of temp directories that move or get cleaned up.
+FIXTURE = ROOT / "data" / "sample-fixture"
 
 # Plausible stand-ins so the Influencer layout can be judged. The benchmark runs
 # used the X engine, which does not collect metrics — these are NOT real
@@ -64,16 +67,57 @@ NOTES = {
 }
 
 
+def resolvable(src: Path) -> int:
+    """How many of this source's results have a screenshot we can actually read.
+
+    The existence of results.json and a screenshots/ folder is NOT enough:
+    results.json holds absolute paths (correct, see RULEBOOK rule 2) which point
+    into whatever directory produced it. `reports/results.json` in this repo
+    still names a machine path that no longer exists, and an earlier version of
+    this script happily "succeeded" on it while producing nothing at all.
+    """
+    rj = src / "results.json"
+    if not rj.exists():
+        return 0
+    try:
+        rows = json.loads(rj.read_text())
+    except (ValueError, OSError):
+        return 0
+    count = 0
+    for r in rows:
+        if r.get("status") != "ok" or not r.get("screenshot"):
+            continue
+        name = Path(r["screenshot"]).name
+        if Path(r["screenshot"]).exists() or (src / "screenshots" / name).exists():
+            count += 1
+    return count
+
+
 def find_source() -> Path:
-    """Any folder with a results.json and a screenshots/ beside it."""
-    candidates = list((ROOT / "data" / "acceptance").glob("*/reports")) + \
-        list((ROOT / "reports",)) + \
-        sorted(Path("/private/tmp").glob(
-            "claude-*/**/scratchpad/dpr-bench/*/reports"))
-    for c in candidates:
-        if (c / "results.json").exists() and (c / "screenshots").is_dir():
-            return c
-    raise SystemExit("no source found — pass --from <dir with results.json>")
+    """The candidate with the most readable screenshots, or a clear error."""
+    candidates = [FIXTURE]                       # the persistent seeded fixture
+    candidates += sorted((ROOT / "data" / "acceptance").glob("*/reports"))
+    candidates += sorted((ROOT / "data" / "jobs").glob("*/app/reports"))
+    candidates.append(ROOT / "reports")
+
+    scored = [(resolvable(c), c) for c in candidates if c.is_dir()]
+    scored = [(n, c) for n, c in scored if n > 0]
+    if not scored:
+        looked = "\n".join(f"    {c}" + ("" if c.is_dir() else "  (missing)")
+                           for c in candidates)
+        raise SystemExit(
+            "No usable source found. A source needs a results.json whose\n"
+            "screenshots can actually be read — results.json holds ABSOLUTE\n"
+            "paths, so one written on another machine or in a deleted temp dir\n"
+            "resolves to nothing.\n\n"
+            f"Looked in:\n{looked}\n\n"
+            "Pass one explicitly:\n"
+            "    .venv/bin/python scripts/make_samples.py --from <dir>\n"
+            "where <dir> contains results.json and screenshots/.")
+    scored.sort(key=lambda t: -t[0])
+    best_n, best = scored[0]
+    print(f"auto-selected source with {best_n} readable screenshot(s)")
+    return best
 
 
 def main() -> int:
@@ -85,41 +129,62 @@ def main() -> int:
     src = Path(args.src) if args.src else find_source()
     print(f"source: {src}")
 
+    if not (src / "results.json").exists():
+        raise SystemExit(f"{src} has no results.json")
+    n_readable = resolvable(src)
+    if n_readable == 0:
+        raise SystemExit(
+            f"{src} has a results.json but NONE of its screenshots can be read.\n"
+            "Those paths are absolute (RULEBOOK rule 2) and point somewhere that\n"
+            "no longer exists. Pick a directory from a run on this machine.")
+
     results = json.loads((src / "results.json").read_text())
     usable = [r for r in results if r.get("status") == "ok"][:args.limit]
-    if not usable:
-        raise SystemExit(f"no usable results in {src}")
 
-    if SAMPLES.exists():
-        shutil.rmtree(SAMPLES)
-    (FIXTURE / "screenshots").mkdir(parents=True)
+    # Build into a staging dir and only replace data/samples once documents
+    # actually exist. An earlier version wiped the good samples first and then
+    # produced nothing, reporting success either way.
+    staging = SAMPLES.with_name("samples.new")
+    if staging.exists():
+        shutil.rmtree(staging)
+    stage_fixture = staging / "_fixture"
+    (stage_fixture / "screenshots").mkdir(parents=True)
 
     fixture = []
     for i, r in enumerate(usable):
         name = Path(r["screenshot"]).name
-        source_png = src / "screenshots" / name
+        source_png = Path(r["screenshot"])
+        if not source_png.exists():
+            source_png = src / "screenshots" / name
         if not source_png.exists():
             continue
-        shutil.copy2(source_png, FIXTURE / "screenshots" / name)
+        shutil.copy2(source_png, stage_fixture / "screenshots" / name)
         rec = dict(r)
-        rec["screenshot"] = str(FIXTURE / "screenshots" / name)
+        rec["screenshot"] = str(stage_fixture / "screenshots" / name)
         rec["metrics"] = FAKE_METRICS[len(fixture) % len(FAKE_METRICS)]
         rec.setdefault("account_name", rec.get("handle") or f"Post {i + 1}")
         fixture.append(rec)
-    (FIXTURE / "results.json").write_text(json.dumps(fixture, indent=2))
-    print(f"fixture: {len(fixture)} real screenshot(s) copied into {FIXTURE}")
+
+    if not fixture:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise SystemExit(
+            f"copied 0 screenshots from {src} — nothing to build.\n"
+            "(results.json listed files, but none were readable.)")
+
+    (stage_fixture / "results.json").write_text(json.dumps(fixture, indent=2))
+    print(f"fixture: {len(fixture)} real screenshot(s) copied")
 
     made = {}
     for slug in registry.available():
         profile = registry.load(slug)
-        prof_builder.OUT = FIXTURE
+        prof_builder.OUT = stage_fixture
         sys.argv = ["prof_builder", f"{profile['label']} — sample", slug, slug]
         prof_builder.main()
         made[slug] = []
         for kind in profile["outputs"]:
-            produced = FIXTURE / f"{slug}.{kind}"
+            produced = stage_fixture / f"{slug}.{kind}"
             if produced.exists():
-                dest = SAMPLES / f"{slug}.{kind}"
+                dest = staging / f"{slug}.{kind}"
                 shutil.move(str(produced), dest)
                 made[slug].append(dest)
 
@@ -136,13 +201,13 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         embed = FX._compress_for_embed(rows, td)
         FX.build_pdf(embed, "Twitter Report — sample",
-                     SAMPLES / "twitter-REFERENCE-frozen.pdf")
+                     staging / "twitter-REFERENCE-frozen.pdf")
         FX.build_docx(embed, "Twitter Report — sample",
-                      SAMPLES / "twitter-REFERENCE-frozen.docx")
+                      staging / "twitter-REFERENCE-frozen.docx")
     with tempfile.TemporaryDirectory() as td:
         embed = FI._compress_for_embed(rows, td)
         FI.build_pdf(embed, "Influencer Report — sample",
-                     SAMPLES / "influencer-REFERENCE-frozen.pdf")
+                     staging / "influencer-REFERENCE-frozen.pdf")
     print("\nreferences from the frozen builders written for comparison")
 
     lines = ["# Sample documents — RULEBOOK rule 3 human check",
@@ -172,8 +237,34 @@ def main() -> int:
             print(f"   -> {p.name}  ({size:.0f} KB)")
             lines.append(f"  `{p.name}` ({size:.0f} KB)")
         lines.append("")
-    (SAMPLES / "WHAT-TO-LOOK-FOR.md").write_text("\n".join(lines))
-    print(f"\n{'=' * 68}\nall samples in: {SAMPLES}")
+    (staging / "WHAT-TO-LOOK-FOR.md").write_text("\n".join(lines))
+    # HARD GATE: never report success without documents on disk.
+    built = sorted(p for p in staging.glob("*.*") if p.suffix != ".md")
+    if not built:
+        shutil.rmtree(staging, ignore_errors=True)
+        print("\nFAILED: no documents were produced.", flush=True)
+        return 1
+
+    # Persist the fixture so the next bare run finds it (see FIXTURE above).
+    if FIXTURE.resolve() != stage_fixture.resolve():
+        if FIXTURE.exists():
+            shutil.rmtree(FIXTURE)
+        shutil.copytree(stage_fixture, FIXTURE)
+        # rewrite the copied results.json to point at its new home
+        rows = json.loads((FIXTURE / "results.json").read_text())
+        for row in rows:
+            row["screenshot"] = str(FIXTURE / "screenshots"
+                                    / Path(row["screenshot"]).name)
+        (FIXTURE / "results.json").write_text(json.dumps(rows, indent=2))
+
+    if SAMPLES.exists():
+        shutil.rmtree(SAMPLES)
+    staging.rename(SAMPLES)
+
+    print(f"\n{'=' * 68}")
+    print(f"{len(built)} document(s) in: {SAMPLES}")
+    for p in built:
+        print(f"   {p.name}")
     return 0
 
 

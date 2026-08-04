@@ -103,7 +103,22 @@ def _decode(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _grid_from_xlsx(path: Path) -> list:
+def _pick_sheet(names, sheet):
+    """Resolve a requested tab to a name, or None for 'whatever opens'."""
+    if sheet is None or sheet == "":
+        return None
+    if isinstance(sheet, int) or (isinstance(sheet, str) and sheet.isdigit()):
+        i = int(sheet)
+        if 0 <= i < len(names):
+            return names[i]
+        raise UploadError(f"That file has {len(names)} tab(s); tab {i} does not exist.")
+    if sheet in names:
+        return sheet
+    raise UploadError(
+        f"No tab named {sheet!r}. Available: {', '.join(names) or '(none)'}.")
+
+
+def _grid_from_xlsx(path: Path, sheet=None) -> list:
     try:
         from openpyxl import load_workbook
     except ImportError as e:                                  # pragma: no cover
@@ -115,14 +130,17 @@ def _grid_from_xlsx(path: Path) -> list:
             "That .xlsx could not be opened as an Excel workbook. If it is "
             "really a CSV or text file, rename it to .csv or .txt and re-upload."
         ) from e
-    ws = wb.active
-    grid = [[("" if c is None else str(c)).strip() for c in row]
-            for row in ws.iter_rows(values_only=True)]
-    wb.close()
+    try:
+        name = _pick_sheet(list(wb.sheetnames), sheet)
+        ws = wb[name] if name else wb.active
+        grid = [[("" if c is None else str(c)).strip() for c in row]
+                for row in ws.iter_rows(values_only=True)]
+    finally:
+        wb.close()
     return grid
 
 
-def _grid_from_xls(path: Path) -> list:
+def _grid_from_xls(path: Path, sheet=None) -> list:
     try:
         import xlrd
     except ImportError as e:
@@ -135,12 +153,13 @@ def _grid_from_xls(path: Path) -> list:
         raise UploadError(
             "That .xls could not be opened. Re-save it as .xlsx or .csv."
         ) from e
-    sheet = book.sheet_by_index(0)
+    name = _pick_sheet(list(book.sheet_names()), sheet)
+    ws = book.sheet_by_name(name) if name else book.sheet_by_index(0)
     grid = []
-    for r in range(sheet.nrows):
+    for r in range(ws.nrows):
         row = []
-        for c in range(sheet.ncols):
-            v = sheet.cell_value(r, c)
+        for c in range(ws.ncols):
+            v = ws.cell_value(r, c)
             if isinstance(v, float) and v.is_integer():
                 v = int(v)
             row.append(str(v).strip() if v is not None else "")
@@ -173,12 +192,38 @@ def _grid_from_text(path: Path, default_delim: str) -> list:
     return [[(c or "").strip() for c in row] for row in rows]
 
 
-def read_grid(path: Path, suffix: str) -> list:
+def list_sheets(path: Path, suffix: str) -> list:
+    """Tab names in a workbook, in order. Empty for non-workbook formats.
+
+    `load_workbook` silently uses `wb.active`, so a file whose links live on the
+    second tab used to produce "no links found" with no hint that other tabs
+    existed. Listing them is what lets the user say which one.
+    """
+    suffix = (suffix or path.suffix).lower()
+    try:
+        if suffix == ".xlsx":
+            from openpyxl import load_workbook
+            wb = load_workbook(path, read_only=True, data_only=True)
+            try:
+                return list(wb.sheetnames)
+            finally:
+                wb.close()
+        if suffix == ".xls":
+            import xlrd
+            return list(xlrd.open_workbook(str(path)).sheet_names())
+    except Exception:
+        return []
+    return []
+
+
+def read_grid(path: Path, suffix: str, sheet=None) -> list:
+    """`sheet` selects a workbook tab by NAME (or index); None keeps the
+    previous behaviour of using whichever tab the file opens on."""
     suffix = (suffix or path.suffix).lower()
     if suffix == ".xlsx":
-        return _grid_from_xlsx(path)
+        return _grid_from_xlsx(path, sheet)
     if suffix == ".xls":
-        return _grid_from_xls(path)
+        return _grid_from_xls(path, sheet)
     if suffix == ".tsv":
         return _grid_from_text(path, "\t")
     if suffix in (".csv", ".txt"):
@@ -283,6 +328,97 @@ def grid_from_csv_text(text: str) -> list:
     except csv.Error:
         rows = [[line] for line in text.splitlines()]
     return [[(c or "").strip() for c in row] for row in rows]
+
+
+def detect_columns(grid: list) -> dict:
+    """Which column holds the links, which holds the account, and what else is
+    on offer.
+
+    `input_loader._header_index` scans only the FIRST FIVE rows and takes the
+    first column whose header matches — silently, with no way to correct it.
+    This exposes the same decision so the user can see it and override it.
+    """
+    header = input_loader._header_index(grid)
+    header_row = header[0] if header else None
+    cmap = header[1] if header else {}
+    guessed = False
+
+    # The frozen loader only recognises a header row when one of its column
+    # names matches its own list — "Post URL" is not in it, for instance. When
+    # it finds none, a first row of plain text is still what a human reads as
+    # the headings, so it is used for LABELS (and as the body start for a
+    # reshape). Parsing is untouched: this never changes what the loader does.
+    if header_row is None and grid:
+        first = grid[0]
+        text_cells = [c for c in first if c and not _URL_RE.search(c)]
+        if len(text_cells) >= 2 and not any(_URL_RE.search(c or "") for c in first):
+            header_row, guessed = 0, True
+
+    body = grid[(header_row + 1):] if header_row is not None else grid
+
+    width = max((len(r) for r in grid), default=0)
+    columns = []
+    for i in range(width):
+        name = ""
+        if header_row is not None and i < len(grid[header_row]):
+            name = grid[header_row][i]
+        sample = ""
+        for row in body:
+            if i < len(row) and row[i]:
+                sample = row[i]
+                break
+        role = None
+        if cmap.get("link") == i:
+            role = "link"
+        elif cmap.get("account") == i:
+            role = "account"
+        elif cmap.get("category") == i:
+            role = "category"
+        elif not header and any(
+                i < len(r) and _URL_RE.search(r[i] or "") for r in body[:40]):
+            role = "link"        # plain list: the column that holds URLs
+        columns.append({
+            "index": i,
+            "name": name or f"Column {chr(65 + i) if i < 26 else i + 1}",
+            "sample": (sample or "")[:90],
+            "role": role,
+        })
+    return {"has_header": bool(header), "guessed_header": guessed,
+            "header_row": header_row, "columns": columns}
+
+
+def reshape(grid: list, link_col=None, account_col=None) -> list:
+    """Rebuild a grid as a canonical Account | Link table.
+
+    Those exact headers are what `input_loader._header_index` recognises, so the
+    frozen loader reads back precisely the columns the user chose. Returns the
+    grid untouched when no override was asked for.
+    """
+    if link_col is None:
+        return grid
+    try:
+        link_i = int(link_col)
+    except (TypeError, ValueError):
+        raise UploadError("The chosen link column is not valid.")
+    acc_i = None
+    if account_col not in (None, "", -1, "-1"):
+        try:
+            acc_i = int(account_col)
+        except (TypeError, ValueError):
+            acc_i = None
+
+    info = detect_columns(grid)
+    start = (info["header_row"] + 1) if info["header_row"] is not None else 0
+    out = [["Account", "Link"]]
+    for row in grid[start:]:
+        link = row[link_i] if link_i < len(row) else ""
+        if not link:
+            continue
+        account = row[acc_i] if acc_i is not None and acc_i < len(row) else ""
+        out.append([account, link])
+    if len(out) == 1:
+        raise UploadError("That column has no values in it — pick another.")
+    return out
 
 
 # --------------------------------------------------------------------------- #

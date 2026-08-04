@@ -8,6 +8,10 @@ function initSubmitForm() {
   const paste = $("paste-input");
   const sheet = $("sheet-input");
   const dedupe = $("dedupe");
+  const pickers = $("pickers");
+  const pickSheet = $("pick-sheet");
+  const pickLink = $("pick-link");
+  const pickAccount = $("pick-account");
   const chip = $("file-chip");
   const chipName = $("file-name");
   const clearBtn = $("file-clear");
@@ -29,6 +33,8 @@ function initSubmitForm() {
   };
 
   let activeTab = "file";
+  let userLinkCol = "";
+  let userAccountCol = "";
   let ready = 0; // link count the preview last confirmed
 
   // ---------- capability-driven options ----------
@@ -126,6 +132,10 @@ function initSubmitForm() {
   sheet.addEventListener("input", () => schedulePreview(700));
   sheet.addEventListener("paste", () => schedulePreview(120));
   dedupe.addEventListener("change", () => schedulePreview(0));
+  // A tab change re-reads the file; a column change only reshapes it.
+  pickSheet.addEventListener("change", () => { userLinkCol = ""; schedulePreview(0); });
+  pickLink.addEventListener("change", () => { userLinkCol = pickLink.value; schedulePreview(0); });
+  pickAccount.addEventListener("change", () => { userAccountCol = pickAccount.value; schedulePreview(0); });
 
   // ---------- preview ----------
   const setReady = (n) => {
@@ -136,7 +146,45 @@ function initSubmitForm() {
       : "Add some links to continue.";
   };
 
+  const fill = (sel, items, chosen) => {
+    sel.innerHTML = "";
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = String(it.value);
+      o.textContent = it.label;
+      if (String(it.value) === String(chosen)) o.selected = true;
+      sel.append(o);
+    }
+  };
+
+  const renderPickers = (data) => {
+    const tabs = data.sheets || [];
+    const cols = data.columns || [];
+    $("pick-sheet-wrap").hidden = tabs.length < 2;
+    if (tabs.length > 1) {
+      fill(pickSheet, tabs.map((t) => ({ value: t, label: t })), data.sheet);
+    }
+    const showCols = cols.length > 1;
+    $("pick-link-wrap").hidden = !showCols;
+    $("pick-account-wrap").hidden = !showCols;
+    if (showCols) {
+      const opts = cols.map((c) => ({
+        value: c.index,
+        label: c.sample ? `${c.name} — ${c.sample.slice(0, 34)}` : c.name,
+      }));
+      const guessLink = cols.find((c) => c.role === "link");
+      const guessAcc = cols.find((c) => c.role === "account");
+      fill(pickLink, opts, userLinkCol !== "" ? userLinkCol
+        : (guessLink ? guessLink.index : 0));
+      fill(pickAccount, [{ value: -1, label: "— none —" }, ...opts],
+        userAccountCol !== "" ? userAccountCol
+          : (guessAcc ? guessAcc.index : -1));
+    }
+    pickers.hidden = $("pick-sheet-wrap").hidden && !showCols;
+  };
+
   const resetPreview = () => {
+    pickers.hidden = true;
     pv.body.hidden = true;
     pv.loading.hidden = true;
     pv.error.hidden = true;
@@ -159,6 +207,8 @@ function initSubmitForm() {
     pv.body.hidden = false;
     pv.count.hidden = false;
     pv.count.textContent = data.count;
+
+    renderPickers(data);
 
     pv.warn.innerHTML = "";
     if (data.over_limit) {
@@ -200,7 +250,12 @@ function initSubmitForm() {
     setReady(data.over_limit ? 0 : data.count);
   };
 
-  const showPreviewError = (msg, dropped) => {
+  const showPreviewError = (msg, dropped, data) => {
+    if (data && (data.sheets?.length > 1 || data.columns?.length > 1)) {
+      renderPickers(data);   // offer the way out, don't just say no
+    } else {
+      pickers.hidden = true;
+    }
     pv.loading.hidden = true;
     pv.body.hidden = true;
     pv.empty.hidden = true;
@@ -229,9 +284,15 @@ function initSubmitForm() {
     body.append("csrf_token", form.csrf_token.value);
     if (dedupe.checked) body.append("dedupe", "1");
 
+    if (userLinkCol !== "") body.append("link_col", userLinkCol);
+    if (userAccountCol !== "") body.append("account_col", userAccountCol);
+
     if (activeTab === "file") {
       if (!input.files.length) return resetPreview();
       body.append("file", input.files[0]);
+      if (!$("pick-sheet-wrap").hidden && pickSheet.value) {
+        body.append("sheet", pickSheet.value);
+      }
     } else if (activeTab === "sheet") {
       if (!sheet.value.trim()) return resetPreview();
       body.append("sheet_url", sheet.value.trim());
@@ -252,7 +313,7 @@ function initSubmitForm() {
       if (seq !== previewSeq) return; // a newer request already went out
       if (!res.ok || !data.ok) {
         return showPreviewError(data.detail || `Could not read that (${res.status})`,
-                                data.dropped);
+                                data.dropped, data);
       }
       renderPreview(data);
     } catch (_) {
@@ -278,9 +339,18 @@ function initSubmitForm() {
     body.append("report_type", form.report_type.value);
     body.append("csrf_token", form.csrf_token.value);
     if (dedupe.checked) body.append("dedupe", "1");
-    if (activeTab === "file") body.append("file", input.files[0]);
-    else if (activeTab === "sheet") body.append("sheet_url", sheet.value.trim());
-    else body.append("text", paste.value);
+    if (userLinkCol !== "") body.append("link_col", userLinkCol);
+    if (userAccountCol !== "") body.append("account_col", userAccountCol);
+    if (activeTab === "file") {
+      body.append("file", input.files[0]);
+      if (!$("pick-sheet-wrap").hidden && pickSheet.value) {
+        body.append("sheet", pickSheet.value);
+      }
+    } else if (activeTab === "sheet") {
+      body.append("sheet_url", sheet.value.trim());
+    } else {
+      body.append("text", paste.value);
+    }
 
     const r = selectedRadio();
     if (keepEngagement?.checked && r?.dataset.keepEngagement === "1") {

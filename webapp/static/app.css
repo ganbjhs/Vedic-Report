@@ -435,3 +435,12 @@ textarea:focus {
 
 button.big { width: 100%; padding: 13px 18px; font-size: .95rem; }
 #submit-hint { margin: 8px 0 0; text-align: center; }
+
+/* ---------- tab / column pickers ---------- */
+.pickers {
+  display: grid; gap: 8px; margin-bottom: 12px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.picker { display: grid; gap: 3px; }
+.picker > span { font-size: .74rem; font-weight: 600; color: var(--muted); }
+.picker select { padding: 6px 28px 6px 9px; font-size: .82rem; }

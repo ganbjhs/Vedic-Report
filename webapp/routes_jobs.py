@@ -16,6 +16,11 @@ from .jobs import queue, runner, store
 
 router = APIRouter(prefix="/api")
 
+# Tab names observed by the last workbook read, so the preview can offer a
+# picker. Request-scoped in practice (one preview per request) and only ever
+# used to decorate the response.
+_TABS_SEEN = []
+
 _KINDS = {"pdf": "application/pdf",
           "docx": "application/vnd.openxmlformats-officedocument."
                   "wordprocessingml.document",
@@ -93,7 +98,8 @@ async def _read_capped(upload: UploadFile) -> bytes:
 # --------------------------------------------------------------------------- #
 # Preview — parse an input WITHOUT creating a job
 # --------------------------------------------------------------------------- #
-async def _grid_from_request(file, text: str, sheet_url: str = "") -> tuple:
+async def _grid_from_request(file, text: str, sheet_url: str = "",
+                             sheet: str = "") -> tuple:
     """(grid, source_label, original_bytes) for any input method.
 
     Preview and submit both call this, so what the preview showed is exactly
@@ -136,10 +142,17 @@ async def _grid_from_request(file, text: str, sheet_url: str = "") -> tuple:
     staged = tmp / f"preview-{int(time.time() * 1000)}{suffix}"
     staged.write_bytes(raw)
     try:
-        grid = await asyncio.to_thread(uploads.read_grid, staged, suffix)
+        grid = await asyncio.to_thread(uploads.read_grid, staged, suffix,
+                                       sheet or None)
+        tabs = await asyncio.to_thread(uploads.list_sheets, staged, suffix)
     finally:
         staged.unlink(missing_ok=True)
-    return grid, uploads.safe_upload_name(file.filename), raw
+    label = uploads.safe_upload_name(file.filename)
+    if sheet:
+        label += f" · {sheet}"
+    _TABS_SEEN.clear()
+    _TABS_SEEN.extend(tabs)
+    return grid, label, raw
 
 
 @router.post("/preview")
@@ -147,6 +160,9 @@ async def preview(request: Request,
                   file: UploadFile = File(None),
                   text: str = Form(""),
                   sheet_url: str = Form(""),
+                  sheet: str = Form(""),
+                  link_col: str = Form(""),
+                  account_col: str = Form(""),
                   dedupe: str = Form(""),
                   csrf_token: str = Form(...),
                   user: str = Depends(auth.require_user_api)):
@@ -160,7 +176,12 @@ async def preview(request: Request,
     want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
 
     try:
-        grid, source, _raw = await _grid_from_request(file, text, sheet_url)
+        _TABS_SEEN.clear()
+        grid, source, _raw = await _grid_from_request(file, text, sheet_url, sheet)
+        tabs = list(_TABS_SEEN)
+        columns = uploads.detect_columns(grid)
+        if link_col != "":
+            grid = uploads.reshape(grid, link_col, account_col)
         report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe)
     except (uploads.UploadError, sheets.SheetError) as e:
         return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
@@ -177,7 +198,15 @@ async def preview(request: Request,
                   if report["dropped"] else
                   "No links found. Put one X/Twitter post URL per row or per "
                   "line, or use a sheet with a column headed 'Link'.")
+        if tabs and len(tabs) > 1:
+            others = ", ".join(t for t in tabs if t != (sheet or tabs[0]))
+            detail += f" This workbook also has: {others} — try another tab."
+        # `sheets`/`columns` ride along on the FAILURE too, so the picker can be
+        # offered precisely when it is needed. Returning them only on success
+        # would leave the user stuck on an empty first tab with no way out.
         return JSONResponse({"ok": False, "detail": detail,
+                             "sheets": tabs, "sheet": sheet or "",
+                             "columns": columns["columns"],
                              "dropped": report["dropped"][:50]},
                             status_code=400)
 
@@ -185,6 +214,10 @@ async def preview(request: Request,
     return {
         "ok": True,
         "source": source,
+        "sheets": tabs,
+        "sheet": sheet or (tabs[0] if tabs else ""),
+        "columns": columns["columns"],
+        "has_header": columns["has_header"],
         "count": len(rows),
         "limit": report["limit"],
         "over_limit": report["over_limit"],
@@ -207,6 +240,9 @@ async def submit_job(request: Request,
                      file: UploadFile = File(None),
                      text: str = Form(""),
                      sheet_url: str = Form(""),
+                     sheet: str = Form(""),
+                     link_col: str = Form(""),
+                     account_col: str = Form(""),
                      dedupe: str = Form(""),
                      report_name: str = Form(...),
                      report_type: str = Form(...),
@@ -243,7 +279,9 @@ async def submit_job(request: Request,
     pasted = (text or "").strip()
     want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
     try:
-        grid, source, raw = await _grid_from_request(file, pasted, sheet_url)
+        grid, source, raw = await _grid_from_request(file, pasted, sheet_url, sheet)
+        if link_col != "":
+            grid = uploads.reshape(grid, link_col, account_col)
         report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe)
         rows = report["rows"]
         if not rows:

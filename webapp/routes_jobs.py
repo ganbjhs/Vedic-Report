@@ -11,7 +11,7 @@ import time
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import auth, config, uploads
+from . import auth, config, report_types, uploads
 from .jobs import queue, runner, store
 
 router = APIRouter(prefix="/api")
@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api")
 _KINDS = {"pdf": "application/pdf",
           "docx": "application/vnd.openxmlformats-officedocument."
                   "wordprocessingml.document",
+          "html": "text/html; charset=utf-8",
           "zip": "application/zip"}
 
 
@@ -103,14 +104,15 @@ async def submit_job(request: Request,
                      user: str = Depends(auth.require_user_api)):
     auth.verify_csrf(request, csrf_token)
 
-    if report_type not in config.REPORT_TYPES:
+    rt = report_types.get(report_type)
+    if rt is None:
         raise HTTPException(status_code=400, detail="Unknown report type.")
 
     # An unticked checkbox is simply absent from the form body, so anything that
     # arrives means "on". Twitter-only: the influencer capture always keeps the
     # engagement line, so accepting it there would promise a choice that isn't one.
-    keep = report_type == "twitter" and keep_engagement.lower() not in ("", "0",
-                                                                        "false", "off")
+    keep = rt.allows_keep_engagement and keep_engagement.lower() not in (
+        "", "0", "false", "off")
 
     # Capture speed. Clamped, never trusted: each browser is ~0.5-1 GB, so a
     # hand-crafted POST asking for 50 would be an out-of-memory kill rather than
@@ -121,7 +123,7 @@ async def submit_job(request: Request,
     except ValueError:
         want_workers = 0
     want_workers = (max(0, min(want_workers, config.MAX_WORKERS))
-                    if report_type == "twitter" else 0)
+                    if rt.allows_worker_choice else 0)
 
     try:
         suffix = uploads.suffix_of(file.filename)

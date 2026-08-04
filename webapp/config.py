@@ -160,6 +160,9 @@ PORT = _int("PORT", 8000)
 LOGIN_MAX_ATTEMPTS = _int("LOGIN_MAX_ATTEMPTS", 5)
 LOGIN_WINDOW_MINUTES = _int("LOGIN_WINDOW_MINUTES", 15)
 
+# Legacy constant: the built-in slugs. The authoritative list — built-ins PLUS
+# every valid profile — is webapp/report_types.py, which is what the API and the
+# form use. Kept so nothing that imported this breaks.
 REPORT_TYPES = ("twitter", "influencer")
 
 

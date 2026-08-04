@@ -11,7 +11,7 @@ import time
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import auth, config, report_types, uploads
+from . import auth, config, report_types, sheets, uploads
 from .jobs import queue, runner, store
 
 router = APIRouter(prefix="/api")
@@ -93,13 +93,29 @@ async def _read_capped(upload: UploadFile) -> bytes:
 # --------------------------------------------------------------------------- #
 # Preview — parse an input WITHOUT creating a job
 # --------------------------------------------------------------------------- #
-async def _grid_from_request(file, text: str) -> tuple:
+async def _grid_from_request(file, text: str, sheet_url: str = "") -> tuple:
     """(grid, source_label, original_bytes) for any input method.
 
     Preview and submit both call this, so what the preview showed is exactly
     what gets captured — they cannot drift apart. `original_bytes` is kept for
     the job folder's troubleshooting copy; for a paste it is the text itself.
+
+    NOTE on sheets: the sheet is fetched again at submit time rather than being
+    cached from the preview. Capture time is the honest source of truth, and a
+    stale cache would silently capture a version of the sheet the user had
+    already changed. The row count is shown at both points so a change is
+    visible.
     """
+    url = (sheet_url or "").strip()
+    if url:
+        csv_text = await asyncio.to_thread(sheets.fetch_csv, url)
+        grid = uploads.grid_from_csv_text(csv_text)
+        if not grid:
+            raise uploads.UploadError("That sheet has no readable rows.")
+        info = sheets.describe(url)
+        label = "Google Sheet" + (f" (tab {info['gid']})" if info.get("gid") else "")
+        return grid, label, csv_text.encode("utf-8")
+
     pasted = (text or "").strip()
     if pasted:
         grid = uploads.grid_from_text(pasted)
@@ -111,7 +127,7 @@ async def _grid_from_request(file, text: str) -> tuple:
 
     if file is None or not getattr(file, "filename", ""):
         raise uploads.UploadError(
-            "Nothing to read — choose a file or paste some links.")
+            "Nothing to read — choose a file, paste links, or add a sheet link.")
 
     suffix = uploads.suffix_of(file.filename)
     raw = await _read_capped(file)
@@ -130,6 +146,7 @@ async def _grid_from_request(file, text: str) -> tuple:
 async def preview(request: Request,
                   file: UploadFile = File(None),
                   text: str = Form(""),
+                  sheet_url: str = Form(""),
                   dedupe: str = Form(""),
                   csrf_token: str = Form(...),
                   user: str = Depends(auth.require_user_api)):
@@ -143,9 +160,9 @@ async def preview(request: Request,
     want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
 
     try:
-        grid, source, _raw = await _grid_from_request(file, text)
+        grid, source, _raw = await _grid_from_request(file, text, sheet_url)
         report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe)
-    except uploads.UploadError as e:
+    except (uploads.UploadError, sheets.SheetError) as e:
         return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse(
@@ -189,6 +206,7 @@ async def preview(request: Request,
 async def submit_job(request: Request,
                      file: UploadFile = File(None),
                      text: str = Form(""),
+                     sheet_url: str = Form(""),
                      dedupe: str = Form(""),
                      report_name: str = Form(...),
                      report_type: str = Form(...),
@@ -225,7 +243,7 @@ async def submit_job(request: Request,
     pasted = (text or "").strip()
     want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
     try:
-        grid, source, raw = await _grid_from_request(file, pasted)
+        grid, source, raw = await _grid_from_request(file, pasted, sheet_url)
         report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe)
         rows = report["rows"]
         if not rows:
@@ -244,7 +262,8 @@ async def submit_job(request: Request,
 
     stem = uploads.safe_stem(report_name, "Report")
     title = uploads.display_title(report_name, "Report")
-    upload_name = source if pasted else uploads.safe_upload_name(file.filename)
+    upload_name = (source if (pasted or sheet_url.strip())
+                   else uploads.safe_upload_name(file.filename))
 
     job_id = store.create(owner=user, name=stem, title=title,
                           report_type=report_type, link_count=len(rows),

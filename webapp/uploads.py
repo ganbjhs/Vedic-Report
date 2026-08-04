@@ -269,6 +269,22 @@ def grid_from_text(text: str) -> list:
     return rows
 
 
+def grid_from_csv_text(text: str) -> list:
+    """CSV text (from a fetched sheet) -> grid, using the same delimiter
+    sniffing an uploaded .csv gets, so a sheet and a downloaded copy of that
+    sheet parse identically."""
+    if not (text or "").strip():
+        return []
+    delim = _sniff_delimiter(text, ",")
+    if not isinstance(delim, str) or len(delim) != 1:
+        delim = ","
+    try:
+        rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+    except csv.Error:
+        rows = [[line] for line in text.splitlines()]
+    return [[(c or "").strip() for c in row] for row in rows]
+
+
 # --------------------------------------------------------------------------- #
 # Grid -> rows + diagnostics
 # --------------------------------------------------------------------------- #

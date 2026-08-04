@@ -57,6 +57,11 @@
                   tabindex="-1">
             Paste links
           </button>
+          <button type="button" class="tab" role="tab" id="tab-sheet"
+                  aria-selected="false" aria-controls="panel-sheet" data-tab="sheet"
+                  tabindex="-1">
+            Google Sheet
+          </button>
         </div>
 
         <div class="tabpanel" id="panel-file" role="tabpanel"
@@ -87,6 +92,24 @@
             <span class="hint">Links are pulled out automatically. Several per line,
               bullets, numbering and trailing punctuation are all fine.</span>
           </label>
+        </div>
+
+        <div class="tabpanel" id="panel-sheet" role="tabpanel"
+             aria-labelledby="tab-sheet" data-panel="sheet" hidden>
+          <label class="field">
+            <span class="label">Google Sheets link</span>
+            <input id="sheet-input" name="sheet_url" type="url" spellcheck="false"
+                   placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0">
+            <span class="hint">
+              The sheet must be shared — <strong>Share → Anyone with the link</strong>,
+              or <strong>File → Share → Publish to web</strong>. Private sheets are
+              not supported. Paste the link with the tab open and the correct tab is used.
+            </span>
+          </label>
+          <div class="alert alert-warn tight" style="margin-top:10px">
+            The sheet is read again when you press Generate, so late edits are
+            picked up — check the count matches what you expect.
+          </div>
         </div>
 
         <label class="check">

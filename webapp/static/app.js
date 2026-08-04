@@ -6,6 +6,7 @@ function initSubmitForm() {
   const drop = $("drop");
   const input = $("file-input");
   const paste = $("paste-input");
+  const sheet = $("sheet-input");
   const dedupe = $("dedupe");
   const chip = $("file-chip");
   const chipName = $("file-name");
@@ -122,6 +123,8 @@ function initSubmitForm() {
   });
 
   paste.addEventListener("input", () => schedulePreview(450));
+  sheet.addEventListener("input", () => schedulePreview(700));
+  sheet.addEventListener("paste", () => schedulePreview(120));
   dedupe.addEventListener("change", () => schedulePreview(0));
 
   // ---------- preview ----------
@@ -229,6 +232,9 @@ function initSubmitForm() {
     if (activeTab === "file") {
       if (!input.files.length) return resetPreview();
       body.append("file", input.files[0]);
+    } else if (activeTab === "sheet") {
+      if (!sheet.value.trim()) return resetPreview();
+      body.append("sheet_url", sheet.value.trim());
     } else {
       if (!paste.value.trim()) return resetPreview();
       body.append("text", paste.value);
@@ -273,6 +279,7 @@ function initSubmitForm() {
     body.append("csrf_token", form.csrf_token.value);
     if (dedupe.checked) body.append("dedupe", "1");
     if (activeTab === "file") body.append("file", input.files[0]);
+    else if (activeTab === "sheet") body.append("sheet_url", sheet.value.trim());
     else body.append("text", paste.value);
 
     const r = selectedRadio();

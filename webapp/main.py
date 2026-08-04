@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, config, routes_jobs, uploads, x_login
+from . import auth, config, report_types, routes_jobs, uploads, x_login
 from .jobs import cleanup, queue, store
 
 HERE = Path(__file__).resolve().parent
@@ -153,6 +153,7 @@ async def index(request: Request, user: str = Depends(auth.require_user)):
          "accept": ",".join(uploads.ALLOWED_SUFFIXES),
          "default_workers": config.CAPTURE_WORKERS,
          "max_workers": config.MAX_WORKERS,
+         "report_types": report_types.all_types(),
          "x_login_ok": config.X_STATE_FILE.exists()})
 
 

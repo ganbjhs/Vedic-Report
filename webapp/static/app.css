@@ -322,3 +322,116 @@ pre {
 
 .inline-form { margin-top: 4px; }
 .inline-form + .muted { margin-top: 8px; }
+
+/* ---------- build layout (new report) ---------- */
+.build-grid {
+  display: grid; gap: 20px; align-items: start;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+}
+@media (max-width: 900px) { .build-grid { grid-template-columns: 1fr; } }
+.build-main { display: grid; gap: 16px; min-width: 0; }
+.build-side { display: grid; gap: 16px; min-width: 0; position: sticky; top: 16px; }
+@media (max-width: 900px) { .build-side { position: static; } }
+
+.step {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px;
+  display: grid; gap: 14px;
+}
+.step-title {
+  display: flex; align-items: center; gap: 10px; margin: 0;
+  font-size: 1rem; font-weight: 650;
+}
+.step-n {
+  display: grid; place-items: center; width: 22px; height: 22px; flex: none;
+  border-radius: 50%; background: var(--accent); color: #fff;
+  font-size: .76rem; font-weight: 700;
+}
+
+/* ---------- profile cards ---------- */
+.profile-grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 620px) { .profile-grid { grid-template-columns: 1fr; } }
+.profile-card { cursor: pointer; }
+.profile-card input { position: absolute; opacity: 0; pointer-events: none; }
+.profile-body {
+  display: grid; gap: 4px; height: 100%; padding: 13px 15px;
+  border: 1.5px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); transition: border-color .15s, background .15s;
+}
+.profile-body small { color: var(--muted); font-size: .8rem; line-height: 1.45; }
+.profile-card input:checked + .profile-body {
+  border-color: var(--accent); background: rgba(29,155,240,.07);
+}
+.profile-card input:focus-visible + .profile-body {
+  box-shadow: 0 0 0 3px rgba(29,155,240,.2);
+}
+.outputs { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
+.outputs em {
+  font-style: normal; font-size: .66rem; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
+}
+
+/* ---------- tabs ---------- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; padding: 8px 14px; font-size: .88rem; font-weight: 600;
+  color: var(--muted); cursor: pointer;
+}
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:hover { color: var(--text); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* A visually-hidden input stays FOCUSABLE; [hidden] does not, which is what
+   made the file picker unreachable by keyboard. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.dropzone:focus-within {
+  border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29,155,240,.18);
+}
+
+textarea {
+  width: 100%; padding: 10px 12px; font: inherit; font-size: .9rem;
+  color: var(--text); background: var(--bg); resize: vertical;
+  border: 1px solid var(--border); border-radius: 9px; min-height: 150px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(29,155,240,.18);
+}
+
+.check { display: flex; gap: 9px; align-items: start; font-size: .86rem; cursor: pointer; }
+.check input { margin-top: 2px; accent-color: var(--accent); }
+.check small { display: block; font-size: .78rem; }
+
+/* ---------- preview ---------- */
+.preview-card { max-height: calc(100dvh - 120px); overflow: auto; }
+.preview-rows { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 7px; }
+.preview-rows li {
+  display: grid; gap: 1px; padding: 7px 10px; border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--border); font-size: .8rem;
+}
+.preview-rows strong { font-size: .82rem; }
+.preview-rows a { color: var(--accent); overflow-wrap: anywhere; font-size: .76rem; }
+.drop-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.drop-list code { overflow-wrap: anywhere; }
+.alert.tight { padding: 8px 11px; font-size: .82rem; margin-bottom: 8px; }
+
+.skeleton-stack { display: grid; gap: 8px; }
+.skeleton {
+  height: 34px; border-radius: 8px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--bg) 50%, var(--border) 75%);
+  background-size: 200% 100%; animation: shimmer 1.3s linear infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  .progress.indeterminate .progress-bar { animation: none; }
+}
+
+button.big { width: 100%; padding: 13px 18px; font-size: .95rem; }
+#submit-hint { margin: 8px 0 0; text-align: center; }

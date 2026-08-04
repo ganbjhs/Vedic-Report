@@ -1,59 +1,102 @@
 /* Report Automation — submit form + job status polling. No build step, no deps. */
 
 function initSubmitForm() {
-  const form = document.getElementById("job-form");
-  const drop = document.getElementById("drop");
-  const input = document.getElementById("file-input");
-  const chip = document.getElementById("file-chip");
-  const chipName = document.getElementById("file-name");
-  const clearBtn = document.getElementById("file-clear");
-  const nameInput = document.getElementById("report-name");
-  const errorBox = document.getElementById("form-error");
-  const submitBtn = document.getElementById("submit-btn");
+  const $ = (id) => document.getElementById(id);
+  const form = $("job-form");
+  const drop = $("drop");
+  const input = $("file-input");
+  const paste = $("paste-input");
+  const dedupe = $("dedupe");
+  const chip = $("file-chip");
+  const chipName = $("file-name");
+  const clearBtn = $("file-clear");
+  const nameInput = $("report-name");
+  const errorBox = $("form-error");
+  const submitBtn = $("submit-btn");
+  const submitHint = $("submit-hint");
   const spinner = submitBtn.querySelector(".spinner");
-  const cropOption = document.getElementById("crop-option");
-  const keepEngagement = document.getElementById("keep-engagement");
-  const speedOption = document.getElementById("speed-option");
-  const workersSelect = document.getElementById("workers");
+  const cropOption = $("crop-option");
+  const keepEngagement = $("keep-engagement");
+  const speedOption = $("speed-option");
+  const workersSelect = $("workers");
 
-  // Both capture options are Twitter-only, for different reasons: the influencer
-  // capture already keeps likes and reposts in frame, and it pins itself to
-  // INFLUENCER_WORKERS because its follower cache lives per worker process.
-  // Hide them rather than offer controls that would do nothing.
-  const syncTwitterOptions = () => {
-    const twitter = form.report_type.value === "twitter";
-    if (cropOption) cropOption.hidden = !twitter;
-    if (speedOption) speedOption.hidden = !twitter;
+  const pv = {
+    count: $("preview-count"), empty: $("preview-empty"),
+    loading: $("preview-loading"), body: $("preview-body"),
+    rows: $("preview-rows"), more: $("preview-more"),
+    warn: $("preview-warnings"), error: $("preview-error"),
+  };
+
+  let activeTab = "file";
+  let ready = 0; // link count the preview last confirmed
+
+  // ---------- capability-driven options ----------
+  // The form no longer knows what "twitter" means. Each report type carries
+  // flags, so a new profile gets the right controls with no JS change.
+  const selectedRadio = () =>
+    form.querySelector('input[name="report_type"]:checked');
+  const syncOptions = () => {
+    const r = selectedRadio();
+    if (!r) return;
+    if (cropOption) cropOption.hidden = r.dataset.keepEngagement !== "1";
+    if (speedOption) speedOption.hidden = r.dataset.workerChoice !== "1";
   };
   form.querySelectorAll('input[name="report_type"]').forEach((radio) =>
-    radio.addEventListener("change", syncTwitterOptions)
+    radio.addEventListener("change", syncOptions)
   );
-  syncTwitterOptions();
+  syncOptions();
+
+  // ---------- tabs ----------
+  const tabs = [...form.querySelectorAll(".tab")];
+  const selectTab = (name) => {
+    activeTab = name;
+    tabs.forEach((t) => {
+      const on = t.dataset.tab === name;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+    });
+    form.querySelectorAll(".tabpanel").forEach((p) => {
+      p.hidden = p.dataset.panel !== name;
+    });
+    schedulePreview(0);
+  };
+  tabs.forEach((t) => {
+    t.addEventListener("click", () => selectTab(t.dataset.tab));
+    t.addEventListener("keydown", (e) => {
+      const i = tabs.indexOf(t);
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+        next.focus();
+        selectTab(next.dataset.tab);
+      }
+    });
+  });
 
   const showError = (msg) => {
-    errorBox.textContent = msg;
+    errorBox.textContent = msg || "";
     errorBox.hidden = !msg;
   };
 
+  // ---------- file chip ----------
   const showFile = (file) => {
-    if (!file) {
-      chip.hidden = true;
-      return;
-    }
+    chip.hidden = !file;
+    if (!file) return;
     chipName.textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB`;
-    chip.hidden = false;
     showError("");
-    // Offer the file's own name as the report name, if none typed yet.
     if (!nameInput.value.trim()) {
       nameInput.value = file.name.replace(/\.[^.]+$/, "").slice(0, 80);
     }
   };
 
-  input.addEventListener("change", () => showFile(input.files[0]));
-
+  input.addEventListener("change", () => {
+    showFile(input.files[0]);
+    schedulePreview(0);
+  });
   clearBtn.addEventListener("click", () => {
     input.value = "";
     showFile(null);
+    schedulePreview(0);
   });
 
   ["dragenter", "dragover"].forEach((evt) =>
@@ -75,27 +118,170 @@ function initSubmitForm() {
     dt.items.add(file);
     input.files = dt.files;
     showFile(file);
+    schedulePreview(0);
   });
 
+  paste.addEventListener("input", () => schedulePreview(450));
+  dedupe.addEventListener("change", () => schedulePreview(0));
+
+  // ---------- preview ----------
+  const setReady = (n) => {
+    ready = n;
+    submitBtn.disabled = n <= 0;
+    submitHint.textContent = n > 0
+      ? `${n} link${n === 1 ? "" : "s"} ready to capture.`
+      : "Add some links to continue.";
+  };
+
+  const resetPreview = () => {
+    pv.body.hidden = true;
+    pv.loading.hidden = true;
+    pv.error.hidden = true;
+    pv.empty.hidden = false;
+    pv.count.hidden = true;
+    setReady(0);
+  };
+
+  const note = (cls, html) => {
+    const d = document.createElement("div");
+    d.className = `alert ${cls} tight`;
+    d.innerHTML = html;
+    return d;
+  };
+
+  const renderPreview = (data) => {
+    pv.loading.hidden = true;
+    pv.empty.hidden = true;
+    pv.error.hidden = true;
+    pv.body.hidden = false;
+    pv.count.hidden = false;
+    pv.count.textContent = data.count;
+
+    pv.warn.innerHTML = "";
+    if (data.over_limit) {
+      pv.warn.append(note("alert-error",
+        `<strong>${data.count} links</strong> — the limit is ${data.limit} per report. Split this into smaller batches.`));
+    }
+    if (data.duplicate_count) {
+      pv.warn.append(note("alert-warn", data.dedupe_applied
+        ? `<strong>${data.duplicate_count}</strong> duplicate post(s) removed.`
+        : `<strong>${data.duplicate_count}</strong> duplicate post(s) found — tick “Remove duplicate posts” to drop them.`));
+    }
+    if (data.dropped_count) {
+      const list = data.dropped.slice(0, 5)
+        .map((d) => `<li>row ${d.row}: <code>${escapeHtml(d.value)}</code> — ${escapeHtml(d.reason)}</li>`)
+        .join("");
+      const more = data.dropped_count > 5
+        ? `<li>…and ${data.dropped_count - 5} more</li>` : "";
+      pv.warn.append(note("alert-warn",
+        `<strong>${data.dropped_count}</strong> line(s) skipped:<ul class="drop-list">${list}${more}</ul>`));
+    }
+
+    pv.rows.innerHTML = "";
+    for (const r of data.rows.slice(0, 60)) {
+      const li = document.createElement("li");
+      const who = document.createElement("strong");
+      who.textContent = r.account || "X post";
+      const a = document.createElement("a");
+      a.href = r.link;
+      a.textContent = r.link;
+      a.target = "_blank";
+      a.rel = "noopener";
+      li.append(who, a);
+      pv.rows.append(li);
+    }
+    pv.more.hidden = data.rows.length <= 60;
+    pv.more.textContent = data.rows.length > 60
+      ? `…and ${data.count - 60} more` : "";
+
+    setReady(data.over_limit ? 0 : data.count);
+  };
+
+  const showPreviewError = (msg, dropped) => {
+    pv.loading.hidden = true;
+    pv.body.hidden = true;
+    pv.empty.hidden = true;
+    pv.count.hidden = true;
+    let html = escapeHtml(msg);
+    if (dropped && dropped.length) {
+      html += `<ul class="drop-list">${dropped.slice(0, 5)
+        .map((d) => `<li>row ${d.row}: <code>${escapeHtml(d.value)}</code></li>`)
+        .join("")}</ul>`;
+    }
+    pv.error.innerHTML = html;
+    pv.error.hidden = false;
+    setReady(0);
+  };
+
+  let previewTimer = null;
+  let previewSeq = 0;
+
+  function schedulePreview(delay) {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(runPreview, delay);
+  }
+
+  async function runPreview() {
+    const body = new FormData();
+    body.append("csrf_token", form.csrf_token.value);
+    if (dedupe.checked) body.append("dedupe", "1");
+
+    if (activeTab === "file") {
+      if (!input.files.length) return resetPreview();
+      body.append("file", input.files[0]);
+    } else {
+      if (!paste.value.trim()) return resetPreview();
+      body.append("text", paste.value);
+    }
+
+    const seq = ++previewSeq;
+    pv.empty.hidden = true;
+    pv.error.hidden = true;
+    pv.body.hidden = true;
+    pv.loading.hidden = false;
+
+    try {
+      const res = await fetch("/api/preview", { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (seq !== previewSeq) return; // a newer request already went out
+      if (!res.ok || !data.ok) {
+        return showPreviewError(data.detail || `Could not read that (${res.status})`,
+                                data.dropped);
+      }
+      renderPreview(data);
+    } catch (_) {
+      if (seq === previewSeq) showPreviewError("Preview unavailable — check your connection.");
+    }
+  }
+
+  // ---------- submit ----------
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     showError("");
-
-    if (!input.files.length) return showError("Choose a file of links first.");
-    if (!nameInput.value.trim()) return showError("Give the report a name.");
+    if (!ready) return showError("Add some links first.");
+    if (!nameInput.value.trim()) {
+      nameInput.focus();
+      return showError("Give the report a name.");
+    }
 
     submitBtn.disabled = true;
     spinner.hidden = false;
 
     const body = new FormData();
-    body.append("file", input.files[0]);
     body.append("report_name", nameInput.value.trim());
     body.append("report_type", form.report_type.value);
     body.append("csrf_token", form.csrf_token.value);
-    if (keepEngagement && keepEngagement.checked && form.report_type.value === "twitter") {
+    if (dedupe.checked) body.append("dedupe", "1");
+    if (activeTab === "file") body.append("file", input.files[0]);
+    else body.append("text", paste.value);
+
+    const r = selectedRadio();
+    if (keepEngagement?.checked && r?.dataset.keepEngagement === "1") {
       body.append("keep_engagement", "1");
     }
-    if (workersSelect && workersSelect.value) body.append("workers", workersSelect.value);
+    if (workersSelect?.value && r?.dataset.workerChoice === "1") {
+      body.append("workers", workersSelect.value);
+    }
 
     try {
       const res = await fetch("/api/jobs", { method: "POST", body });
@@ -108,6 +294,14 @@ function initSubmitForm() {
       spinner.hidden = true;
     }
   });
+
+  resetPreview();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
 }
 
 function initJobPage(executionMode) {

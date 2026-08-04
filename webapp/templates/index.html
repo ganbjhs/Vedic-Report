@@ -4,121 +4,187 @@
 {% block content %}
 <div class="page-head">
   <h1>New Report</h1>
-  <p class="muted">Upload your list of X/Twitter post links, name the report, pick a type.</p>
+  <p class="muted">Pick a report type, add your links, check the preview, generate.</p>
 </div>
 
 {% if not x_login_ok %}
 <div class="alert alert-warn">
   <strong>No X login saved on the server.</strong>
-  Captures will hit login walls until an admin uploads <code>sessions/x_state.json</code>.
+  Captures will hit login walls until an admin signs in.
   <a href="/admin/session-status">How to fix this</a>
 </div>
 {% endif %}
 
-<div class="grid">
-  <section class="card">
-    <form id="job-form" class="stack" novalidate>
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+<form id="job-form" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
 
-      <div class="field">
-        <span class="label">Links file</span>
-        <label id="drop" class="dropzone" for="file-input">
-          <input id="file-input" type="file" name="file" accept="{{ accept }}" hidden>
-          <svg viewBox="0 0 24 24" class="drop-icon" aria-hidden="true">
-            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
-          </svg>
-          <span class="drop-main">Drop a file here, or <u>browse</u></span>
-          <span class="drop-sub">.xlsx · .xls · .csv · .tsv · .txt — up to {{ max_mb }} MB, {{ max_links }} links</span>
-        </label>
-        <div id="file-chip" class="chip" hidden>
-          <span id="file-name"></span>
-          <button type="button" id="file-clear" aria-label="Remove file">×</button>
-        </div>
-      </div>
+  <div class="build-grid">
+    <div class="build-main">
 
-      <label class="field">
-        <span class="label">Report / file name</span>
-        <input name="report_name" id="report-name" type="text" required
-               placeholder="Twitter Report" maxlength="80">
-        <span class="hint">Used for the document header and the download file name.</span>
-      </label>
-
-      <div class="field">
-        <span class="label">Report type</span>
-        <div class="choice-grid">
-          <label class="choice">
-            <input type="radio" name="report_type" value="twitter" checked>
-            <span class="choice-body">
-              <strong>Twitter Report</strong>
-              <small>Clean tweet screenshots with the engagement bar cropped out. One post per page, plus a links table.</small>
+      <!-- ---------- 1. report type ---------- -->
+      <section class="step">
+        <h2 class="step-title"><span class="step-n">1</span> Report type</h2>
+        <div class="profile-grid" role="radiogroup" aria-label="Report type">
+          {% for rt in report_types %}
+          <label class="profile-card">
+            <input type="radio" name="report_type" value="{{ rt.slug }}"
+                   {% if loop.first %}checked{% endif %}
+                   data-worker-choice="{{ 1 if rt.allows_worker_choice else 0 }}"
+                   data-keep-engagement="{{ 1 if rt.allows_keep_engagement else 0 }}">
+            <span class="profile-body">
+              <strong>{{ rt.label }}</strong>
+              <small>{{ rt.description }}</small>
+              <span class="outputs">
+                {% for o in rt.outputs %}<em>{{ o }}</em>{% endfor %}
+              </span>
             </span>
           </label>
-          <label class="choice">
-            <input type="radio" name="report_type" value="influencer">
-            <span class="choice-body">
-              <strong>Influencer Report</strong>
-              <small>Keeps likes &amp; reposts in the screenshot and adds a metrics table: Reactions, Comments, Reach, Shares.</small>
-            </span>
-          </label>
-        </div>
-      </div>
-
-      <div class="field" id="crop-option">
-        <label class="toggle">
-          <input type="checkbox" name="keep_engagement" id="keep-engagement" value="1">
-          <span class="toggle-body">
-            <strong>Keep the engagement line in the screenshot</strong>
-            <small>Crops below the reply/repost/like/views row instead of above it.
-              On a comment link the shot keeps both lines — the parent post's and
-              the comment's. Leave it off for the usual clean crop.</small>
-          </span>
-        </label>
-      </div>
-
-      <label class="field" id="speed-option">
-        <span class="label">Capture speed</span>
-        <select name="workers" id="workers">
-          <option value="">Server default — {{ default_workers }} browser(s)</option>
-          {% for n in range(1, max_workers + 1) %}
-          <option value="{{ n }}">{{ n }} browser{{ 's' if n > 1 else '' }}{% if n == 1 %} — slowest, lightest{% endif %}</option>
           {% endfor %}
-        </select>
-        <span class="hint">More browsers capture more posts at once. They only
-          go faster if the server has spare CPU cores — past that they take turns
-          on the same core and just use more memory. Capped at the number of
-          links, so 4 browsers on 2 links runs 2.</span>
-      </label>
+        </div>
+      </section>
 
-      <div id="form-error" class="alert alert-error" hidden></div>
+      <!-- ---------- 2. links ---------- -->
+      <section class="step">
+        <h2 class="step-title"><span class="step-n">2</span> Links</h2>
 
-      <button class="primary" id="submit-btn" type="submit">
+        <div class="tabs" role="tablist" aria-label="How to add links">
+          <button type="button" class="tab" role="tab" id="tab-file"
+                  aria-selected="true" aria-controls="panel-file" data-tab="file">
+            Upload a file
+          </button>
+          <button type="button" class="tab" role="tab" id="tab-paste"
+                  aria-selected="false" aria-controls="panel-paste" data-tab="paste"
+                  tabindex="-1">
+            Paste links
+          </button>
+        </div>
+
+        <div class="tabpanel" id="panel-file" role="tabpanel"
+             aria-labelledby="tab-file" data-panel="file">
+          <label id="drop" class="dropzone" for="file-input">
+            <!-- visually-hidden, NOT [hidden]: a hidden input is not focusable,
+                 which made the picker unreachable by keyboard. -->
+            <input id="file-input" class="visually-hidden" type="file" name="file"
+                   accept="{{ accept }}">
+            <svg viewBox="0 0 24 24" class="drop-icon" aria-hidden="true">
+              <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+            </svg>
+            <span class="drop-main">Drop a file here, or <u>browse</u></span>
+            <span class="drop-sub">.xlsx · .xls · .csv · .tsv · .txt — up to {{ max_mb }} MB, {{ max_links }} links</span>
+          </label>
+          <div id="file-chip" class="chip" hidden>
+            <span id="file-name"></span>
+            <button type="button" id="file-clear" aria-label="Remove file">×</button>
+          </div>
+        </div>
+
+        <div class="tabpanel" id="panel-paste" role="tabpanel"
+             aria-labelledby="tab-paste" data-panel="paste" hidden>
+          <label class="field">
+            <span class="label">Paste anything containing X links</span>
+            <textarea id="paste-input" name="text" rows="8" spellcheck="false"
+                      placeholder="Paste a list, a chat log, an email — surrounding words are fine.&#10;&#10;https://x.com/someone/status/123456&#10;https://x.com/another/status/789012"></textarea>
+            <span class="hint">Links are pulled out automatically. Several per line,
+              bullets, numbering and trailing punctuation are all fine.</span>
+          </label>
+        </div>
+
+        <label class="check">
+          <input type="checkbox" id="dedupe" name="dedupe" value="1" checked>
+          <span>Remove duplicate posts <small class="muted">(same post linked twice, including <code>?s=20</code> variants)</small></span>
+        </label>
+      </section>
+
+      <!-- ---------- 3. name + options ---------- -->
+      <section class="step">
+        <h2 class="step-title"><span class="step-n">3</span> Name &amp; options</h2>
+
+        <label class="field">
+          <span class="label">Report / file name</span>
+          <input name="report_name" id="report-name" type="text" required
+                 placeholder="Twitter Report" maxlength="80">
+          <span class="hint">Used for the document header and the download file name.</span>
+        </label>
+
+        <div class="field" id="crop-option">
+          <label class="toggle">
+            <input type="checkbox" name="keep_engagement" id="keep-engagement" value="1">
+            <span class="toggle-body">
+              <strong>Keep the engagement line in the screenshot</strong>
+              <small>Crops below the reply/repost/like/views row instead of above it.
+                On a comment link the shot keeps both lines — the parent post's and
+                the comment's.</small>
+            </span>
+          </label>
+        </div>
+
+        <label class="field" id="speed-option">
+          <span class="label">Capture speed</span>
+          <select name="workers" id="workers">
+            <option value="">Server default — {{ default_workers }} browser(s)</option>
+            {% for n in range(1, max_workers + 1) %}
+            <option value="{{ n }}">{{ n }} browser{{ 's' if n > 1 else '' }}{% if n == 1 %} — slowest, lightest{% endif %}</option>
+            {% endfor %}
+          </select>
+          <span class="hint">More browsers only go faster if the server has spare
+            CPU cores. Capped at the number of links.</span>
+        </label>
+      </section>
+
+      <div id="form-error" class="alert alert-error" hidden role="alert"></div>
+
+      <button class="primary big" id="submit-btn" type="submit" disabled>
         <span class="btn-label">Generate report</span>
         <span class="spinner" hidden></span>
       </button>
-    </form>
-  </section>
+      <p class="muted small" id="submit-hint">Add some links to continue.</p>
+    </div>
 
-  <section class="card">
-    <h2 class="card-title">Recent reports</h2>
-    {% if jobs %}
-    <ul class="job-list" id="job-list">
-      {% for j in jobs %}
-      <li>
-        <a href="/jobs/{{ j.id }}" class="job-row">
-          <span class="job-main">
-            <strong>{{ j.name }}</strong>
-            <small>{{ 'Influencer' if j.report_type == 'influencer' else 'Twitter' }} · {{ j.link_count }} link(s)</small>
-          </span>
-          <span class="status status-{{ j.status }}">{{ j.status }}</span>
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="muted empty">No reports yet. Your finished reports will appear here.</p>
-    {% endif %}
-  </section>
-</div>
+    <!-- ---------- preview + recent ---------- -->
+    <aside class="build-side">
+      <section class="card preview-card">
+        <h2 class="card-title">
+          Preview <span id="preview-count" class="count" hidden></span>
+        </h2>
+        <p class="muted small" id="preview-empty">
+          Nothing yet. Choose a file or paste some links and this shows exactly
+          what will be captured — before any browser time is spent.
+        </p>
+        <div class="skeleton-stack" id="preview-loading" hidden aria-hidden="true">
+          <span class="skeleton"></span><span class="skeleton"></span>
+          <span class="skeleton"></span>
+        </div>
+        <div id="preview-body" hidden>
+          <div id="preview-warnings"></div>
+          <ol class="preview-rows" id="preview-rows"></ol>
+          <p class="muted small" id="preview-more" hidden></p>
+        </div>
+        <div class="alert alert-error" id="preview-error" hidden role="alert"></div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Recent reports</h2>
+        {% if jobs %}
+        <ul class="job-list">
+          {% for j in jobs %}
+          <li>
+            <a href="/jobs/{{ j.id }}" class="job-row">
+              <span class="job-main">
+                <strong>{{ j.name }}</strong>
+                <small>{{ j.report_type }} · {{ j.link_count }} link(s)</small>
+              </span>
+              <span class="status status-{{ j.status }}">{{ j.status }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted empty">No reports yet. Your finished reports will appear here.</p>
+        {% endif %}
+      </section>
+    </aside>
+  </div>
+</form>
 {% endblock %}
 
 {% block scripts %}

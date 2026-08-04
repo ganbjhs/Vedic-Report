@@ -91,11 +91,105 @@ async def _read_capped(upload: UploadFile) -> bytes:
 
 
 # --------------------------------------------------------------------------- #
+# Preview — parse an input WITHOUT creating a job
+# --------------------------------------------------------------------------- #
+async def _grid_from_request(file, text: str) -> tuple:
+    """(grid, source_label, original_bytes) for any input method.
+
+    Preview and submit both call this, so what the preview showed is exactly
+    what gets captured — they cannot drift apart. `original_bytes` is kept for
+    the job folder's troubleshooting copy; for a paste it is the text itself.
+    """
+    pasted = (text or "").strip()
+    if pasted:
+        grid = uploads.grid_from_text(pasted)
+        if not grid:
+            raise uploads.UploadError(
+                "No links found in that text. Paste anything containing "
+                "x.com or twitter.com post links — surrounding words are fine.")
+        return grid, "pasted links", pasted.encode("utf-8")
+
+    if file is None or not getattr(file, "filename", ""):
+        raise uploads.UploadError(
+            "Nothing to read — choose a file or paste some links.")
+
+    suffix = uploads.suffix_of(file.filename)
+    raw = await _read_capped(file)
+    tmp = config.DATA_DIR / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    staged = tmp / f"preview-{int(time.time() * 1000)}{suffix}"
+    staged.write_bytes(raw)
+    try:
+        grid = await asyncio.to_thread(uploads.read_grid, staged, suffix)
+    finally:
+        staged.unlink(missing_ok=True)
+    return grid, uploads.safe_upload_name(file.filename), raw
+
+
+@router.post("/preview")
+async def preview(request: Request,
+                  file: UploadFile = File(None),
+                  text: str = Form(""),
+                  dedupe: str = Form(""),
+                  csrf_token: str = Form(...),
+                  user: str = Depends(auth.require_user_api)):
+    """What WOULD be captured, without spending a capture slot.
+
+    The submit path is upload-and-hope: you learn what the tool understood only
+    after it has spent browser minutes. This answers the same question for free,
+    and is the base every other input method builds on (roadmap A1).
+    """
+    auth.verify_csrf(request, csrf_token)
+    want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
+
+    try:
+        grid, source, _raw = await _grid_from_request(file, text)
+        report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe)
+    except uploads.UploadError as e:
+        return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse(
+            {"ok": False,
+             "detail": f"That input could not be read ({e}). Try re-saving it "
+                       "as .xlsx or .csv."}, status_code=400)
+
+    rows = report["rows"]
+    if not rows:
+        detail = ("Found link(s), but none are X/Twitter posts. This tool only "
+                  "captures x.com / twitter.com posts."
+                  if report["dropped"] else
+                  "No links found. Put one X/Twitter post URL per row or per "
+                  "line, or use a sheet with a column headed 'Link'.")
+        return JSONResponse({"ok": False, "detail": detail,
+                             "dropped": report["dropped"][:50]},
+                            status_code=400)
+
+    shown = rows[:config.MAX_LINKS]
+    return {
+        "ok": True,
+        "source": source,
+        "count": len(rows),
+        "limit": report["limit"],
+        "over_limit": report["over_limit"],
+        "dedupe_applied": want_dedupe,
+        "duplicate_count": report["duplicate_count"],
+        "duplicates": report["duplicates"][:20],
+        "dropped_count": len(report["dropped"]),
+        "dropped": report["dropped"][:50],
+        "rows": [{"n": i, "account": r.get("account_name", ""),
+                  "link": r.get("link", "")}
+                 for i, r in enumerate(shown, start=1)],
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Submit
 # --------------------------------------------------------------------------- #
 @router.post("/jobs")
 async def submit_job(request: Request,
-                     file: UploadFile = File(...),
+                     file: UploadFile = File(None),
+                     text: str = Form(""),
+                     dedupe: str = Form(""),
                      report_name: str = Form(...),
                      report_type: str = Form(...),
                      csrf_token: str = Form(...),
@@ -125,22 +219,22 @@ async def submit_job(request: Request,
     want_workers = (max(0, min(want_workers, config.MAX_WORKERS))
                     if rt.allows_worker_choice else 0)
 
+    # Parse + validate BEFORE a job exists, so a bad input never occupies a slot.
+    # Goes through the SAME `_grid_from_request` + `analyse` the preview uses,
+    # so what you were shown is exactly what gets captured.
+    pasted = (text or "").strip()
+    want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
     try:
-        suffix = uploads.suffix_of(file.filename)
-        raw = await _read_capped(file)
-    except uploads.UploadError as e:
-        return JSONResponse({"detail": str(e)}, status_code=400)
-
-    # Parse + validate BEFORE a job exists, so a bad file never occupies a slot.
-    try:
-        tmp = config.DATA_DIR / "tmp"
-        tmp.mkdir(parents=True, exist_ok=True)
-        staged = tmp / f"upload-{int(time.time()*1000)}{suffix}"
-        staged.write_bytes(raw)
-        try:
-            rows = await asyncio.to_thread(uploads.parse_rows, staged, suffix)
-        finally:
-            staged.unlink(missing_ok=True)
+        grid, source, raw = await _grid_from_request(file, pasted)
+        report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe)
+        rows = report["rows"]
+        if not rows:
+            raise uploads.UploadError(
+                "No X/Twitter post links found in that input.")
+        if len(rows) > config.MAX_LINKS:
+            raise uploads.UploadError(
+                f"That input has {len(rows)} X links — the limit is "
+                f"{config.MAX_LINKS} per job. Split it into smaller batches.")
     except uploads.UploadError as e:
         return JSONResponse({"detail": str(e)}, status_code=400)
     except Exception as e:
@@ -150,7 +244,7 @@ async def submit_job(request: Request,
 
     stem = uploads.safe_stem(report_name, "Report")
     title = uploads.display_title(report_name, "Report")
-    upload_name = uploads.safe_upload_name(file.filename)
+    upload_name = source if pasted else uploads.safe_upload_name(file.filename)
 
     job_id = store.create(owner=user, name=stem, title=title,
                           report_type=report_type, link_count=len(rows),

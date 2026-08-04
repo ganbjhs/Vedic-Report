@@ -245,6 +245,95 @@ def write_canonical_xlsx(rows: list, dest: Path) -> None:
     wb.save(dest)
 
 
+# --------------------------------------------------------------------------- #
+# Pasted text -> grid
+# --------------------------------------------------------------------------- #
+def grid_from_text(text: str) -> list:
+    """Pull X links out of arbitrarily messy pasted text.
+
+    The frozen loader's plain-list mode takes the WHOLE CELL containing a URL as
+    the link, which is right for a tidy one-link-per-line paste and wrong for
+    "check this out https://x.com/a/status/1 lol" — that would become the link.
+    So the URLs are extracted here first and handed over one per row, which is a
+    shape `_rows_from_grid` reads exactly as intended.
+
+    Handles: several links on one line, junk words around them, blank lines,
+    bullets and numbering, trailing punctuation, and angle-bracket wrapping.
+    """
+    rows = []
+    for line in (text or "").splitlines():
+        for raw in _URL_RE.findall(line):
+            cleaned = input_loader._clean_url(raw.strip("<>“”‘’"))
+            if cleaned:
+                rows.append([cleaned])
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# Grid -> rows + diagnostics
+# --------------------------------------------------------------------------- #
+def _status_key(link: str) -> str:
+    """Identity of a post for duplicate detection: its status id when present,
+    else the URL minus tracking query junk. `?s=20&t=...` makes the same post
+    look like several different ones."""
+    m = re.search(r"/status/(\d+)", link or "")
+    if m:
+        return m.group(1)
+    return re.sub(r"[?#].*$", "", (link or "").lower()).rstrip("/")
+
+
+def analyse(grid: list, dedupe: bool = False) -> dict:
+    """Rows the pipeline would capture, plus WHY anything was left out.
+
+    The frozen `_rows_from_grid` silently drops non-X links and reports only a
+    count. Row numbers are computed here, alongside it, so a 200-row sheet says
+    "row 14" instead of starting a manual hunt (roadmap A5). The loader itself
+    is untouched and remains the single source of truth for what a sheet means.
+    """
+    rows = input_loader._rows_from_grid(grid)
+
+    kept = set()
+    for r in rows:
+        kept.add(r["link"])
+
+    dropped = []
+    seen_raw = set()
+    for line_no, cells in enumerate(grid, start=1):
+        for cell in cells:
+            for raw in _URL_RE.findall(cell or ""):
+                cleaned = input_loader._clean_url(raw)
+                if cleaned in kept or cleaned in seen_raw:
+                    continue
+                seen_raw.add(cleaned)
+                reason = ("this is not an x.com / twitter.com link"
+                          if not input_loader.is_x_url(cleaned)
+                          else "not recognised as an X post link")
+                dropped.append({"row": line_no, "value": cleaned[:180],
+                                "reason": reason})
+
+    # Duplicates are REPORTED always and removed only on request: the frozen
+    # loader keeps them, and silently changing that would alter what an existing
+    # sheet produces.
+    positions = {}
+    for i, r in enumerate(rows, start=1):
+        positions.setdefault(_status_key(r["link"]), []).append(i)
+    duplicates = [{"link": rows[v[0] - 1]["link"], "positions": v}
+                  for v in positions.values() if len(v) > 1]
+
+    if dedupe and duplicates:
+        first = {v[0] for v in positions.values()}
+        rows = [r for i, r in enumerate(rows, start=1) if i in first]
+
+    return {
+        "rows": rows,
+        "dropped": dropped,
+        "duplicates": duplicates,
+        "duplicate_count": sum(len(d["positions"]) - 1 for d in duplicates),
+        "over_limit": len(rows) > config.MAX_LINKS,
+        "limit": config.MAX_LINKS,
+    }
+
+
 def suffix_of(filename: str) -> str:
     suffix = Path((filename or "").replace("\\", "/")).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:

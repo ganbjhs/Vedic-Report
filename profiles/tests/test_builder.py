@@ -41,14 +41,15 @@ def check(name, got, want=True):
 HEIGHTS = [832, 844, 784, 431, 491, 407, 176, 868]
 
 
-def make_fixture(root: Path, n=8, dpr=1):
+def make_fixture(root: Path, n=8, dpr=1, heights=None):
     """Synthetic masters + a results.json in the shape the runners emit,
     including two demoted links that must NOT reach the document."""
     shots = root / "screenshots"
     shots.mkdir(parents=True, exist_ok=True)
     results = []
+    hs = heights or HEIGHTS
     for i in range(n):
-        w, h = 598 * dpr, HEIGHTS[i % len(HEIGHTS)] * dpr
+        w, h = 598 * dpr, hs[i % len(hs)] * dpr
         im = Image.new("RGB", (w, h), "#FFFFFF")
         for y in range(0, h, 9):
             for x in range(0, w, 13):
@@ -168,7 +169,56 @@ with tempfile.TemporaryDirectory() as td1, tempfile.TemporaryDirectory() as td2:
     check("placements identical at DPR 1 and DPR 2",
           [p.as_tuple() for p in pa], [p.as_tuple() for p in pb])
 
-print("\n7. an empty / all-demoted results.json does not crash")
+print("\n7. PAGE-COUNT PARITY against the frozen builders")
+# The geometry parity suite compares image PLACEMENTS and is blind to anything
+# else on the page. That blind spot shipped a real defect: the links table was
+# forced onto its own page, making the twitter profile 9 pages against the
+# frozen builder's 8. Page count is the cheapest end-to-end check that sees it.
+import re as _re, zlib as _zlib                # noqa: E402
+
+
+def pdf_pages(path):
+    raw = Path(path).read_bytes()
+    n = len(_re.findall(rb"/Type\s*/Page[^s]", raw))
+    if n:
+        return n
+    total = 0
+    for m in _re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", raw, _re.S):
+        try:
+            total += len(_re.findall(rb"/Type\s*/Page[^s]",
+                                     _zlib.decompress(m.group(1))))
+        except Exception:
+            pass
+    if total:
+        return total
+    c = _re.search(rb"/Type\s*/Pages.*?/Count\s+(\d+)", raw, _re.S)
+    return int(c.group(1)) if c else -1
+
+
+# WHAT PARITY MEANS HERE, precisely. The agreed bar is GEOMETRY parity: same
+# page count for the SCREENSHOT pages and the same placement for every image
+# (asserted in test_parity.py). The links table is a trailing appendix and
+# reportlab's platypus flows it by its own rules, which this canvas-based
+# builder does not reimplement — so its exact page may differ by one from the
+# frozen builder's. That is a documented cosmetic difference, NOT a licence for
+# the table to consume a page gratuitously, which is what these two cases pin
+# down: with room below the last post it MUST share that page.
+for slug in ("twitter", "influencer"):
+    profile = registry.load(slug)
+    for label, heights, slack in (("short last post", [176], 0),
+                                  ("tall last post", [868], 1)):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rows = [r for r in make_fixture(root, n=6, heights=heights)
+                    if prof_builder.usable(r)]
+            made = build(slug, root)
+            shot_pages = layout.page_count(profile, len(rows))
+            total = pdf_pages(made["pdf"])
+            check(f"{slug} / {label}: {total} page(s) vs {shot_pages} of "
+                  f"screenshots (slack {slack})",
+                  shot_pages <= total <= shot_pages + slack, True)
+
+print("\n8. an empty / all-demoted results.json does not crash")
 with tempfile.TemporaryDirectory() as td:
     root = Path(td)
     (root / "results.json").write_text(json.dumps(

@@ -142,12 +142,14 @@ def build_pdf(results, images, places, profile, title, out):
         c.showPage()
 
     current = -1
+    cursor_y = None          # lowest ink on the current page, for the links table
     for r, img, place in zip(results, images, places):
         if place.page != current:
             if current >= 0:
                 footer(current + 1, n_pages)
                 c.showPage()
             current = place.page
+            cursor_y = None
             if content.get("header"):
                 c.setFont("Helvetica-Bold", 13)
                 c.setFillColor(colors.HexColor("#0F172A"))
@@ -184,15 +186,27 @@ def build_pdf(results, images, places, profile, title, out):
             c.drawString(x, caption_y, f"{label}: {val}")
             caption_y -= 9.5
 
+        cursor_y = caption_y if cursor_y is None else min(cursor_y, caption_y)
+
     if places:
         footer(current + 1, n_pages)
-        c.showPage()
 
+    # The links table FLOWS below the last screenshot rather than starting its
+    # own page — matching the frozen builders, which say so explicitly ("no page
+    # break before it"). Forcing a page here made the twitter profile 9 pages
+    # against the frozen builder's 8, which the geometry parity test could not
+    # see because it only compares image placements.
     if content.get("links_table"):
+        need = 3 * 12 + 26                     # heading + a few rows
+        if cursor_y is None or cursor_y - 26 < bottom * inch + need:
+            if places:
+                c.showPage()
+            cursor_y = page_h - top * inch + 14
+        y = cursor_y - 26
         c.setFont("Helvetica-Bold", 14)
         c.setFillColor(colors.HexColor("#0F172A"))
-        c.drawString(left * inch, page_h - top * inch, "Links")
-        y = page_h - top * inch - 22
+        c.drawString(left * inch, y, "Links")
+        y -= 18
         c.setFont("Helvetica", 8)
         for r in results:
             link = shown_link(r)
@@ -207,6 +221,8 @@ def build_pdf(results, images, places, profile, title, out):
             c.linkURL(link, (left * inch, y - 2,
                              page_w - right * inch, y + 8), relative=0)
             y -= 12
+        c.showPage()
+    elif places:
         c.showPage()
 
     c.save()

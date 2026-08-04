@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "slug": "twitter-hi-res",
+  "label": "Twitter Report — high resolution",
+  "extends": "twitter",
+  "description": "The Twitter report captured at 2x device pixel ratio: 1196px masters instead of 598px, so 244 DPI on the page instead of 122. Identical layout — DPR changes density, never placement. Costs roughly +24% wall clock and +10% memory per browser, paid only by jobs that ask for it. The default Twitter report is untouched.",
+
+  "capture": {
+    "device_scale_factor": 2
+  },
+
+  "outputs": ["pdf", "docx"]
+}

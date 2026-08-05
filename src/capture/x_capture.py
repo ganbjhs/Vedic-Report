@@ -265,6 +265,26 @@ def _best_article(infos, sid: str) -> int:
     return max(range(len(infos)), key=lambda i: score(i, infos[i]))
 
 
+def _page_has_status(page, sid: str) -> bool:
+    """Does ANY article on this page link to the status id the URL names?
+
+    `_locate_focused` has already waited `_FOCUSED_TIMEOUT` for exactly this
+    selector, so a False here means the linked post is genuinely not on the
+    page — deleted, or its author suspended. X still renders the surrounding
+    conversation in that case, so continuing would screenshot a DIFFERENT post.
+
+    Defaults to True when it cannot tell, so an evaluation failure never costs
+    a good post.
+    """
+    if not sid:
+        return True
+    try:
+        return page.locator(
+            f'{TWEET_SELECTOR}:has(a[href*="/status/{sid}"])').count() > 0
+    except Exception:
+        return True
+
+
 def _pick_article(page, url: str):
     """Return (index, count) of the article the URL points at.
 
@@ -725,6 +745,20 @@ def capture(page, url: str, shot_path: Path, keep_engagement: bool = False) -> d
     seen = {}                                   # what _locate_focused observed
     tweet, idx = _locate_focused(page, url, seen)  # article 0 is the PARENT on a reply
     if tweet is None:                           # no usable id — fall back to scoring
+        # ...unless the post the URL names is not on this page at all. A
+        # suspended author leaves the PARENT rendered and the reply gone, so
+        # `_load_tweet` sees an article and says "ok" while the linked post is
+        # missing. Capturing then produces a sliver of the wrong post. X's
+        # wording for this is not in NOT_FOUND_PHRASES and the page often
+        # renders near-empty, so the structural check is the reliable one.
+        if not _page_has_status(page, _status_id(url)):
+            result["status"] = "not_found"
+            try:
+                page.screenshot(path=str(shot_path))    # evidence for debugging
+                result["screenshot"] = str(shot_path)
+            except Exception:
+                pass
+            return result
         idx, _count = _pick_article(page, url)
         tweet = articles.nth(idx)
     tweet, idx = _ensure_parent(page, url, tweet, idx, seen)  # a reply needs its parent

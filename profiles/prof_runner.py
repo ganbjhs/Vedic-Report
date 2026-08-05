@@ -148,6 +148,21 @@ def _quality_ok(result) -> bool:
     return _shot_ok(result) and _why_poor(result) is None
 
 
+def _undersized(result) -> bool:
+    """Too small to contain a post — a measurement, so it may demote."""
+    # NOT gated on _shot_ok: that requires MIN_SHOT_BYTES, and a sliver can
+    # compress below it. Such a shot would then skip this check while still
+    # satisfying report_builder._usable (status "ok" + non-zero file) and land
+    # in the document. Existence is the only precondition that belongs here.
+    if result.get("status") != "ok":
+        return False
+    shot = result.get("screenshot")
+    if not shot or not Path(shot).exists():
+        return False
+    good, why = shot_quality.screenshot_quality(shot)
+    return (not good) and shot_quality.is_undersized(why)
+
+
 def main() -> None:
     argv = sys.argv
     slug = _arg_value(argv, "--profile", "twitter")
@@ -242,6 +257,13 @@ def main() -> None:
         r["status"] = "parent_lost"
     if orphaned:
         progress.dropped_parent_lost(len(orphaned))
+
+    undersized = [r for r in by_idx.values()
+                  if r.get("status") == "ok" and _undersized(r)]
+    for r in undersized:
+        r["status"] = "too_small"
+    if undersized:
+        progress.dropped_too_small(len(undersized))
 
     cropped = [r for r in by_idx.values()
                if r.get("status") == "ok" and r.get("frame_ok") is False]

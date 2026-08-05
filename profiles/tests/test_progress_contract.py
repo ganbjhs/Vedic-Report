@@ -69,6 +69,7 @@ CASES = [
     ("recapturing",         lambda: emitted(P.recapturing, 2),        RN._RE_QUALITY,  ("2",)),
     ("dropping_overlay",    lambda: emitted(P.dropping_overlay, 5),   RN._RE_BLOCKED,  ("5",)),
     ("dropped_parent_lost", lambda: emitted(P.dropped_parent_lost, 4), RN._RE_PARENT_LOST, ("4",)),
+    ("dropped_too_small",   lambda: emitted(P.dropped_too_small, 6),   RN._RE_TOO_SMALL, ("6",)),
     ("maybe_cropped",       lambda: emitted(P.maybe_cropped, 6),      RN._RE_CROPPED,  ("6",)),
     ("verify",              lambda: emitted(P.verify, 18, 20),        RN._RE_VERIFY,   ("18", "20")),
     ("metrics_missing",     lambda: emitted(P.metrics_missing, 9),    RN._RE_METRICS,  ("9",)),
@@ -91,6 +92,11 @@ check("parent line does NOT match the overlay regex",
       matches(RN._RE_BLOCKED, parent), False)
 check("parent line does NOT match the cropped regex",
       matches(RN._RE_CROPPED, parent), False)
+small = emitted(P.dropped_too_small, 6)
+check("too-small line does NOT match the parent regex",
+      matches(RN._RE_PARENT_LOST, small), False)
+check("too-small line does NOT match the overlay regex",
+      matches(RN._RE_BLOCKED, small), False)
 
 # --------------------------------------------------------------------------- #
 print("\n3. no emitter accidentally matches a DIFFERENT regex")
@@ -115,6 +121,7 @@ FROZEN_LINES = [
     ("[quality] dropping 1 shot(s) still covered by an X dialog", RN._RE_BLOCKED),
     ("[quality] dropped 3 shot(s) whose parent post could not be captured",
      RN._RE_PARENT_LOST),
+    ("[quality] dropped 6 shot(s) too small to contain a post", RN._RE_TOO_SMALL),
     ("[quality] 2 shot(s) may be missing the parent post or the reply",
      RN._RE_CROPPED),
     ("[verify] 20/20 links produced a clean screenshot", RN._RE_VERIFY),

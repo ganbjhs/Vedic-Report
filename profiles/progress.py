@@ -83,6 +83,10 @@ def dropped_parent_lost(count: int) -> str:
                 "could not be captured")
 
 
+def dropped_too_small(count: int) -> str:
+    return _say(f"[quality] dropped {count} shot(s) too small to contain a post")
+
+
 def maybe_cropped(count: int) -> str:
     return _say(f"[quality] {count} shot(s) may be missing the parent post "
                 "or the reply")

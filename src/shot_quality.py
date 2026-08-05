@@ -35,6 +35,28 @@ def _dimmed(hist, pixels):
     return (mid > _MID_SHARE and bright < _BRIGHT_SHARE), mid
 
 
+# The prefix `screenshot_quality` uses for the one verdict that is a
+# MEASUREMENT rather than a guess. Kept as a constant so callers can ask
+# `is_undersized(...)` instead of matching the string themselves.
+UNDERSIZED = "too-small"
+
+
+def is_undersized(reason) -> bool:
+    """Is this verdict a dimensional FACT rather than a statistical inference?
+
+    The other three checks infer — std, mean, histogram shape — and a
+    half-dark screenshot of the right post still beats a missing page, which is
+    why they only ever trigger a retake (rule 7).
+
+    `too-small` is different in kind: it is the image's own height. A frame
+    under 180px cannot contain a post, and 80px specifically is the floor in
+    `_crop_box` (`max(cut - frame_top - _TOP_PAD, 80)`) — the sentinel meaning
+    the crop computed degenerate. That is an observation, so callers are
+    entitled to act on it after every retake has been spent.
+    """
+    return bool(reason) and str(reason).startswith(UNDERSIZED)
+
+
 def screenshot_quality(path):
     try:
         from PIL import Image, ImageStat

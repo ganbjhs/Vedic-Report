@@ -34,26 +34,9 @@
             <span class="profile-body">
               {% set pv = previews.get(rt.slug) %}
               {% if pv and pv.img %}
-              <img class="profile-thumb" src="{{ pv.img }}" alt=""
-                   title="{{ rt.description }}">
+              <img class="profile-thumb" src="{{ pv.img }}" alt="">
               {% endif %}
-              <span class="profile-text">
-                <strong>{{ rt.label }}</strong>
-                <small class="profile-caption">{{ rt.caption }}</small>
-                <span class="profile-meta">
-                  <span class="outputs">
-                    {% for o in rt.outputs %}<em>{{ o }}</em>{% endfor %}
-                  </span>
-                  <span class="profile-links">
-                    <button type="button" class="info-btn" title="{{ rt.description }}"
-                            aria-label="About {{ rt.label }}">i</button>
-                    {% if pv and pv.sample %}
-                    <a class="sample-link" href="{{ pv.sample }}" target="_blank"
-                       rel="noopener" title="Open the full sample PDF">sample</a>
-                    {% endif %}
-                  </span>
-                </span>
-              </span>
+              <strong>{{ rt.label }}</strong>
             </span>
           </label>
           {% endfor %}

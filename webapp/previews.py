@@ -18,7 +18,6 @@ if str(_PROFILES) not in sys.path:
     sys.path.insert(0, str(_PROFILES))
 
 STATIC_DIR = Path(__file__).resolve().parent / "static" / "profiles"
-SAMPLES_DIR = config.ROOT / "data" / "samples"
 
 _MANIFEST = {}
 
@@ -41,20 +40,6 @@ def manifest() -> dict:
     for slug, name in (_MANIFEST or {}).items():
         out[slug] = {
             "img": f"/static/profiles/{name}",
-            "sample": f"/samples/{slug}.pdf" if sample_path(slug) else None,
+            "img_large": f"/static/profiles/{name.replace('.png', '-lg.png')}",
         }
     return out
-
-
-def sample_path(slug: str):
-    """The sample PDF for `slug`, or None. Slug is matched against known
-    profiles — never interpolated into a path from user input."""
-    try:
-        import registry
-        known = set(registry.available())
-    except Exception:
-        known = set()
-    if slug not in known:
-        return None
-    path = SAMPLES_DIR / f"{slug}.pdf"
-    return path if path.is_file() else None

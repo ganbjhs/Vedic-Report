@@ -51,6 +51,12 @@ function initSubmitForm() {
   form.querySelectorAll('input[name="report_type"]').forEach((radio) =>
     radio.addEventListener("change", syncOptions)
   );
+  // Arriving from the Report types gallery with ?type=<slug> preselects it.
+  const wanted = new URLSearchParams(location.search).get("type");
+  if (wanted) {
+    const radio = form.querySelector(`input[name="report_type"][value="${CSS.escape(wanted)}"]`);
+    if (radio) radio.checked = true;
+  }
   syncOptions();
 
   // ---------- tabs ----------

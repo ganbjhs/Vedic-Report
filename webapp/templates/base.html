@@ -14,8 +14,12 @@
     {% include "_brand.svg" %}
     <span>Report Automation</span>
   </a>
+  <nav class="topbar-nav">
+    <a href="/" class="navlink{{ ' on' if nav == 'new' else '' }}">New report</a>
+    <a href="/report-types" class="navlink{{ ' on' if nav == 'types' else '' }}">Report types</a>
+    <a href="/admin/session-status" class="navlink{{ ' on' if nav == 'x' else '' }}">X login</a>
+  </nav>
   <nav class="topbar-actions">
-    <a class="ghost" href="/admin/session-status">X login status</a>
     <span class="who">{{ user }}</span>
     <form method="post" action="/logout">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">

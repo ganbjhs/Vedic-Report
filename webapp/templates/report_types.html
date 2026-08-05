@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Report types — Report Automation{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Report types</h1>
+  <p class="muted">What each one produces. Pick any of them on the New report page.</p>
+</div>
+
+<div class="type-list">
+  {% for rt in report_types %}
+  {% set pv = previews.get(rt.slug) %}
+  <section class="type-row">
+    {% if pv and pv.img_large %}
+    <img class="type-shot" src="{{ pv.img_large }}" alt="Preview of the {{ rt.label }} page layout">
+    {% endif %}
+    <div class="type-info">
+      <h2>{{ rt.label }}</h2>
+      <p class="type-caption">{{ rt.caption }}</p>
+      <p class="muted">{{ rt.description }}</p>
+      <a class="primary as-button" href="/?type={{ rt.slug }}">Use this type</a>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

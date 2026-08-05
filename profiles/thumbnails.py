@@ -31,7 +31,8 @@ import layout        # noqa: E402
 import registry      # noqa: E402
 import shapes        # noqa: E402
 
-PAGE_W = 200             # px per rendered page; two pages when a cover exists
+PAGE_W = 200             # small preview: the picker card
+LARGE_W = 560            # gallery preview: the tweet must be READABLE
 FIXTURE = HERE.parent / "data" / "sample-fixture" / "screenshots"
 GUTTER = 8
 _SUPERSAMPLE = 2         # render big, downscale once — cheap anti-aliasing
@@ -183,10 +184,14 @@ def generate(dest: Path, slugs=None) -> dict:
             if not path.exists():
                 render(profile).save(path, "PNG", optimize=True)
                 made[slug] = name
+            big = dest / f"{slug}-{profile_hash(profile)}-lg.png"
+            if not big.exists():
+                render(profile, LARGE_W).save(big, "PNG", optimize=True)
         except Exception as e:                       # never break the dashboard
             print(f"[thumbnails] {slug}: {e}", flush=True)
 
-    keep = set(wanted.values())
+    keep = set(wanted.values()) | {n.replace(".png", "-lg.png")
+                                   for n in wanted.values()}
     for old in dest.glob("*.png"):
         if old.name not in keep:
             old.unlink(missing_ok=True)

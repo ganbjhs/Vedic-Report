@@ -32,6 +32,63 @@ Prefer stdlib `urllib.request` for A3 and avoid the dependency entirely.
 
 ---
 
+## Track C — Post-merge, fresh branch (agreed 2026-08-05)
+
+Both queued behind the merge. Neither needs captures.
+
+### C1 — Auto-generated profile thumbnails on the dashboard cards
+
+Replace the long description text on each profile card with a rendered mini page
+showing that profile's *actual* geometry — 1-up letter, 2-up A4, the 2x3 contact
+sheet, cover+card for the deck — drawn from the profile's own config through
+`layout.placements()` and Pillow. Fixture screenshots or grey placeholder blocks,
+whichever reads better at ~300px wide.
+
+* Single-line caption under the image; the long description moves to a tooltip
+  or an "info" affordance.
+* Card click-through opens that profile's full sample PDF.
+* Auto-regenerated, so a new or edited profile can never show a stale or missing
+  image. Served as static files — no per-request rendering.
+
+**Design points to settle when building:**
+- *Freshness trigger.* Regenerating at app startup is simplest and guarantees
+  correctness (four small PNGs, milliseconds). Alternative is a manifest keyed
+  by a hash of each profile JSON, regenerating only on change — better if the
+  profile count grows. Startup + hash-in-filename gives both freshness and cache
+  busting.
+- *Click-through needs a route.* `make_samples.py` writes to `data/samples/`,
+  which is gitignored and outside `/static`. Serving it means a small
+  authenticated route (`/samples/<slug>.pdf`) that resolves through a whitelist
+  of known slugs — never a user-supplied path.
+- Thumbnails belong in `webapp/static/profiles/` and should be gitignored, since
+  they are derived artefacts.
+
+### C2 — `influencer-deck`: a styled Influencer report
+
+A new registry entry only. **`influencer.json` and the frozen
+`inf_report_builder.py` are not touched**, and the existing parity tests must
+stay green — that is the whole point of adding rather than editing.
+
+Same A4, two posts per page, same five metric rows. Different presentation: each
+post as a card like `client-deck` — padded 4:5, rounded corners, hairline
+border, soft drop shadow — on a subtle off-white page so the cards lift.
+
+**Known work beyond a JSON file** (this is a case where the registry alone is
+not enough, exactly as the design note's scope section warns):
+- `page.background` does not exist in the schema yet. Additive field + validation
+  + honouring it in `prof_builder`'s three renderers.
+- Metric rows currently draw as plain text lines. "Labelled chips or a neat
+  table" is new drawing code in `prof_builder` (PDF, DOCX and HTML each).
+- Influencer masters come from a 2000px-tall viewport and are typically much
+  taller than the X ones, so padding them to 4:5 may letterbox heavily. Check
+  against the fixture early and pick the aspect from what it actually looks
+  like, rather than copying 4:5 from `client-deck` on principle.
+
+**Approval gate:** generate a sample PDF from the stored fixture and iterate on
+the look once before it ships.
+
+---
+
 ## Track B — Profile engine (infrastructure)
 
 See [profile-engine.md](profile-engine.md). Status:

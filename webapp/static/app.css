@@ -444,3 +444,31 @@ button.big { width: 100%; padding: 13px 18px; font-size: .95rem; }
 .picker { display: grid; gap: 3px; }
 .picker > span { font-size: .74rem; font-weight: 600; color: var(--muted); }
 .picker select { padding: 6px 28px 6px 9px; font-size: .82rem; }
+
+/* ---------- profile card thumbnails ---------- */
+.profile-thumb {
+  display: block; width: 100%; max-width: 156px; height: auto; margin: 0 auto 10px;
+  border-radius: 6px; background: #f1f5f9;
+  box-shadow: 0 1px 3px rgba(15,23,42,.12);
+}
+@media (prefers-color-scheme: dark) {
+  .profile-thumb { box-shadow: 0 1px 3px rgba(0,0,0,.5); opacity: .92; }
+}
+.profile-caption { color: var(--muted); font-size: .78rem; }
+.profile-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 6px; flex-wrap: wrap;
+}
+.profile-links { display: flex; align-items: center; gap: 8px; }
+.info-btn {
+  width: 18px; height: 18px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--muted); font-size: .68rem; font-weight: 700; line-height: 1;
+  font-family: Georgia, serif; cursor: help;
+}
+.info-btn:hover { color: var(--accent); border-color: var(--accent); }
+.sample-link {
+  font-size: .7rem; font-weight: 600; color: var(--muted);
+  text-decoration: none; border-bottom: 1px dotted var(--border);
+}
+.sample-link:hover { color: var(--accent); border-color: var(--accent); }

@@ -32,10 +32,24 @@
                    data-worker-choice="{{ 1 if rt.allows_worker_choice else 0 }}"
                    data-keep-engagement="{{ 1 if rt.allows_keep_engagement else 0 }}">
             <span class="profile-body">
+              {% set pv = previews.get(rt.slug) %}
+              {% if pv and pv.img %}
+              <img class="profile-thumb" src="{{ pv.img }}" alt="" aria-hidden="true">
+              {% endif %}
               <strong>{{ rt.label }}</strong>
-              <small>{{ rt.description }}</small>
-              <span class="outputs">
-                {% for o in rt.outputs %}<em>{{ o }}</em>{% endfor %}
+              <small class="profile-caption">{{ rt.caption }}</small>
+              <span class="profile-meta">
+                <span class="outputs">
+                  {% for o in rt.outputs %}<em>{{ o }}</em>{% endfor %}
+                </span>
+                <span class="profile-links">
+                  <button type="button" class="info-btn" title="{{ rt.description }}"
+                          aria-label="About {{ rt.label }}">i</button>
+                  {% if pv and pv.sample %}
+                  <a class="sample-link" href="{{ pv.sample }}" target="_blank"
+                     rel="noopener" title="Open the full sample PDF">sample</a>
+                  {% endif %}
+                </span>
               </span>
             </span>
           </label>

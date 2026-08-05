@@ -45,6 +45,7 @@ class ReportType:
     allows_worker_choice: bool
     allows_keep_engagement: bool
     description: str = ""
+    caption: str = ""            # one line under the thumbnail
     builtin: bool = False
     outputs: tuple = field(default=("pdf", "docx"))
 
@@ -58,6 +59,7 @@ _BUILTINS = (
         slug="twitter", label="Twitter Report",
         argv=("run.py",), worker_pool="capture",
         allows_worker_choice=True, allows_keep_engagement=True, builtin=True,
+        caption="Letter · 1 post per page",
         description="Clean tweet screenshots with the engagement bar cropped "
                     "out. One post per page, plus a links table.",
         outputs=("pdf", "docx")),
@@ -68,10 +70,27 @@ _BUILTINS = (
         slug="influencer", label="Influencer Report",
         argv=("influencer/run_influencer.py",), worker_pool="influencer",
         allows_worker_choice=False, allows_keep_engagement=False, builtin=True,
+        caption="A4 · 2 per page · with metrics",
         description="Keeps likes & reposts in the screenshot and adds a metrics "
                     "table: Reactions, Comments, Reach, Shares.",
         outputs=("pdf", "docx")),
 )
+
+
+def _caption(p: dict) -> str:
+    """One line describing the page, derived from the profile itself so it can
+    never drift from the thumbnail beside it."""
+    page = p.get("page") or {}
+    raw = str(page.get("size", "letter")).lower()
+    size = {"letter": "Letter", "a4": "A4"}.get(raw, raw.title())
+    cols, rows = (page.get("grid") or [1, 1])[:2]
+    n = cols * rows
+    bits = [size, f"{n} per page" if n > 1 else "1 post per page"]
+    if (p.get("capture") or {}).get("device_scale_factor", 1) != 1:
+        bits.append("2x resolution")
+    if (p.get("content") or {}).get("cover"):
+        bits.append("cover page")
+    return " · ".join(bits)
 
 
 def _from_profiles() -> list:
@@ -113,6 +132,7 @@ def _from_profiles() -> list:
             # it on the form would promise a choice that is not one.
             allows_keep_engagement=False,
             description=p.get("description", ""),
+            caption=_caption(p),
             outputs=tuple(p.get("outputs") or ("pdf",))))
     return out
 

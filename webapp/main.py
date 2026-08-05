@@ -9,12 +9,14 @@ import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, config, report_types, routes_jobs, uploads, x_login
+from . import (auth, config, previews, report_types, routes_jobs,
+               uploads, x_login)
 from .jobs import cleanup, queue, store
 
 HERE = Path(__file__).resolve().parent
@@ -25,6 +27,10 @@ templates = Jinja2Templates(directory=str(HERE / "templates"))
 async def lifespan(app: FastAPI):
     config.ensure_dirs()
     store.init()
+    # Rendered from each profile's own config, at boot, so a new or edited
+    # profile can never show a stale or missing picture. Four small PNGs;
+    # unchanged ones are skipped by hash.
+    previews.refresh()
     for warning in config.startup_warnings():
         print(f"[config] WARNING: {warning}", flush=True)
     if config.EXECUTION_MODE != "inline":
@@ -154,6 +160,7 @@ async def index(request: Request, user: str = Depends(auth.require_user)):
          "default_workers": config.CAPTURE_WORKERS,
          "max_workers": config.MAX_WORKERS,
          "report_types": report_types.all_types(),
+         "previews": previews.manifest(),
          "x_login_ok": config.X_STATE_FILE.exists()})
 
 
@@ -181,6 +188,25 @@ def _session_context(request: Request, user: str, flash=None) -> dict:
         if last.get("at") else None)
     return {"user": user, "csrf": auth.csrf_token(request), "info": info,
             "sessions_dir": str(config.SESSIONS_DIR), "flash": flash}
+
+
+@app.get("/samples/{slug}.pdf")
+async def sample_pdf(slug: str, user: str = Depends(auth.require_user)):
+    """The full sample document for a profile — what a card links to.
+
+    `slug` is matched against the known report types and never used to build a
+    path, so no user string reaches the filesystem. Samples live under
+    `data/samples/` (gitignored, outside /static), which is why this needs a
+    route rather than a static mount.
+    """
+    path = previews.sample_path(slug)
+    if path is None:
+        raise HTTPException(status_code=404,
+                            detail="No sample has been generated for that "
+                                   "report type yet. Run "
+                                   "scripts/make_samples.py.")
+    return FileResponse(path, media_type="application/pdf",
+                        filename=f"{slug}-sample.pdf")
 
 
 @app.get("/admin/session-status", response_class=HTMLResponse)

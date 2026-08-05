@@ -31,7 +31,8 @@ import layout        # noqa: E402
 import registry      # noqa: E402
 import shapes        # noqa: E402
 
-PAGE_W = 150             # px per rendered page; two pages when a cover exists
+PAGE_W = 200             # px per rendered page; two pages when a cover exists
+FIXTURE = HERE.parent / "data" / "sample-fixture" / "screenshots"
 GUTTER = 8
 _SUPERSAMPLE = 2         # render big, downscale once — cheap anti-aliasing
 
@@ -42,6 +43,32 @@ CARD = (255, 255, 255)
 PAGE_EDGE = (203, 213, 225)
 MEDIA = (226, 232, 240)
 ACCENT = (29, 155, 240)
+
+
+def _real_posts(limit=6):
+    """Real captured tweets from the stored fixture, tallest first.
+
+    A real screenshot beats a placeholder here: at thumbnail size the eye reads
+    "that is a tweet" from the avatar + text + media silhouette, and it shows
+    the actual thing the report will contain. Falls back to the drawn
+    placeholder when no fixture is present, so the dashboard still works on a
+    fresh checkout.
+    """
+    if not FIXTURE.is_dir():
+        return []
+    from PIL import Image
+    out = []
+    for p in sorted(FIXTURE.glob("*.png")):
+        try:
+            im = Image.open(p).convert("RGB")
+        except Exception:
+            continue
+        if im.height < 200:              # skip slivers; they read as noise
+            continue
+        out.append(im)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _placeholder_post(width=598, height=760):
@@ -83,11 +110,15 @@ def _page(profile, n_posts, width, with_cover_slot=False):
         return page
 
     spec = profile["image"]
+    real = _real_posts(max(1, n_posts))
     dims, composed = [], []
     for i in range(n_posts):
-        # Vary the heights a little so a grid does not look like a wallpaper.
-        h = (760, 620, 900, 700, 820, 660)[i % 6]
-        post = _placeholder_post(598, h)
+        if real:
+            post = real[i % len(real)]
+        else:
+            # Vary the heights a little so a grid does not look like wallpaper.
+            h = (760, 620, 900, 700, 820, 660)[i % 6]
+            post = _placeholder_post(598, h)
         # placement_w_in only scales point-valued decoration; a provisional
         # value is fine here since the thumbnail is not a measuring device.
         out = shapes.compose(post, spec, placement_w_in=profile["image"]["max_in"][0])

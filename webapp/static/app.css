@@ -472,3 +472,40 @@ button.big { width: 100%; padding: 13px 18px; font-size: .95rem; }
   text-decoration: none; border-bottom: 1px dotted var(--border);
 }
 .sample-link:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ---------- compact profile cards (thumbnail beside the text) --------------
+   The vertical card with a full-width preview pushed the rest of the form off
+   the first screen. Horizontal keeps the picture — which is the fastest way to
+   tell these apart — while cutting each card's height by about two thirds. */
+.profile-grid { gap: 8px; }
+.profile-body {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center; gap: 12px; padding: 9px 11px;
+}
+.profile-text { display: grid; gap: 1px; min-width: 0; }
+.profile-text strong { font-size: .88rem; }
+.profile-thumb {
+  width: auto; max-width: none; height: 58px; margin: 0; flex: none;
+  border-radius: 4px; background: #f8fafc;
+  box-shadow: 0 1px 2px rgba(15,23,42,.16);
+}
+.profile-caption { font-size: .74rem; line-height: 1.35; }
+.profile-meta { margin-top: 3px; gap: 6px; }
+.outputs em { font-size: .6rem; padding: 0 4px; }
+.info-btn { width: 15px; height: 15px; font-size: .6rem; }
+.sample-link { font-size: .66rem; }
+
+/* the form itself, tightened so step 1 no longer fills the viewport */
+.step { padding: 14px 16px; gap: 11px; }
+.step-title { font-size: .94rem; }
+.page-head { margin-bottom: 16px; }
+.build-grid { gap: 16px; }
+.build-main { gap: 12px; }
+
+@media (min-width: 1100px) {
+  .profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .profile-thumb { height: 46px; }
+  .profile-body { gap: 9px; padding: 8px 9px; }
+}

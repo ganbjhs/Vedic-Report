@@ -69,6 +69,24 @@ def build_copy(dest: Path, dpr: int) -> None:
                 f.write_text(s.replace(old, new, 1))
 
 
+def _is_tiny(app, result):
+    """Did this result's screenshot come out too small to hold a post?"""
+    shot = result.get("screenshot")
+    if not shot:
+        return False
+    p = Path(shot)
+    if not p.exists():
+        p = app / "reports" / "screenshots" / p.name
+    if not p.exists():
+        return False
+    try:
+        from PIL import Image
+        with Image.open(p) as im:
+            return im.size[1] < 180
+    except Exception:
+        return False
+
+
 def analyse(app: Path, log: str) -> dict:
     """Parent losses + session health for one finished run."""
     try:
@@ -91,10 +109,26 @@ def analyse(app: Path, log: str) -> dict:
     tiny = sum(1 for m in _RE_TINY.finditer(log) if int(m.group(1)) < 180)
     v = _RE_VERIFY.search(log)
 
+    # Health is judged over LIVE links only. A deleted post legitimately costs
+    # retries (_load_tweet reloads before giving up) and legitimately produces a
+    # tiny frame that the fix then demotes — counting those as session rot made
+    # a correct run read as throttled. The signal for actual throttling is
+    # rework on links that still exist.
+    terminal_gone = sum(1 for r in results
+                        if r.get("status") in ("not_found", "too_small"))
+    live = max(0, len(results) - terminal_gone)
+    # A tiny frame only matters if it still SHIPPED; a demoted one is the
+    # system working as designed.
+    tiny_shipped = sum(1 for r in results if r.get("status") == "ok"
+                       and _is_tiny(app, r))
+    sick = ((live and retried / live > SICK_RETRY_SHARE)
+            or tiny_shipped >= SICK_TINY_SHOTS)
     total = len(results)
-    sick = (total and retried / total > SICK_RETRY_SHARE) or tiny >= SICK_TINY_SHOTS
     return {
         "total": total,
+        "live": live,
+        "terminal_gone": terminal_gone,
+        "tiny_shipped": tiny_shipped,
         "silent_parent_loss": len(silent),
         "legacy_silent_frame_fail": len(legacy_silent),
         "flagged_parent_loss": len(flagged),
@@ -174,7 +208,9 @@ def main() -> int:
             state, ok = "FAIL", False
         print(f"  {r['label']:14} {state}   silent={silent} "
               f"flagged={r.get('flagged_parent_loss')} "
-              f"retried={r.get('retried')} tiny={r.get('tiny_frames')}")
+              f"live={r.get('live')}/{r.get('total')} "
+              f"gone={r.get('terminal_gone')} "
+              f"retried={r.get('retried')} tiny_shipped={r.get('tiny_shipped')}")
     print("=" * 62)
     print("\nNow OPEN THE DOCUMENTS AND LOOK AT THEM (rule 3):")
     for r in verdicts:

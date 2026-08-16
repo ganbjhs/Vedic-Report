@@ -134,6 +134,9 @@ def _copy_user_profiles(job_id: str, app: Path) -> None:
             return                       # shipped profile, or already copied
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest_dir / src.name)
+        assets = config.USER_PROFILES_DIR / "assets" / slug
+        if assets.is_dir():                 # designed-page templates
+            shutil.copytree(assets, dest_dir / "assets" / slug, dirs_exist_ok=True)
         try:
             slug = json.loads(src.read_text()).get("extends") or ""
         except ValueError:

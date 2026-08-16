@@ -1,4 +1,4 @@
-# Report Maker — Blueprint (v2, August 2026)
+# Report Maker — Blueprint (v2.1, August 2026)
 
 One file that describes the whole system precisely enough to rebuild it — or
 to hand to a new session and say "redesign this without breaking it". Read
@@ -91,6 +91,7 @@ profiles/                  the profile engine — presentation as data
   prof_runner.py           workers/retry/quality/results.json (own CTX_KWARGS)
   prof_worker.py           imports the engine DIRECTLY (x | influencer | facebook)
   prof_builder.py          PDF/DOCX/HTML from profile + results.json
+  tpl_builder.py           the same for TEMPLATE styles (designed PNG pages + slots)
   thumbnails.py            renders the style thumbnails from real geometry
   run_profile.py           entrypoint mirroring run.py's CLI
   tests/run_all.py         7 zero-capture suites (parity, dispatch, inputs, …)
@@ -104,7 +105,8 @@ webapp/
   uploads.py               parse/validate uploads; analyse(grid, dedupe, platform)
   sheets.py                Google Sheets published-CSV fetch (SSRF-guarded)
   previews.py              thumbnail manifest for cards
-  styles.py                the style designer (data/profiles/*.json)
+  styles.py                style designers (numeric + template), assets under
+                           data/profiles/assets/<slug>/, curation (style_settings.json)
   routes_jobs.py           /api/preview /api/jobs… /download
   routes_extras.py         /api/presets /api/styles
   x_login.py               headless X sign-in for the shared account
@@ -112,8 +114,8 @@ webapp/
   jobs/queue.py            bounded worker pool
   jobs/runner.py           job dir, command, progress regexes, publish artifacts
   jobs/cleanup.py          retention
-  templates/               base (shell), index, history, job, styles, session_status,
-                           settings, login, error, _brand.svg
+  templates/               base (shell), index, history, job, styles, users,
+                           session_status, settings, login, error, _brand.svg
   static/app.css app.js    the entire front-end; no build step
 
 scripts/probe_logged_out.py   "can this URL be captured without an account?"
@@ -175,8 +177,23 @@ the readable page) → Links (file / paste / sheet tabs + preview table) →
 capability-driven options → sticky action bar (name · summary · Save preset ·
 Generate). Design reference: `docs/dashboard-mockup.html`.
 
-Roles: `config.is_admin(user)`; `auth.require_admin` guards pages AND write
-APIs. Colleagues see New report / History / Report styles only.
+Roles (`auth.role_of`): **admin** (everything, incl. Users & roles and style
+curation), **designer** (template + edit their styles; stay *pending* until an
+admin approves), **member** (reports). Users live in SQLite (`users` table,
+managed at /admin/users); `.env` APP_USERS/APP_ADMINS remain the bootstrap
+fallback. `auth.require_admin` / `require_designer` guard pages AND write APIs.
+
+Styles on New report = `styles.visible_types()`: built-ins always; shipped
+profiles unless hidden; app-designed styles only once approved
+(`data/style_settings.json`).
+
+**Template styles** (Canva flow): a designer exports page PNGs (post, optional
+cover/end), uploads them at /styles, drags screenshot slots and text slots
+(title/date/page/account/link/category/metrics) on the page. Stored as a
+normal profile with a `template` section (`registry._validate_template`);
+assets in `data/profiles/assets/<slug>/`, copied into the job dir with the
+profile. `layout.placements` fits screenshots into slots (never crops);
+`tpl_builder` paints background + slots. PDF/HTML exact; DOCX approximate.
 
 ---
 

@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS presets (
 );
 CREATE INDEX IF NOT EXISTS presets_owner ON presets (owner, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS users (
+    username      TEXT PRIMARY KEY,
+    pw_hash       TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'member',
+    created_at    REAL NOT NULL,
+    created_by    TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS login_attempts (
     ip   TEXT NOT NULL,
     ts   REAL NOT NULL
@@ -245,6 +253,56 @@ def preset_delete(owner: str, pid: str) -> bool:
     with _connect() as conn:
         cur = conn.execute("DELETE FROM presets WHERE id=? AND owner=?",
                            (pid, owner))
+    return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------- #
+# Users managed in the app (Admin → Users). `.env` APP_USERS keeps working as
+# the bootstrap / break-glass login; anything created here lives in the DB.
+# --------------------------------------------------------------------------- #
+ROLES = ("admin", "designer", "member")
+
+
+def users_list() -> list:
+    with _connect() as conn:
+        rows = conn.execute("SELECT username, role, created_at, created_by "
+                            "FROM users ORDER BY username").fetchall()
+    return [dict(r) for r in rows]
+
+
+def user_get(username: str):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    return dict(row) if row else None
+
+
+def user_upsert(username: str, pw_hash: str, role: str, created_by: str = "") -> None:
+    role = role if role in ROLES else "member"
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO users (username, pw_hash, role, created_at, created_by) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET "
+            "pw_hash=excluded.pw_hash, role=excluded.role",
+            (username, pw_hash, role, time.time(), created_by))
+
+
+def user_set_role(username: str, role: str) -> bool:
+    if role not in ROLES:
+        return False
+    with _connect() as conn:
+        cur = conn.execute("UPDATE users SET role=? WHERE username=?", (role, username))
+    return cur.rowcount > 0
+
+
+def user_set_password(username: str, pw_hash: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("UPDATE users SET pw_hash=? WHERE username=?", (pw_hash, username))
+    return cur.rowcount > 0
+
+
+def user_delete(username: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM users WHERE username=?", (username,))
     return cur.rowcount > 0
 
 

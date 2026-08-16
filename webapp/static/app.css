@@ -329,3 +329,27 @@ textarea { resize:vertical; min-height:120px; font-family:ui-monospace,SFMono-Re
 .login-head p { margin:0; font-size:13px; color:var(--text2); }
 .stack { display:grid; gap:14px; }
 .error-code { font-size:40px; text-align:center; margin:0; }
+
+/* ---------- template designer ---------- */
+.tdz .tstep { display:grid; grid-template-columns:2fr 2fr 1fr 1fr auto; gap:10px; align-items:end; margin-bottom:12px; }
+@media (max-width:900px) { .tdz .tstep { grid-template-columns:1fr 1fr; } }
+.tpages { display:flex; align-items:center; gap:6px; border-bottom:1px solid var(--border); margin-bottom:12px; }
+.tpages .tab { padding:9px 12px; }
+.tedit { display:grid; grid-template-columns:240px minmax(0,1fr); gap:16px; }
+@media (max-width:900px) { .tedit { grid-template-columns:1fr; } }
+.ttools { display:grid; gap:8px; align-content:start; font-size:13px; }
+.ttools b { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-top:6px; }
+.tcanvas-wrap { display:grid; place-items:center; background:var(--surface2); border:1px solid var(--border); border-radius:var(--r); padding:14px; min-height:420px; }
+.tcanvas { position:relative; max-height:640px; max-width:100%; box-shadow:0 2px 12px rgba(0,0,0,.15); background:#fff; touch-action:none; user-select:none; }
+.tcanvas.dragover { outline:2px dashed var(--accent); }
+.tcanvas img { display:block; max-height:640px; max-width:100%; }
+.tempty { width:340px; height:480px; display:grid; place-items:center; text-align:center; color:var(--text3); border:1.5px dashed var(--border-strong); }
+.tlayer { position:absolute; inset:0; cursor:crosshair; }
+.titem { position:absolute; box-sizing:border-box; cursor:move; }
+.titem.slot { border:2px dashed var(--accent); background:rgba(37,99,235,.08); }
+.titem.slot.ghost { pointer-events:none; opacity:.6; }
+.titem.text { border:1px dashed var(--warn); background:rgba(217,119,6,.08); overflow:hidden; }
+.titem .lbl { position:absolute; inset:0; display:flex; align-items:center; padding:0 4px; font-size:11px; font-weight:600; color:var(--accent-fg); white-space:nowrap; overflow:hidden; pointer-events:none; }
+.titem.text .lbl { justify-content:flex-start; }
+.titem.sel { outline:2px solid var(--accent); }
+.titem .h { position:absolute; right:-6px; bottom:-6px; width:12px; height:12px; background:var(--accent); border-radius:2px; cursor:nwse-resize; }

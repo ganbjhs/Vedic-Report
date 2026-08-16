@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Users & roles — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+{% block main_class %} narrow{% endblock %}
+
+{% block content %}
+<h1>Users &amp; roles</h1>
+<p class="sub">Who can sign in and what they can do. <b>admin</b> — everything; <b>designer</b> — makes and edits report styles (they stay pending until an admin shows them); <b>member</b> — makes reports.</p>
+
+<div class="card">
+  <h2 class="card-title">Add a user</h2>
+  <form id="user-add" class="row" style="align-items:flex-end;gap:10px">
+    <label class="field" style="min-width:180px"><span>Username</span><input name="username" type="text" autocomplete="off" placeholder="priya" required></label>
+    <label class="field" style="min-width:200px"><span>Password <span class="faint">(8+ chars)</span></span><input name="password" type="text" autocomplete="off" placeholder="they can be given this once" required></label>
+    <label class="field"><span>Role</span><select name="role">{% for r in roles %}<option value="{{ r }}" {{ 'selected' if r == 'member' else '' }}>{{ r }}</option>{% endfor %}</select></label>
+    <button class="btn primary" type="submit">Add</button>
+    <span id="user-msg" class="small"></span>
+  </form>
+</div>
+
+<div class="card">
+  <h2 class="card-title">Everyone <span class="count" id="user-count">{{ users | length }}</span></h2>
+  <table class="tbl" id="user-table">
+    <thead><tr><th>User</th><th>Role</th><th>Source</th><th>Added</th><th></th></tr></thead>
+    <tbody>
+    {% for u in users %}
+    <tr data-user="{{ u.username }}" data-source="{{ u.source }}">
+      <td><b>{{ u.username }}</b>{% if u.username == user %} <span class="tag new">you</span>{% endif %}</td>
+      <td>{% if u.source == 'app' %}<select class="role-pick" data-user="{{ u.username }}" style="width:auto;padding:5px 28px 5px 8px" {{ 'disabled' if u.username == user else '' }}>{% for r in roles %}<option value="{{ r }}" {{ 'selected' if r == u.role else '' }}>{{ r }}</option>{% endfor %}</select>{% else %}{{ u.role }}{% endif %}</td>
+      <td class="small faint">{{ 'app' if u.source == 'app' else '.env (APP_USERS)' }}</td>
+      <td class="small faint">{% if u.created_at %}<span data-ago="{{ u.created_at }}"></span>{% if u.created_by %} by {{ u.created_by }}{% endif %}{% else %}—{% endif %}</td>
+      <td class="right">{% if u.source == 'app' %}<button type="button" class="link" data-reset="{{ u.username }}">Reset password</button>{% if u.username != user %} · <button type="button" class="link danger" data-remove="{{ u.username }}">Remove</button>{% endif %}{% else %}<span class="small faint">edit .env</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint" style="margin:10px 0 0">Logins from <code>.env</code> keep working as a fallback{% if env_admins %} (admins there: {{ env_admins | join(', ') }}){% endif %}. To manage such a person here, add them above with the same username — the app record then wins.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}<script>initUsers();</script>{% endblock %}

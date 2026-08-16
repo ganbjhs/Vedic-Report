@@ -387,8 +387,12 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         images, places = prepare(results, profile, td)
+        builders = BUILDERS
+        if profile.get("template"):
+            import tpl_builder                     # designed-page styles
+            builders = tpl_builder.BUILDERS
         for kind in profile["outputs"]:
-            builder = BUILDERS.get(kind)
+            builder = builders.get(kind)
             if not builder:
                 continue
             dest = OUT / f"{stem}.{kind}"

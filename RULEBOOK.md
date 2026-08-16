@@ -546,7 +546,15 @@ the engine.
    uvicorn restart; `--reload` watches `.py`, not `.env`. Usernames in
    `APP_ADMINS` must match `APP_USERS` exactly; passwords cannot contain `,`
    or `:`.
-8. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
+8. **Template styles are still profiles.** A Canva page becomes
+   `template: {pages, slots, text}` on an ordinary profile; the registry
+   validates it, `layout.placements` fits (never crops) into slots, and the
+   engine that captures is chosen by `extends`. DOCX for these is labelled
+   approximate — never promise pixel parity in Word.
+9. **Users are data, not config.** Roles come from the `users` table via
+   `auth.role_of`; `.env` is bootstrap only. Anything a role unlocks is
+   guarded server-side (`require_admin` / `require_designer`).
+10. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
    file to hand to the next redesign; update it in the same commit as any
    structural change (new folder, new route family, new contract).
 

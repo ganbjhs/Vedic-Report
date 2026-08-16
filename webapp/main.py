@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import (auth, config, health, previews, report_types, routes_extras,
-               routes_jobs, uploads, x_login)
+               routes_jobs, styles, uploads, x_login)
 from .jobs import cleanup, queue, store
 
 HERE = Path(__file__).resolve().parent
@@ -84,9 +84,11 @@ def _shell(request: Request, user: str, nav: str, **extra) -> dict:
     """Context every signed-in page shares: the top-bar health pills, the
     budget meter in the nav, the CSRF token. One place, so the shell can never
     disagree with itself between pages."""
-    admin = config.is_admin(user)
+    role = auth.role_of(user)
+    admin = role == "admin"
     ctx = {"user": user, "csrf": auth.csrf_token(request), "nav": nav,
-           "is_admin": admin,
+           "is_admin": admin, "role": role,
+           "can_design": role in ("admin", "designer"),
            # Health and budget are admin concerns; a colleague who only makes
            # reports never sees them (they still get a plain "X capture is
            # unavailable" line when it matters).
@@ -194,7 +196,7 @@ async def index(request: Request, user: str = Depends(auth.require_user)):
                accept=",".join(uploads.ALLOWED_SUFFIXES),
                default_workers=config.CAPTURE_WORKERS,
                max_workers=config.MAX_WORKERS,
-               report_types=report_types.all_types(),
+               report_types=styles.visible_types(),
                previews=previews.manifest(),
                platforms=report_types.PLATFORMS,
                presets=[routes_extras._public_preset(p)
@@ -249,13 +251,23 @@ async def report_types_redirect():
 @app.get("/styles", response_class=HTMLResponse)
 async def styles_page(request: Request, user: str = Depends(auth.require_user)):
     """The gallery of report styles, plus the designer for new ones."""
+    kinds = report_types.all_types()
     return templates.TemplateResponse(
         request, "styles.html",
         _shell(request, user, "styles",
-               report_types=report_types.all_types(),
+               report_types=kinds,
+               visibility={rt.slug: styles.visibility(rt) for rt in kinds},
                previews=previews.manifest(),
                platforms=report_types.PLATFORMS,
                max_workers=config.MAX_WORKERS))
+
+
+@app.get("/admin/users", response_class=HTMLResponse)
+async def users_page(request: Request, user: str = Depends(auth.require_admin)):
+    return templates.TemplateResponse(
+        request, "users.html",
+        _shell(request, user, "users", users=routes_extras._public_users(),
+               roles=list(store.ROLES), env_admins=sorted(config.APP_ADMINS)))
 
 
 @app.get("/admin/session-status", response_class=HTMLResponse)

@@ -604,7 +604,7 @@ function initStyles() {
     } catch (err) { saveMsg.innerHTML = `<span class="alert alert-error tight">${esc(err.message)}</span>`; }
   }
   document.querySelectorAll("[data-dup]").forEach((b) => b.addEventListener("click", () => loadInto(b.dataset.dup, true)));
-  document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => loadInto(b.dataset.edit, false)));
+  document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.tpl !== "1") loadInto(b.dataset.edit, false); }));
   document.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm(`Delete the style "${b.dataset.label}"? Reports already made with it are unaffected.`)) return;
     try { await api(`/api/styles/${encodeURIComponent(b.dataset.delete)}`, { method: "DELETE" }); location.reload(); }
@@ -621,4 +621,254 @@ function initStyles() {
     if (h.startsWith("#edit=")) loadInto(decodeURIComponent(h.slice(6)), false);
     if (h === "#designer") $("designer").scrollIntoView();
   }).catch((err) => { msg.textContent = err.message; });
+}
+
+/* =========================================================================
+   Users & roles (admin)
+   ========================================================================= */
+function initUsers() {
+  const form = $("user-add"); if (!form) return;
+  const msg = $("user-msg");
+  const say = (t, ok) => { msg.textContent = t; msg.style.color = ok ? "var(--ok)" : "var(--bad)"; };
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    try {
+      await api("/api/users", { method: "POST", json: { username: f.get("username"), password: f.get("password"), role: f.get("role") } });
+      location.reload();
+    } catch (err) { say(err.message, false); }
+  });
+  document.querySelectorAll(".role-pick").forEach((sel) => sel.addEventListener("change", async () => {
+    try { await api(`/api/users/${encodeURIComponent(sel.dataset.user)}`, { method: "PATCH", json: { role: sel.value } }); say(`Role updated for ${sel.dataset.user}.`, true); }
+    catch (err) { say(err.message, false); location.reload(); }
+  }));
+  document.querySelectorAll("[data-reset]").forEach((b) => b.addEventListener("click", async () => {
+    const pw = prompt(`New password for ${b.dataset.reset} (8+ characters):`); if (!pw) return;
+    try { await api(`/api/users/${encodeURIComponent(b.dataset.reset)}`, { method: "PATCH", json: { password: pw } }); say(`Password reset for ${b.dataset.reset}.`, true); }
+    catch (err) { say(err.message, false); }
+  }));
+  document.querySelectorAll("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm(`Remove ${b.dataset.remove}? Their reports stay in History.`)) return;
+    try { await api(`/api/users/${encodeURIComponent(b.dataset.remove)}`, { method: "DELETE" }); location.reload(); }
+    catch (err) { say(err.message, false); }
+  }));
+}
+
+/* =========================================================================
+   Report styles: admin curation toggles (works on any page that has them)
+   ========================================================================= */
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-vis]"); if (!b) return;
+  b.disabled = true;
+  try { await api(`/api/styles/${encodeURIComponent(b.dataset.vis)}/visibility`, { method: "POST", json: { show: b.dataset.show === "1" } }); location.reload(); }
+  catch (err) { alert(err.message); b.disabled = false; }
+});
+
+/* =========================================================================
+   Template designer — a designed page (Canva PNG) + slots drawn on it.
+   State: pages {post|cover|end: {file, url, w, h}}, items[] with fractional
+   x/y/w/h, kind 'slot' | 'text', and for text: field/size/color/align/bold/page.
+   ========================================================================= */
+function initTemplateDesigner() {
+  const canvas = $("tcanvas"); if (!canvas) return;
+  const img = $("t-img"), layer = $("tlayer"), empty = $("t-empty"), status = $("t-status");
+  const props = $("t-props"), fileIn = $("t-file"), removeBtn = $("t-remove");
+  const pages = { post: null, cover: null, end: null };
+  let cur = "post", items = [], sel = null, editingSlug = "", editingLoadedFromServer = { post: false, cover: false, end: false };
+  const LABELS = { title: "Report title", date: "Date", page: "Page no.", pages: "Pages", index: "#", account_name: "Account", post_link: "Post link", category: "Category", metrics: "Metrics" };
+
+  const setStatus = (t) => { status.textContent = t; };
+  const pageTag = (k) => $(`t-has-${k}`);
+  const refreshTabs = () => {
+    for (const k of ["post", "cover", "end"]) {
+      const t = pageTag(k); if (!t) continue;
+      t.textContent = pages[k] ? "✓ image" : (k === "post" ? "required" : "optional");
+      t.className = "tag" + (pages[k] ? " new" : "");
+    }
+    removeBtn.hidden = !pages[cur] || cur === "post";
+  };
+  const showPage = (k) => {
+    cur = k;
+    document.querySelectorAll("[data-tpage]").forEach((b) => b.classList.toggle("on", b.dataset.tpage === k));
+    const p = pages[k];
+    img.hidden = !p; empty.hidden = !!p;
+    if (p) img.src = p.url;
+    empty.innerHTML = k === "post" ? "Drop a PNG here<br><small>A4 / Letter page exported from Canva</small>"
+      : `No ${k} page yet — upload one to add it<br><small>Optional. Cover shows first, End page last.</small>`;
+    select(null); render(); refreshTabs();
+  };
+  document.querySelectorAll("[data-tpage]").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.tpage)));
+
+  const loadFile = (file, k = cur) => {
+    if (!file || !/^image\/(png|jpeg)$/.test(file.type)) return setStatus("PNG or JPEG only.");
+    const url = URL.createObjectURL(file);
+    const probe = new Image();
+    probe.onload = () => { pages[k] = { file, url, w: probe.naturalWidth, h: probe.naturalHeight }; editingLoadedFromServer[k] = false; showPage(k); setStatus(`${k} page: ${probe.naturalWidth}×${probe.naturalHeight}px. Now add a screenshot slot.`); };
+    probe.src = url;
+  };
+  fileIn.addEventListener("change", () => { loadFile(fileIn.files[0]); fileIn.value = ""; });
+  ["dragenter", "dragover"].forEach((ev) => canvas.addEventListener(ev, (e) => { e.preventDefault(); canvas.classList.add("dragover"); }));
+  ["dragleave", "drop"].forEach((ev) => canvas.addEventListener(ev, (e) => { e.preventDefault(); canvas.classList.remove("dragover"); }));
+  canvas.addEventListener("drop", (e) => { const f = e.dataTransfer?.files?.[0]; if (f) loadFile(f); });
+  removeBtn.addEventListener("click", () => { pages[cur] = null; items = items.filter((it) => it.page !== cur); showPage(cur); });
+
+  /* ---- items ---- */
+  const visible = () => items.filter((it) => it.kind === "slot" ? cur === "post" : (it.page === cur || it.page === "all"));
+  const el = (it) => layer.querySelector(`[data-id="${it.id}"]`);
+  let nextId = 1;
+  function add(kind, field, box) {
+    const it = { id: nextId++, kind, page: cur, ...box };
+    if (kind === "text") Object.assign(it, { field, size: field === "title" ? 20 : 11, color: "#111111", align: "left", bold: field === "title" });
+    items.push(it); render(); select(it);
+  }
+  const rectFrac = (x1, y1, x2, y2) => {
+    const r = layer.getBoundingClientRect();
+    const fx = (v) => Math.min(1, Math.max(0, (v - r.left) / r.width)), fy = (v) => Math.min(1, Math.max(0, (v - r.top) / r.height));
+    const x = Math.min(fx(x1), fx(x2)), y = Math.min(fy(y1), fy(y2));
+    return { x, y, w: Math.max(0.02, Math.abs(fx(x2) - fx(x1))), h: Math.max(0.02, Math.abs(fy(y2) - fy(y1))) };
+  };
+  document.querySelector("[data-add='slot']").addEventListener("click", () => {
+    if (!pages.post) return setStatus("Upload the post page first.");
+    if (cur !== "post") showPage("post");
+    add("slot", null, { x: 0.1, y: 0.15, w: 0.8, h: 0.6 });
+  });
+  document.querySelectorAll("[data-add-text]").forEach((b) => b.addEventListener("click", () => {
+    if (!pages[cur]) return setStatus("Upload this page's image first.");
+    add("text", b.dataset.addText, { x: 0.08, y: 0.05, w: 0.6, h: 0.04 });
+  }));
+
+  function render() {
+    layer.innerHTML = "";
+    for (const it of visible()) {
+      const d = document.createElement("div");
+      d.className = `titem ${it.kind}${sel === it ? " sel" : ""}`;
+      d.dataset.id = it.id;
+      d.style.left = `${it.x * 100}%`; d.style.top = `${it.y * 100}%`; d.style.width = `${it.w * 100}%`; d.style.height = `${it.h * 100}%`;
+      if (it.kind === "slot") {
+        const n = items.filter((s) => s.kind === "slot").indexOf(it) + 1;
+        d.innerHTML = `<span class="lbl">Screenshot ${n}</span>`;
+      } else {
+        d.innerHTML = `<span class="lbl" style="font-weight:${it.bold ? 700 : 400};text-align:${it.align};color:${it.color}">${esc(LABELS[it.field] || it.field)}</span>`;
+      }
+      d.innerHTML += `<i class="h"></i>`;
+      layer.append(d);
+    }
+    setSaveable();
+  }
+  function select(it) {
+    sel = it;
+    layer.querySelectorAll(".titem").forEach((d) => d.classList.toggle("sel", it && +d.dataset.id === it.id));
+    props.hidden = !it;
+    if (!it) return;
+    const isText = it.kind === "text";
+    props.querySelectorAll(".field, .check").forEach((f) => { f.hidden = !isText; });
+    if (isText) { $("tp-size").value = it.size; $("tp-color").value = it.color; $("tp-align").value = it.align; $("tp-bold").checked = !!it.bold; }
+  }
+  $("tp-size").addEventListener("input", () => { if (sel) { sel.size = +$("tp-size").value || 10; render(); } });
+  $("tp-color").addEventListener("input", () => { if (sel) { sel.color = $("tp-color").value; render(); } });
+  $("tp-align").addEventListener("change", () => { if (sel) { sel.align = $("tp-align").value; render(); } });
+  $("tp-bold").addEventListener("change", () => { if (sel) { sel.bold = $("tp-bold").checked; render(); } });
+  const del = () => { if (!sel) return; items = items.filter((it) => it !== sel); select(null); render(); };
+  $("tp-del").addEventListener("click", del);
+  document.addEventListener("keydown", (e) => { if ((e.key === "Backspace" || e.key === "Delete") && sel && !/^(input|textarea|select)$/i.test(e.target.tagName)) { e.preventDefault(); del(); } });
+
+  /* ---- pointer: draw new slot on empty space, move / resize items ---- */
+  let drag = null;
+  layer.addEventListener("pointerdown", (e) => {
+    if (!pages[cur]) return;
+    const itemEl = e.target.closest(".titem");
+    const r = layer.getBoundingClientRect();
+    if (itemEl) {
+      const it = items.find((x) => x.id === +itemEl.dataset.id); select(it);
+      drag = { mode: e.target.classList.contains("h") ? "resize" : "move", it, sx: e.clientX, sy: e.clientY, ox: it.x, oy: it.y, ow: it.w, oh: it.h, r };
+    } else {
+      if (cur !== "post") return;
+      drag = { mode: "draw", sx: e.clientX, sy: e.clientY, r };
+      select(null);
+    }
+    layer.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  layer.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const dx = (e.clientX - drag.sx) / drag.r.width, dy = (e.clientY - drag.sy) / drag.r.height;
+    if (drag.mode === "move") {
+      drag.it.x = Math.min(1 - drag.it.w, Math.max(0, drag.ox + dx)); drag.it.y = Math.min(1 - drag.it.h, Math.max(0, drag.oy + dy)); render(); select(drag.it);
+    } else if (drag.mode === "resize") {
+      drag.it.w = Math.min(1 - drag.it.x, Math.max(0.02, drag.ow + dx)); drag.it.h = Math.min(1 - drag.it.y, Math.max(0.02, drag.oh + dy)); render(); select(drag.it);
+    } else if (drag.mode === "draw") {
+      let ghost = layer.querySelector(".ghost");
+      if (!ghost) { ghost = document.createElement("div"); ghost.className = "titem slot ghost"; layer.append(ghost); }
+      const b = rectFrac(drag.sx, drag.sy, e.clientX, e.clientY);
+      ghost.style.left = `${b.x * 100}%`; ghost.style.top = `${b.y * 100}%`; ghost.style.width = `${b.w * 100}%`; ghost.style.height = `${b.h * 100}%`;
+    }
+  });
+  layer.addEventListener("pointerup", (e) => {
+    if (!drag) return;
+    if (drag.mode === "draw") {
+      const b = rectFrac(drag.sx, drag.sy, e.clientX, e.clientY);
+      layer.querySelector(".ghost")?.remove();
+      if (b.w > 0.04 && b.h > 0.04) add("slot", null, b);
+    }
+    drag = null;
+  });
+
+  /* ---- save ---- */
+  const saveBtn = $("t-save"), msg = $("t-msg");
+  function setSaveable() {
+    const ok = !!pages.post && items.some((it) => it.kind === "slot") && $("t-label").value.trim();
+    saveBtn.disabled = !ok;
+  }
+  $("t-label").addEventListener("input", setSaveable);
+  saveBtn.addEventListener("click", async () => {
+    msg.textContent = ""; saveBtn.disabled = true;
+    const label = $("t-label").value.trim();
+    const meta = {
+      label, slug: editingSlug || "", base: $("t-base").value, paper: $("t-paper").value, orientation: $("t-orient").value,
+      links_table: $("t-links").checked, outputs: ["pdf", "docx", "html"],
+      slots: items.filter((it) => it.kind === "slot").map((it) => ({ x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4) })),
+      text: items.filter((it) => it.kind === "text").map((it) => ({ field: it.field, x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4), size_pt: it.size, color: it.color, align: it.align, page: it.page, bold: !!it.bold })),
+    };
+    for (const k of ["cover", "end"]) if (!pages[k]) meta[`remove_${k}`] = true;
+    const fd = new FormData();
+    fd.append("csrf_token", CSRF()); fd.append("meta", JSON.stringify(meta));
+    fd.append("overwrite", ($("t-overwrite").checked || !!editingSlug) ? "1" : "");
+    for (const k of ["post", "cover", "end"]) if (pages[k] && pages[k].file) fd.append(k, pages[k].file, `${k}.png`);
+    try {
+      const res = await fetch("/api/styles/template", { method: "POST", body: fd, headers: { "X-CSRF-Token": CSRF() } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.detail || `Save failed (${res.status})`);
+      msg.innerHTML = `<span class="alert alert-ok tight">Saved <b>${esc(data.label)}</b> — pending until an admin approves it for New report.</span>`;
+      setTimeout(() => location.assign(`/styles#style-${encodeURIComponent(data.slug)}`), 500);
+      setTimeout(() => location.reload(), 600);
+    } catch (err) { msg.innerHTML = `<span class="alert alert-error tight">${esc(err.message)}</span>`; saveBtn.disabled = false; }
+  });
+
+  /* ---- edit an existing template style ---- */
+  async function loadTemplate(slug) {
+    try {
+      const r = await api(`/api/styles/${encodeURIComponent(slug)}`);
+      const p = r.raw, tpl = p.template; if (!tpl) return false;
+      editingSlug = slug;
+      $("t-label").value = p.label; $("t-base").value = p.extends || "twitter";
+      $("t-paper").value = String((p.page || {}).size || "a4").toLowerCase(); $("t-orient").value = (p.page || {}).orientation || "portrait";
+      $("t-links").checked = (p.content || {}).links_table !== false;
+      items = []; nextId = 1;
+      for (const k of ["post", "cover", "end"]) {
+        pages[k] = null;
+        if ((tpl.pages || {})[k]) {
+          const url = `/api/styles/${encodeURIComponent(slug)}/asset/${k}`;
+          await new Promise((res) => { const pr = new Image(); pr.onload = () => { pages[k] = { file: null, url, w: pr.naturalWidth, h: pr.naturalHeight }; res(); }; pr.onerror = res; pr.src = url; });
+          editingLoadedFromServer[k] = true;
+        }
+      }
+      (tpl.slots || []).forEach((s) => items.push({ id: nextId++, kind: "slot", page: "post", ...s }));
+      (tpl.text || []).forEach((t) => items.push({ id: nextId++, kind: "text", page: t.page || "post", field: t.field, x: t.x, y: t.y, w: t.w, h: t.h, size: t.size_pt || 10, color: t.color || "#111111", align: t.align || "left", bold: !!t.bold }));
+      showPage("post"); setStatus(`Editing ${p.label}. Existing page images are kept unless you upload new ones.`);
+      $("tdesigner").scrollIntoView({ behavior: "smooth" });
+      return true;
+    } catch (_) { return false; }
+  }
+  document.querySelectorAll("[data-edit][data-tpl='1']").forEach((b) => b.addEventListener("click", () => loadTemplate(b.dataset.edit)));
+
+  showPage("post"); setSaveable();
 }

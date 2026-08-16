@@ -12,17 +12,25 @@
   <section class="card gcard" id="style-{{ rt.slug }}">
     <div class="shot">{% if pv %}<img src="{{ pv.img_large }}" alt="Preview of the {{ rt.label }} page layout" loading="lazy">{% endif %}</div>
     <div>
+      {% set vis = visibility.get(rt.slug, 'live') %}
       <h2>{{ rt.label }}
         {% if rt.builtin %}<span class="tag">Built-in</span>{% elif rt.custom %}<span class="tag new">Custom</span>{% else %}<span class="tag">Profile</span>{% endif %}
         {% for o in rt.outputs %}<span class="tag">{{ o | upper }}</span>{% endfor %}
+        {% if vis == 'live' %}<span class="tag" style="color:var(--ok);border-color:transparent;background:var(--ok-bg)">On New report</span>
+        {% elif vis == 'pending' %}<span class="tag hot">Pending approval</span>
+        {% else %}<span class="tag">Hidden</span>{% endif %}
       </h2>
       <p class="cap">{{ rt.caption }}{% if rt.allows_keep_engagement %} · engagement line optional{% endif %}{% if rt.allows_worker_choice %} · capture speed selectable{% endif %}</p>
       <p class="desc">{{ rt.description }}</p>
       <div class="acts">
-        <a class="btn primary sm" href="/?type={{ rt.slug }}">Use this style</a>
-        {% if not rt.builtin and is_admin %}<button type="button" class="btn sm" data-dup="{{ rt.slug }}">Duplicate into designer</button>{% endif %}
-        {% if rt.custom and is_admin %}
-        <button type="button" class="btn sm" data-edit="{{ rt.slug }}">Edit</button>
+        {% if vis == 'live' %}<a class="btn primary sm" href="/?type={{ rt.slug }}">Use this style</a>{% endif %}
+        {% if is_admin %}
+          {% if vis == 'live' %}<button type="button" class="btn sm" data-vis="{{ rt.slug }}" data-show="0">Hide from New report</button>
+          {% else %}<button type="button" class="btn sm primary" data-vis="{{ rt.slug }}" data-show="1">{{ 'Approve & show' if vis == 'pending' else 'Show on New report' }}</button>{% endif %}
+        {% endif %}
+        {% if can_design and not rt.builtin and not rt.custom %}<button type="button" class="btn sm" data-dup="{{ rt.slug }}">Duplicate into designer</button>{% endif %}
+        {% if rt.custom and can_design %}
+        <button type="button" class="btn sm" data-edit="{{ rt.slug }}" data-tpl="{{ 1 if rt.template else 0 }}">Edit</button>
         <button type="button" class="btn sm danger" data-delete="{{ rt.slug }}" data-label="{{ rt.label }}">Delete</button>
         {% endif %}
       </div>
@@ -31,8 +39,68 @@
   {% endfor %}
 </div>
 
+{% if can_design %}
+<div class="step" id="tdesigner" style="margin-top:34px"><span class="n">＋</span><h2>New style from a designed page</h2><span class="hint">— design the page in Canva (or anything), export PNG, drop it here, drag where the screenshot and texts go.</span></div>
+
+<div class="card tdz">
+  <div class="tstep">
+    <label class="field"><span>Style name</span><input id="t-label" type="text" maxlength="60" placeholder="e.g. Acme monthly"></label>
+    <label class="field"><span>Captures with</span><select id="t-base">
+      <option value="twitter">X / Twitter report (engagement cropped)</option>
+      <option value="influencer">Influencer (X, with metrics)</option>
+      <option value="facebook">Facebook</option></select></label>
+    <label class="field"><span>Paper</span><select id="t-paper"><option value="a4">A4</option><option value="letter">Letter</option></select></label>
+    <label class="field"><span>Orientation</span><select id="t-orient"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
+    <label class="check" style="align-self:end"><input id="t-links" type="checkbox" checked><span>Links page at the end</span></label>
+  </div>
+
+  <div class="tpages" role="tablist">
+    <button type="button" class="tab on" data-tpage="post" role="tab">Post page <span class="tag" id="t-has-post">required</span></button>
+    <button type="button" class="tab" data-tpage="cover" role="tab">Cover <span class="tag" id="t-has-cover">optional</span></button>
+    <button type="button" class="tab" data-tpage="end" role="tab">End page <span class="tag" id="t-has-end">optional</span></button>
+    <span class="spacer"></span>
+    <label class="btn sm">Upload page image <input type="file" id="t-file" accept="image/png,image/jpeg" hidden></label>
+    <button type="button" class="btn sm ghost" id="t-remove" hidden>Remove this page</button>
+  </div>
+
+  <div class="tedit">
+    <div class="ttools">
+      <b>Add to page</b>
+      <button type="button" class="btn sm" data-add="slot">▭ Screenshot slot</button>
+      <div class="hint">Drag on the page to draw a slot, or click to add one. Several slots = several posts per page, in reading order.</div>
+      <b>Text</b>
+      <div class="chips">
+        {% for f, l in [('title','Report title'),('date','Date'),('page','Page no.'),('account_name','Account'),('post_link','Post link'),('category','Category'),('metrics','Metrics')] %}
+        <button type="button" class="tag" style="cursor:pointer" data-add-text="{{ f }}">{{ l }}</button>{% endfor %}
+      </div>
+      <div id="t-props" hidden>
+        <b>Selected</b>
+        <div class="fields" style="grid-template-columns:1fr 1fr">
+          <label class="field"><span>Size (pt)</span><input id="tp-size" type="number" min="4" max="96" value="12"></label>
+          <label class="field"><span>Colour</span><input id="tp-color" type="color" value="#111111"></label>
+          <label class="field"><span>Align</span><select id="tp-align"><option>left</option><option>center</option><option>right</option></select></label>
+          <label class="check" style="align-self:end"><input id="tp-bold" type="checkbox"><span>Bold</span></label>
+        </div>
+        <button type="button" class="btn sm danger" id="tp-del">Delete (⌫)</button>
+      </div>
+      <div class="hint" id="t-status">Upload the post page image to start.</div>
+    </div>
+    <div class="tcanvas-wrap"><div class="tcanvas" id="tcanvas"><div class="tempty" id="t-empty">Drop a PNG here<br><small>A4 / Letter page exported from Canva</small></div><img id="t-img" alt="" hidden><div class="tlayer" id="tlayer"></div></div></div>
+  </div>
+
+  <div class="row" style="margin-top:12px">
+    <button type="button" class="btn primary" id="t-save">Save style</button>
+    <label class="check"><input id="t-overwrite" type="checkbox"><span>Replace an existing style with the same name</span></label>
+    <span id="t-msg" class="small"></span>
+    <span class="spacer"></span>
+    <span class="hint">PDF and HTML render exactly; DOCX is an approximation of a designed page.</span>
+  </div>
+</div>
+{% endif %}
+
 {% if is_admin %}
-<div class="step" id="designer" style="margin-top:34px"><span class="n">＋</span><h2>Style designer</h2><span class="hint">— page size, grid, card look, cover, outputs. Validated by the same rules the runner uses; the preview is the real geometry.</span></div>
+<details style="margin-top:28px"><summary class="link" style="font-size:13px;cursor:pointer">Advanced designer — grid, margins, card look by numbers</summary>
+<div class="step" id="designer" style="margin-top:14px"><span class="n">＋</span><h2>Style designer (numbers)</h2><span class="hint">— page size, grid, card look, cover, outputs. Validated by the same rules the runner uses.</span></div>
 
 <form id="designer-form" class="designer card" novalidate>
   <div>
@@ -122,7 +190,8 @@
     <p class="small faint" style="margin-top:10px">Rule 3 still applies: the thumbnail is the real layout, but open the first PDF a new style produces and look at it.</p>
   </aside>
 </form>
+</details>
 {% endif %}
 {% endblock %}
 
-{% block scripts %}<script>initStyles();</script>{% endblock %}
+{% block scripts %}<script>initStyles(); initTemplateDesigner();</script>{% endblock %}

@@ -6,8 +6,10 @@ touches the capture pipeline, and neither can name a report type the runner
 would refuse — presets are checked against `report_types` on save, styles
 against the registry.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+import json
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from . import auth, config, report_types, styles
 from .jobs import store
@@ -119,7 +121,7 @@ async def get_style(slug: str, user: str = Depends(auth.require_user_api)):
 
 @router.post("/styles/preview")
 async def preview_style(request: Request,
-                        user: str = Depends(auth.require_admin)):
+                        user: str = Depends(auth.require_designer)):
     """PNG of an unsaved style. Validation errors come back as JSON 400 with
     the registry's own message, so the designer can show exactly what is wrong."""
     data = await _json_body(request)
@@ -138,7 +140,7 @@ async def preview_style(request: Request,
 
 @router.post("/styles")
 async def save_style(request: Request,
-                     user: str = Depends(auth.require_admin)):
+                     user: str = Depends(auth.require_designer)):
     data = await _json_body(request)
     _csrf(request, data)
     try:
@@ -151,7 +153,7 @@ async def save_style(request: Request,
 
 @router.delete("/styles/{slug}")
 async def delete_style(slug: str, request: Request,
-                       user: str = Depends(auth.require_admin)):
+                       user: str = Depends(auth.require_designer)):
     auth.verify_csrf(request, request.headers.get("x-csrf-token") or "")
     try:
         if not styles.delete(slug):
@@ -159,3 +161,133 @@ async def delete_style(slug: str, request: Request,
     except styles.StyleError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True}
+
+
+@router.post("/styles/template")
+async def save_template_style(request: Request,
+                              meta: str = Form(...),
+                              post: UploadFile = File(None),
+                              cover: UploadFile = File(None),
+                              end: UploadFile = File(None),
+                              overwrite: str = Form(""),
+                              csrf_token: str = Form(...),
+                              user: str = Depends(auth.require_designer)):
+    """A designed-page (Canva) template: page PNGs + the slots drawn on them."""
+    auth.verify_csrf(request, csrf_token)
+    try:
+        m = json.loads(meta)
+        if not isinstance(m, dict):
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=400, detail="meta must be a JSON object.")
+    files = {}
+    for kind, up in (("post", post), ("cover", cover), ("end", end)):
+        if up is not None and getattr(up, "filename", ""):
+            files[kind] = await up.read()
+    try:
+        resolved = styles.save_template(m, files, overwrite=overwrite.lower() in ("1", "true", "on"))
+    except styles.StyleError as e:
+        return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
+    return {"ok": True, "slug": resolved["slug"], "label": resolved["label"]}
+
+
+@router.get("/styles/{slug}/asset/{kind}")
+async def style_asset(slug: str, kind: str, user: str = Depends(auth.require_user_api)):
+    """The designed page image of a template style (for the editor + gallery)."""
+    if kind not in ("post", "cover", "end") or not styles._SLUG.match(slug or ""):
+        raise HTTPException(status_code=404, detail="No such asset")
+    p = styles.asset_dir(slug) / f"{kind}.png"
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="No such asset")
+    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/styles/{slug}/visibility")
+async def set_style_visibility(slug: str, request: Request,
+                               user: str = Depends(auth.require_admin)):
+    """Admin curation: show a style on New report (approve) or take it off."""
+    data = await _json_body(request)
+    _csrf(request, data)
+    try:
+        state = styles.set_visible(slug, bool(data.get("show")))
+    except styles.StyleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "slug": slug, "visibility": state}
+
+
+# --------------------------------------------------------------------------- #
+# Users (Admin → Users)
+# --------------------------------------------------------------------------- #
+def _public_users() -> list:
+    db = {u["username"]: u for u in store.users_list()}
+    out = [{"username": u, "role": r["role"], "source": "app",
+            "created_at": r["created_at"], "created_by": r.get("created_by") or ""}
+           for u, r in db.items()]
+    for u in config.USERS:
+        if u not in db:
+            out.append({"username": u, "role": auth.role_of(u), "source": ".env",
+                        "created_at": None, "created_by": ""})
+    return sorted(out, key=lambda x: x["username"])
+
+
+@router.get("/users")
+async def list_users(user: str = Depends(auth.require_admin)):
+    return {"users": _public_users(), "roles": list(store.ROLES), "me": user}
+
+
+@router.post("/users")
+async def create_user(request: Request, user: str = Depends(auth.require_admin)):
+    data = await _json_body(request)
+    _csrf(request, data)
+    name = str(data.get("username") or "").strip().lower()
+    pw = str(data.get("password") or "")
+    role = str(data.get("role") or "member")
+    if not auth.USERNAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Username: 2–31 chars, lowercase letters, digits, . _ -")
+    if len(pw) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if role not in store.ROLES:
+        raise HTTPException(status_code=400, detail="Unknown role.")
+    if store.user_get(name) and not data.get("overwrite"):
+        raise HTTPException(status_code=400, detail="That user already exists.")
+    store.user_upsert(name, auth.hash_password(pw), role, created_by=user)
+    return {"ok": True, "users": _public_users()}
+
+
+@router.patch("/users/{name}")
+async def update_user(name: str, request: Request,
+                      user: str = Depends(auth.require_admin)):
+    data = await _json_body(request)
+    _csrf(request, data)
+    name = name.strip().lower()
+    row = store.user_get(name)
+    if not row:
+        if name in config.USERS:
+            raise HTTPException(status_code=400, detail="That login comes from .env — "
+                                "add them here as an app user to manage their role.")
+        raise HTTPException(status_code=404, detail="User not found.")
+    if "role" in data:
+        role = str(data["role"])
+        if role not in store.ROLES:
+            raise HTTPException(status_code=400, detail="Unknown role.")
+        if name == user and role != "admin":
+            raise HTTPException(status_code=400, detail="You cannot remove your own admin role.")
+        store.user_set_role(name, role)
+    if data.get("password"):
+        pw = str(data["password"])
+        if len(pw) < 8:
+            raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+        store.user_set_password(name, auth.hash_password(pw))
+    return {"ok": True, "users": _public_users()}
+
+
+@router.delete("/users/{name}")
+async def delete_user(name: str, request: Request,
+                      user: str = Depends(auth.require_admin)):
+    auth.verify_csrf(request, request.headers.get("x-csrf-token") or "")
+    name = name.strip().lower()
+    if name == user:
+        raise HTTPException(status_code=400, detail="You cannot delete yourself.")
+    if not store.user_delete(name):
+        raise HTTPException(status_code=404, detail="User not found (logins from .env are removed in the file).")
+    return {"ok": True, "users": _public_users()}

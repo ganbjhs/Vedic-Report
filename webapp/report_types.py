@@ -113,6 +113,9 @@ class ReportType:
     # True for a style designed in the web app (data/profiles/), which may be
     # edited or deleted there; shipped profiles and built-ins may not.
     custom: bool = False
+    # True for a designed-page (Canva) template style — edited in the template
+    # designer, not the numeric one.
+    template: bool = False
     # Which network this style captures from. Everything today is X; a style is
     # offered only under its own platform, so the Style step never shows a card
     # that cannot run.
@@ -152,9 +155,17 @@ def _caption(p: dict) -> str:
     page = p.get("page") or {}
     raw = str(page.get("size", "letter")).lower()
     size = {"letter": "Letter", "a4": "A4"}.get(raw, raw.title())
-    cols, rows = (page.get("grid") or [1, 1])[:2]
-    n = cols * rows
+    tpl = p.get("template") or {}
+    if tpl:
+        n = len(tpl.get("slots") or [])
+    else:
+        cols, rows = (page.get("grid") or [1, 1])[:2]
+        n = cols * rows
     bits = [size, f"{n} per page" if n > 1 else "1 post per page"]
+    if tpl:
+        bits.append("designed page")
+        if (tpl.get("pages") or {}).get("cover"):
+            bits.append("cover")
     if (p.get("capture") or {}).get("device_scale_factor", 1) != 1:
         bits.append("2x resolution")
     if (p.get("content") or {}).get("cover"):
@@ -204,6 +215,7 @@ def _from_profiles() -> list:
             caption=_caption(p),
             outputs=tuple(p.get("outputs") or ("pdf",)),
             custom=registry.is_user(slug),
+            template=bool(p.get("template")),
             # Profiles may name their platform; registry.validate() has already
             # checked it against this module's table, so an unknown value can
             # never reach here.

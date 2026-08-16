@@ -23,7 +23,7 @@
     <div class="menu">
       <button class="avatar" id="menu-btn" type="button" aria-haspopup="true" aria-expanded="false" title="{{ user }}">{{ user[:1] }}</button>
       <div class="menu-pop" id="menu-pop" hidden>
-        <div class="who">Signed in as <b>{{ user }}</b>{% if is_admin %} · admin{% endif %}</div>
+        <div class="who">Signed in as <b>{{ user }}</b> · {{ role }}</div>
         {% if is_admin %}<a class="btn ghost" href="/settings">Settings</a>{% endif %}
         <form method="post" action="/logout">
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -42,6 +42,7 @@
     <a href="/admin/session-status" class="{{ 'active' if nav == 'accounts' else '' }}"><span class="ico">◉</span> Accounts &amp; sessions
       {% set worst = (platform_health | selectattr('live') | map(attribute='state') | list) %}
       <span class="dot {{ 'bad' if ('invalid' in worst or 'missing' in worst) else ('warn' if 'expiring' in worst else 'ok') }}" style="margin-left:auto" title="Capture account health"></span></a>
+    <a href="/admin/users" class="{{ 'active' if nav == 'users' else '' }}"><span class="ico">👥</span> Users &amp; roles</a>
     <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}"><span class="ico">⚙</span> Settings</a>
     {% if budget %}
     <div class="quota" title="Posts captured today on the shared X account. Quality degrades past the ceiling (RULEBOOK rule 21).">

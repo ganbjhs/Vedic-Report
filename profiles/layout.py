@@ -87,6 +87,9 @@ def placements(profile, dims):
     units are irrelevant to the result (only the ratio matters), which is why a
     device_scale_factor change cannot move a placement.
     """
+    tpl = profile.get("template")
+    if tpl:
+        return _template_placements(profile, dims)
     box_w, box_h = profile["image"]["max_in"]
     grid = cells(profile)
     n_cells = len(grid)
@@ -100,6 +103,30 @@ def placements(profile, dims):
         out.append(Placement(i, page, col, row,
                              gx + (gw - w_in) / 2,     # centred in its cell
                              gy, w_in, h_in))
+    return out
+
+
+def slot_boxes(profile):
+    """Template styles: the image slots on one page, in inches, reading order."""
+    pw, ph = registry.page_inches(profile["page"])
+    out = []
+    for i, sl in enumerate(profile["template"]["slots"]):
+        out.append((i, 0, sl["x"] * pw, sl["y"] * ph, sl["w"] * pw, sl["h"] * ph))
+    return out
+
+
+def _template_placements(profile, dims):
+    boxes = slot_boxes(profile)
+    n = len(boxes)
+    out = []
+    for i, (iw, ih) in enumerate(dims):
+        page, slot = divmod(i, n)
+        col, row, sx, sy, sw, sh = boxes[slot]
+        w_in, h_in = fit(iw, ih, sw, sh)
+        # centred in the slot both ways — a designed frame expects its content
+        # in the middle, not hugging the top as a grid cell does
+        out.append(Placement(i, page, col, row, sx + (sw - w_in) / 2,
+                             sy + (sh - h_in) / 2, w_in, h_in))
     return out
 
 

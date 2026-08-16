@@ -67,7 +67,20 @@ _ALLOWED = {
                 "links_table"},
 }
 _TOP = {"schema", "slug", "label", "description", "extends", "platform",
-        "capture", "image", "page", "content", "outputs"}
+        "capture", "image", "page", "content", "outputs", "template"}
+
+# A "template" style: pages designed elsewhere (Canva, Figma, anything that
+# exports a PNG) with SLOTS drawn on top of them in the app. Presentation only:
+# the background is painted, screenshots are fitted (never cropped) into the
+# image slots in reading order, and text slots print report fields. When
+# `template` is present it replaces the grid: posts per page = image slots.
+_TEMPLATE_KEYS = {"pages", "slots", "text"}
+_TEMPLATE_PAGES = {"post", "cover", "end"}
+_TEXT_FIELDS = {"title", "date", "page", "pages", "index", "account_name",
+                "post_link", "category", "metrics"}
+_TEXT_KEYS = {"field", "x", "y", "w", "h", "size_pt", "color", "align", "page",
+              "bold"}
+_SLOT_KEYS = {"x", "y", "w", "h"}
 
 # Capture knobs that DO NOT EXIST, with the reason, so a typo gets a real answer
 # instead of "unknown key".
@@ -363,6 +376,8 @@ def validate(p: dict) -> dict:
             raise ProfileError(f"{slug}: content.metrics must be a non-empty "
                                "list of [label, key] pairs")
 
+    _validate_template(p, slug)
+
     outs = p.get("outputs") or []
     if not outs:
         raise ProfileError(f"{slug}: needs at least one output")
@@ -376,5 +391,72 @@ def validate(p: dict) -> dict:
 
 
 def per_page(profile: dict) -> int:
+    tpl = profile.get("template")
+    if tpl:
+        return max(1, len(tpl.get("slots") or []))
     cols, rows = profile["page"]["grid"]
     return cols * rows
+
+
+def asset_dir(slug: str, registry_dir: Path = None) -> Path:
+    """Where a template style's page images live: beside the registry that
+    holds the profile, under assets/<slug>/. Inside a job that is the job's
+    private copy (runner copies assets with the profile)."""
+    registry_dir = registry_dir or REGISTRY_DIR
+    p = _path_for(slug, registry_dir)
+    base = p.parent if p else registry_dir
+    return base / "assets" / slug
+
+
+def asset_path(profile: dict, kind: str, registry_dir: Path = None):
+    """Absolute path of the 'post' / 'cover' / 'end' page image, or None."""
+    tpl = profile.get("template") or {}
+    name = (tpl.get("pages") or {}).get(kind)
+    if not name:
+        return None
+    return asset_dir(profile["slug"], registry_dir) / name
+
+
+def _validate_template(p: dict, slug: str) -> None:
+    tpl = p.get("template")
+    if tpl is None:
+        return
+    if not isinstance(tpl, dict):
+        raise ProfileError(f"{slug}: template must be an object")
+    extra = set(tpl) - _TEMPLATE_KEYS
+    if extra:
+        raise ProfileError(f"{slug}: unknown template key(s): {sorted(extra)}")
+    pages = tpl.get("pages")
+    if not isinstance(pages, dict) or not pages.get("post"):
+        raise ProfileError(f"{slug}: template.pages needs at least a 'post' page image")
+    for kind, name in pages.items():
+        if kind not in _TEMPLATE_PAGES:
+            raise ProfileError(f"{slug}: template page kind {kind!r}; allowed {sorted(_TEMPLATE_PAGES)}")
+        if not isinstance(name, str) or not name or "/" in name or "\\" in name or name.startswith("."):
+            raise ProfileError(f"{slug}: template page {kind!r} must be a plain filename")
+    slots = tpl.get("slots")
+    if not isinstance(slots, list) or not slots:
+        raise ProfileError(f"{slug}: template.slots needs at least one screenshot slot")
+    for i, sl in enumerate(slots):
+        if not isinstance(sl, dict) or set(sl) - _SLOT_KEYS:
+            raise ProfileError(f"{slug}: template.slots[{i}] must have only x, y, w, h")
+        for k in ("x", "y"):
+            _num(sl.get(k), f"template.slots[{i}].{k}", slug, 0, 1)
+        for k in ("w", "h"):
+            _num(sl.get(k), f"template.slots[{i}].{k}", slug, 0.02, 1)
+        if sl["x"] + sl["w"] > 1.001 or sl["y"] + sl["h"] > 1.001:
+            raise ProfileError(f"{slug}: template.slots[{i}] runs off the page")
+    for i, t in enumerate(tpl.get("text") or []):
+        if not isinstance(t, dict) or set(t) - _TEXT_KEYS:
+            raise ProfileError(f"{slug}: template.text[{i}] has unknown keys")
+        if t.get("field") not in _TEXT_FIELDS:
+            raise ProfileError(f"{slug}: template.text[{i}].field must be one of {sorted(_TEXT_FIELDS)}")
+        for k in ("x", "y"):
+            _num(t.get(k), f"template.text[{i}].{k}", slug, 0, 1)
+        for k in ("w", "h"):
+            _num(t.get(k), f"template.text[{i}].{k}", slug, 0.01, 1)
+        _num(t.get("size_pt", 10), f"template.text[{i}].size_pt", slug, 4, 96)
+        if t.get("page", "post") not in _TEMPLATE_PAGES | {"all"}:
+            raise ProfileError(f"{slug}: template.text[{i}].page must be post/cover/end/all")
+        if t.get("align", "left") not in ("left", "center", "right"):
+            raise ProfileError(f"{slug}: template.text[{i}].align must be left/center/right")

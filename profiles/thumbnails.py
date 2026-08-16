@@ -100,6 +100,17 @@ def _page(profile, n_posts, width, with_cover_slot=False):
     page = Image.new("RGB", (width, height), CARD)
     ImageDraw.Draw(page).rectangle([0, 0, width - 1, height - 1], outline=PAGE_EDGE)
 
+    tpl = profile.get("template")
+    if tpl:
+        # A designed page: paint the PNG, then drop posts into its slots.
+        kind = "cover" if with_cover_slot else "post"
+        bg = registry.asset_path(profile, kind) or registry.asset_path(profile, "post")
+        if bg and Path(bg).exists():
+            with Image.open(bg) as b:
+                page.paste(b.convert("RGB").resize((width, height), Image.LANCZOS))
+        if with_cover_slot:
+            return page
+
     if with_cover_slot:
         d = ImageDraw.Draw(page)
         d.rounded_rectangle([width * 0.22, height * 0.42,
@@ -141,7 +152,8 @@ def render(profile, page_w=PAGE_W):
 
     w = page_w * _SUPERSAMPLE
     pages = []
-    if profile["content"].get("cover"):
+    tpl = profile.get("template") or {}
+    if profile["content"].get("cover") or (tpl.get("pages") or {}).get("cover"):
         pages.append(_page(profile, 0, w, with_cover_slot=True))
     pages.append(_page(profile, registry.per_page(profile), w))
 

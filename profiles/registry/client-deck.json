@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "slug": "client-deck",
+  "label": "Client Deck",
+  "extends": "twitter",
+  "description": "One padded 4:5 card per page with a cover, rounded corners and a hairline border. Turns an internal evidence document into something deliverable, without touching the frozen builder.",
+
+  "image": {
+    "max_in": [5.4, 7.4],
+    "aspect": "4:5",
+    "fit": "pad",
+    "background": "#FFFFFF",
+    "radius_pt": 10,
+    "border": {"pt": 0.75, "color": "#E1E8ED"},
+    "shadow": {"blur_pt": 12, "opacity": 0.16, "dy_pt": 4}
+  },
+
+  "page": {
+    "size": "a4",
+    "orientation": "portrait",
+    "grid": [1, 1],
+    "margins_in": [0.7, 0.7, 0.7, 0.7]
+  },
+
+  "content": {
+    "cover": true,
+    "header": "{title}",
+    "footer": "{page} / {pages}",
+    "per_post_fields": ["account_name", "post_link"],
+    "metrics": null,
+    "links_table": true
+  },
+
+  "outputs": ["pdf", "docx", "html"]
+}

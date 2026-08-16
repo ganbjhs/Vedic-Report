@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}History — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+
+{% block content %}
+<h1>History</h1>
+<p class="sub">Every report you have generated. Files are kept for a limited time (see <a href="/settings">Settings</a>), so download what you need.</p>
+
+<div class="card">
+  <div class="filters">
+    <input id="hist-q" type="text" placeholder="Search by name…" aria-label="Search">
+    <select id="hist-status" aria-label="Status">
+      <option value="">Any status</option>
+      {% for s in ['running','queued','done','failed','cancelled','interrupted'] %}<option value="{{ s }}">{{ s | capitalize }}</option>{% endfor %}
+    </select>
+    <select id="hist-type" aria-label="Style">
+      <option value="">Any style</option>
+      {% for t in jobs | map(attribute='report_label') | unique %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+    </select>
+    <span class="spacer"></span>
+    <span class="small faint" id="hist-count"></span>
+  </div>
+
+  {% if jobs %}
+  <div style="overflow:auto">
+  <table class="tbl" id="hist">
+    <thead><tr><th>Report</th><th>Style</th><th>Status</th><th class="num">Posts</th><th>When</th><th>Took</th><th>Downloads</th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+    <tr data-id="{{ j.id }}" data-status="{{ j.status }}" data-type="{{ j.report_label }}"
+        data-text="{{ (j.title ~ ' ' ~ j.report_label ~ ' ' ~ j.upload_name) | lower }}">
+      <td class="name"><a href="/jobs/{{ j.id }}">{{ j.title }}</a><br><span class="small faint">{{ j.upload_name }}</span></td>
+      <td>{{ j.report_label }}</td>
+      <td><span class="st {{ j.status }}">{{ j.status }}</span>{% if j.status == 'running' %}<span class="small faint"> {{ j.done }}/{{ j.total }}</span>{% endif %}</td>
+      <td class="num">{{ j.done if j.status == 'done' else j.link_count }}{% if j.skipped %} <span class="small faint" title="left out">−{{ j.skipped | length }}</span>{% endif %}</td>
+      <td class="small" title="{{ j.created_at }}"><span data-ago="{{ j.created_at }}"></span></td>
+      <td class="small faint">{% if j.finished and j.elapsed %}{{ (j.elapsed // 60) }}m {{ j.elapsed % 60 }}s{% endif %}</td>
+      <td><span class="dl">{% for k in j.artifacts %}<a href="/api/jobs/{{ j.id }}/download/{{ k }}">{{ k | upper }}</a>{% endfor %}</span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="faint" style="padding:30px;text-align:center">No reports yet. <a href="/">Make the first one →</a></p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}<script>initHistory();</script>{% endblock %}

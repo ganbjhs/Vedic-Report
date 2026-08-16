@@ -1,65 +1,50 @@
 {% extends "base.html" %}
-{% block title %}{{ job.name }} — Report Automation{% endblock %}
+{% block title %}{{ job.name }} — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+{% block main_class %} narrow{% endblock %}
 
 {% block content %}
-<div class="page-head with-back">
-  <a class="back" href="/">← New report</a>
+<div class="page-head">
+  <div class="crumbs"><a href="/history">History</a> › {{ job.report_label }}</div>
   <h1 id="job-title">{{ job.title }}</h1>
-  <p class="muted">
-    {{ 'Influencer' if job.report_type == 'influencer' else 'Twitter' }} report ·
-    {{ job.link_count }} link(s) · from {{ job.upload_name }}
-  </p>
+  <p class="sub" style="margin-bottom:0">{{ job.report_label }} · {{ job.link_count }} link(s) · from {{ job.upload_name }}
+    {% if job.keep_engagement %} · engagement line kept{% endif %}{% if job.workers %} · {{ job.workers }} browser(s){% endif %}</p>
 </div>
 
-<section class="card" id="status-card" data-job-id="{{ job.id }}" data-csrf="{{ csrf }}">
+<section class="card" id="status-card" data-job-id="{{ job.id }}">
   <div class="status-head">
-    <span class="status status-{{ job.status }}" id="status-pill">{{ job.status }}</span>
-    <span class="muted" id="elapsed"></span>
+    <span class="st {{ job.status }}" id="status-pill">{{ job.status }}</span>
+    <span class="muted small" id="elapsed"></span>
+    <span class="spacer"></span>
+    <form id="cancel-form" hidden><button type="submit" class="btn sm danger">Cancel this job</button></form>
   </div>
-
   <p class="phase" id="phase">{{ job.phase }}</p>
-
-  <div class="progress" id="progress-wrap">
-    <div class="progress-bar" id="progress-bar" style="width:0%"></div>
-  </div>
-  <p class="muted small" id="counter"></p>
-
-  <div class="alert alert-error" id="job-error" hidden></div>
-
+  <div class="progress" id="progress-wrap"><i id="progress-bar" style="width:0%"></i></div>
+  <p class="muted small" id="counter" style="margin:6px 0 0"></p>
+  <div class="alert alert-error" id="job-error" hidden style="margin-top:12px;white-space:pre-line"></div>
   <div class="downloads" id="downloads" hidden>
-    <a class="primary as-button" id="dl-pdf" hidden>Download PDF</a>
-    <a class="secondary as-button" id="dl-docx" hidden>Download DOCX</a>
-    <a class="secondary as-button" id="dl-zip" hidden>Screenshots (.zip)</a>
+    <a class="btn primary" id="dl-pdf" hidden>Download PDF</a>
+    <a class="btn" id="dl-docx" hidden>Download DOCX</a>
+    <a class="btn" id="dl-html" hidden>HTML</a>
+    <a class="btn" id="dl-xlsx" hidden>XLSX</a>
+    <a class="btn" id="dl-zip" hidden>Screenshots (.zip)</a>
+    <a class="btn ghost" href="/?type={{ job.report_type }}">Make another →</a>
   </div>
-
-  <div class="alert alert-warn" id="ephemeral-note" hidden>
-    <strong>Download these now.</strong> This server keeps job files only while
-    it is awake — once it goes idle they are gone, and the report has to be
-    generated again.
+  <div class="alert alert-warn" id="ephemeral-note" hidden style="margin-top:12px">
+    <strong>Download these now.</strong> This server keeps job files only while it is awake — once it goes idle they are gone.
   </div>
-
-  <form id="cancel-form" hidden>
-    <button type="submit" class="ghost danger">Cancel this job</button>
-  </form>
 </section>
 
 <section class="card">
   <h2 class="card-title">Activity log</h2>
-  <ul class="activity" id="activity">
-    <li class="muted">Waiting for the job to start…</li>
-  </ul>
+  <ul class="activity" id="activity"><li class="muted">Waiting for the job to start…</li></ul>
 </section>
 
 <section class="card" id="skipped-card" hidden>
-  <h2 class="card-title">Not included in the report <span id="skipped-count" class="count"></span></h2>
-  <p class="muted small">
-    These links could not be captured, so they were left out of the document.
-  </p>
+  <h2 class="card-title">Not included in the report <span class="count" id="skipped-count"></span></h2>
+  <p class="muted small" style="margin:0 0 8px">These links could not be captured cleanly, so they were left out of the document rather than shown as wrong evidence.</p>
   <ul class="skipped" id="skipped"></ul>
 </section>
 {% endblock %}
 
-{% block scripts %}
-<script src="/static/app.js"></script>
-<script>initJobPage({{ job.execution_mode | tojson }});</script>
-{% endblock %}
+{% block scripts %}<script>initJobPage({{ job.execution_mode | tojson }});</script>{% endblock %}

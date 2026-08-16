@@ -8,9 +8,47 @@ browser and builds a **PDF + Word (.docx)** report.
 
 Two ways to use it:
 
-* **Web app** — colleagues sign in, upload a links file, pick a report type,
-  download the result. This is the main interface.
+* **Web app ("Report Maker")** — colleagues sign in, pick a platform and a
+  report *style*, add links (file, paste or Google Sheet), check the preview,
+  generate, download. This is the main interface.
 * **CLI** — the original command-line tool, unchanged.
+
+The web app's dashboard (`webapp/`, no build step — one CSS file, one JS file):
+
+* **New report** — Platform → Style → Links, with a live preview table of what
+  will be captured (duplicates and rejected rows called out by row number), a
+  rough time estimate, and a sticky bar with the report name and Generate.
+* **Report styles** — a gallery of every style with its real page thumbnail,
+  plus a **style designer**: page size, grid, image box, aspect/padding, corner
+  radius, border, shadow, cover, footer, per-post fields, outputs. The preview
+  is drawn by the same code as the cards, and a saved style is validated by
+  `profiles/registry.py` before it can be selected. Saved under
+  `data/profiles/`; the two built-in reports cannot be edited from here.
+* **Presets** — remember a platform + style + options (+ a Google Sheet URL)
+  and re-run with one click.
+* **History** — every job with status, counts and download links; a job page
+  with live progress, activity log and the "not included" list.
+* **Accounts & sessions**, **Settings** (read-only view of `.env`), capture
+  budget meter, health pills, light/dark theme, `N` / `H` / `S` shortcuts.
+* **Facebook** — a third capture engine (`facebook/fb_capture.py`) behind the
+  Facebook pill. Public posts are captured **without any account**: the login
+  dialog, dim backdrop, cookie banner and bottom bar are removed first, the post
+  is framed from its author line to its Like · Comment · Share row (comments
+  excluded), and links can be `/posts/`, `/photos/`, `/videos/`, `photo.php`,
+  `permalink.php`, `/watch`, `/reel/`, `/share/p/` or `m.facebook.com` forms.
+  If you ever need a signed-in capture, save a Playwright storage state at
+  `sessions/fb_state.json` and it is used automatically. Try any link first with
+  `python scripts/probe_logged_out.py <url>`.
+
+Why X still uses an account when Facebook does not: X shows a single post
+logged-out, but not reliably the *conversation* the Twitter report is defined
+by (a reply shot together with its parent), hides sensitive/age-gated media,
+throws a sign-up sheet after the first scroll, and rate-limits anonymous IPs
+far harder — every one of those cost a day before the shared account existed
+(RULEBOOK rules 6, 19–21). Facebook's public Page posts do render for a
+logged-out desktop visitor once the login sheet is removed, so that engine
+starts account-free; if Facebook begins walling those too, `fb_state.json` is
+the switch.
 
 Two kinds of report:
 
@@ -184,13 +222,22 @@ X account — push it hard enough and you trade speed for rate-limit retries.
 │   ├── inf_capture.py        capture keeping engagement + reading metrics
 │   └── inf_report_builder.py A4 PDF + DOCX, two posts per page
 │
+├── profiles/                 the profile engine (styles as JSON) — see docs/profile-engine.md
+├── facebook/                 the Facebook capture engine (public posts, logged-out) — via profiles/
+│
 ├── webapp/                   the web layer
 │   ├── main.py               app, pages, auth routes
 │   ├── config.py             environment / .env settings
 │   ├── auth.py               sessions, CSRF, login rate limiting
 │   ├── uploads.py            upload parsing, validation, normalisation
+│   ├── sheets.py             Google Sheets (published CSV) input
+│   ├── report_types.py       platforms + report types as a capability table
+│   ├── health.py             per-platform session health + capture budget
+│   ├── previews.py           style thumbnails for the cards
+│   ├── styles.py             the style designer (user profiles under data/profiles/)
 │   ├── x_login.py            headless X sign-in for the shared account
-│   ├── routes_jobs.py        submit / status / cancel / download
+│   ├── routes_jobs.py        preview / submit / status / cancel / download
+│   ├── routes_extras.py      presets + styles JSON APIs
 │   ├── jobs/
 │   │   ├── store.py          SQLite job records
 │   │   ├── queue.py          bounded worker pool
@@ -238,6 +285,7 @@ Everything is environment variables, loaded from `.env` locally. See
 |---|---|---|
 | `APP_USERS` | — | `alice:pw1,bob:pw2`. A bcrypt hash is detected automatically. |
 | `APP_USER` / `APP_PASS` | — | Alternative single-account form. |
+| `APP_ADMINS` | (everyone) | Comma-separated usernames who see Accounts & sessions, Settings, the style designer, health and the budget meter. Everyone else gets New report / History / Report styles only. |
 | `SESSION_SECRET` | — | Long random string. Changing it signs everyone out. |
 | `COOKIE_SECURE` | `0` | Set `1` when served over HTTPS. |
 

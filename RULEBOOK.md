@@ -64,9 +64,47 @@ exactly what the user typed, and `run.py` composes `"<title> <date>"` internally
 where no caller can reach it. Additive: without the switch every existing
 invocation behaves as before.
 
+**Approved edit 5 — a reply must not ship without its parent**
+(`src/capture/x_capture.py`, `src/run_report.py`, plus the reason text in
+`webapp/jobs/runner.py`). See rule 20 for the full write-up. In short: the guard
+that was supposed to prevent this was gated on X rendering a "Replying to" line,
+and X omits that line in precisely the case the guard exists for, so it declined
+to act on its own target. Measured at 4/60 reply captures lost on a healthy
+session and 38/60 on a degraded one — all silent, all `status="ok"`. Cannot be
+fixed from outside `src/`: the ancestor is chosen inside the capture, and only
+the capture holds the page. Additive — every new parameter defaults to the old
+behaviour, and a genuine root post takes the identical early return (verified:
+zero extra scrolls, zero extra waits on that path).
+
 Before you edit anything under `src/`, ask whether you can get the same result
 from outside it. You almost always can — see rules 2 and 8 for two cases where
 that looked impossible and wasn't.
+
+---
+
+## Dead ends — do not retry (append-only)
+
+**Read this before proposing anything.** Every line below was actually tried and
+actually measured in this project, and every one of them is the kind of idea
+that looks obviously correct on a first reading of the code. A future session —
+human or AI — that suggests one of these is not being clever; it is repeating
+work that has already been paid for. If you think one deserves revisiting, bring
+the measurement that overturns the one recorded here.
+
+Append to this list whenever something is tested and rejected. Never delete a
+line: an idea that was wrong once will look attractive again.
+
+| Dead end | Why not | Do instead |
+|---|---|---|
+| **DPR 2 as the global default** (`device_scale_factor` in `src/run_report.py`'s `CTX_KWARGS`) | 4-run benchmark: resolution genuinely doubles (598 -> 1196 px, 122 -> 244 DPI) but parent loss roughly **doubles** with it, 3.5/20 -> 6.5/20 with no overlap between conditions. It also costs +24% wall clock. Memory is *not* the problem the brief predicted (+9.6%/worker) | Ship 2x as an **opt-in high-res profile** owning its own `CTX_KWARGS`. Costs are then paid only by jobs that asked. See rule 20 and `docs/profile-engine.md` §10 |
+| **Monkey-patching `x_capture._THREAD_ANCESTORS`** from a profile runner | It *works* — the constant is read at call time — but it is an invisible hand reaching into frozen module state, which is exactly the surprise rule 1 exists to prevent. Nothing currently needs it | Ask for a proper approved edit adding `capture(..., thread_ancestors=None)`, the `--keep-engagement` pattern. Until then the knob does not exist, and `profiles/registry.py` rejects it by name |
+| **Tuning the retry budget to fix parent loss** (more attempts, longer backoff in `_ensure_parent`) | Instrumented over 120 reply captures: **42 of 42 losses never reached the remount at all**. The bail-out was the bug; the retry budget was never the bottleneck | Check whether a guard's *precondition* is ever true before tuning what happens after it (rule 20) |
+| **Byte- or pixel-identical PDF diffing** to prove a builder change is safe | reportlab embeds timestamps, so byte-identity is impossible; rasterising to compare pixels needs a dependency this project does not have | **Geometry parity**: assert page count and every `(page, x, y, w, h)` placement against the frozen builders' own functions and constants. `profiles/tests/test_parity.py` |
+| **Trusting `frame_ok`, `status="ok"` or `[verify] N/N clean`** as evidence a run was good | All 80 shots across four benchmark runs reported `frame_ok=True`, `overlay=False`, `status="ok"` and `[verify] 20/20` — while shots were visibly missing their parent post, and one showed a loading spinner instead of a video | Rule 3, without exception: **open the images and the documents and look**. A green status only proves the code did not raise |
+| **"Fixing" the absolute paths in `reports/results.json`** | They look like a portability bug and are not. Rule 2 copies the code into the job dir, so `ROOT` resolves inside the job and the paths are self-consistent | Leave them. A consumer **inside** the job subprocess may trust them; a consumer in the **webapp** must glob or rebase, as `publish()` and `_zip_screenshots()` already do |
+| **Running more than ~300 captures a day on one X account** | Measured: after ~320 the same 60-link set went from 0 to 18 retries, 1 to 8 recaptures, produced 598x80 frames, and parent loss hit 38/60 (63%). Nothing raised an error | Rule 21. Rest the account, and treat any run with an unusual retry count as inadmissible rather than as a result |
+| **Averaging a healthy run with a degraded one** | The two zero-cost diagnostic passes were 6.7% and 63.3%. Their mean, 35%, describes neither and would have been reported as the bug's rate | Report the conditions separately, or discard the degraded run and re-measure |
+| **Cropping a capture to a tile aspect** (`fit: "crop-top"` in a profile) | Caught by eye on the first `contact-sheet` render: a master is *parent + reply*, and a 1:1 crop kept the parent and threw the reply away. That is rule 20's bug re-created at the presentation layer, where no capture-side gate can see it | **Pad, never crop.** `contact-sheet` uses `fit: "pad"` at 4:5. The `crop-to-aspect` op still exists because a profile may legitimately want it for non-evidence imagery, but no shipped profile uses it |
 
 ---
 
@@ -425,6 +463,95 @@ code:
 
 ---
 
+## 18a. Styles designed in the app are profiles, and only profiles
+
+The style designer (`webapp/styles.py`, `/styles`) writes profile JSON to
+`data/profiles/`. Three things keep it inside the lines drawn by rule 1 and the
+design note:
+
+* Every save and every preview goes through `registry.resolve()` — the same
+  merge + `validate()` a file in `profiles/registry/` gets. A style the runner
+  would refuse cannot be saved, and the error shown is the registry's own.
+* Built-in and shipped slugs are reserved (`styles.reserved_slugs()`), and the
+  shipped registry is consulted first, so a user style can never shadow one.
+* The runner copies the chosen user style into the job's private
+  `profiles/registry/` (`runner._copy_user_profiles`), so the subprocess reads
+  it through the normal path and a later edit or delete cannot change a job
+  already running.
+
+The designer can only set what the schema already allows. A new *capture*
+behaviour is still a new engine (rule 18), not a form field.
+
+---
+
+## 18b. The Facebook engine is a profile engine, and starts logged-out
+
+`facebook/fb_capture.py` is rule 18 done literally: its own folder, imported
+directly by `profiles/prof_worker.py`, no change to `src/` or `influencer/`.
+It is reached ONLY through `profiles/run_profile.py --profile <fb style>`;
+there is no `run_facebook.py`, and `run.py` never sees a Facebook link.
+
+Three facts to keep straight:
+
+* **Links are platform-scoped at the edge.** `profiles/netlinks.py` decides
+  what a Facebook link is, for BOTH the preview (`uploads.analyse(..., platform)`)
+  and the job (`prof_runner` → `netlinks.load_rows`). The frozen
+  `input_loader._rows_from_grid` stays the X reader; its layout helpers are
+  imported read-only, its X-only filter is not copied. A profile's `platform`
+  must match its engine's platform (`registry.validate` refuses otherwise).
+* **No account is the normal state.** Public Page posts render for a
+  logged-out desktop visitor once the login sheet, backdrop, cookie banner and
+  bottom bar are removed and the scroll-lock released — the same one-bug logic
+  as rule 19, re-implemented for Facebook's layers. `sessions/fb_state.json`
+  is honoured if present and never required; `health.py` reports "no account
+  needed" as OK, not as a warning.
+* **The frame ends at the actions row.** Like · Comment · Share is the one
+  boundary (rule 6.2 again): above it when `keep_engagement` is false, below it
+  when true. Comments are `role="article"` nodes *inside* the post's article,
+  so cutting at that row is also what keeps them out. If the row is not found
+  the whole article ships with `frame_ok=False`.
+
+Selectors are Facebook's Aug 2026 desktop DOM. When it breaks, run
+`scripts/probe_logged_out.py` on the link and look (rule 3) before touching
+the engine.
+
+---
+
+## 18c. Web-layer rules (v2 dashboard) — short, each one earned
+
+1. **Assets are versioned.** `base.html` links `app.css?v=<hash>` /
+   `app.js?v=<hash>` (`main._asset_version`). The first deploy of v2 rendered
+   as an unstyled list on a colleague's Chrome because it paired the OLD
+   cached stylesheet with the new markup. Never link a static asset bare.
+2. **Hiding is not a gate.** Anything admin-only is hidden in the template
+   AND refused by `auth.require_admin` (pages) / the same dependency on the
+   write APIs (`/api/styles` save/preview/delete). Same principle as the
+   platform pills: a disabled button is a hint, `check_runnable` is the gate.
+3. **The dashboard shows report information only.** Health, budget, sessions
+   and settings live under *Admin* in the nav. A colleague who only makes
+   reports must be able to use the app without ever seeing them; the one
+   exception is a plain "X capture is currently unavailable — ask an admin"
+   line, because that changes whether their run will work.
+4. **A thumbnail never pretends to be legible.** Style rows carry a 44 px
+   thumbnail for recognition; the *Sample* modal shows the readable page. Big
+   cards with unreadable content were tried and rejected by the people using it.
+5. **Preview and submit share one parser.** `_grid_from_request` +
+   `uploads.analyse(grid, dedupe, platform)` for both. If a link shows in the
+   preview it is captured; if it is rejected it says which row and why.
+6. **Platform is a form field, not a guess.** The preview re-reads when the
+   platform pill changes; `netlinks.MATCHERS[platform]` decides what a link is
+   in the web layer and in the runner. Never infer the platform from the URL
+   mix.
+7. **`.env` is read once.** `APP_USERS`/`APP_ADMINS`/everything else need a
+   uvicorn restart; `--reload` watches `.py`, not `.env`. Usernames in
+   `APP_ADMINS` must match `APP_USERS` exactly; passwords cannot contain `,`
+   or `:`.
+8. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
+   file to hand to the next redesign; update it in the same commit as any
+   structural change (new folder, new route family, new contract).
+
+---
+
 ## 19. A stray dialog and a cropped reply are the same bug
 
 Both captures used to clear overlays like this, once, right after load:
@@ -472,13 +599,119 @@ if it were one.
 
 ---
 
+## 20. A guard gated on rendered text will decline to act on its own target
+
+The Twitter report's defining promise is that a reply is shot together with the
+post it answers (approved edit 1). It was breaking **silently**, on the live
+tool, before any of the DPR work — and every gate said the run was perfect.
+
+**The symptom.** A reply captured alone: no parent, no context. `status="ok"`,
+`frame_ok=True`, `overlay=False`, `[verify] 60/60 links produced a clean
+screenshot`. Nothing in the log, nothing in the UI, nothing in the document to
+say a post had lost half its meaning. Rule 3 again, and it cost a day: the only
+way this was ever going to be found was by *opening the pictures*.
+
+**The mechanism**, in order:
+
+1. `_locate_focused` calls `scroll_into_view_if_needed` — it must, because X
+   unmounts off-screen articles (rule 6.1).
+2. That scroll pushes the **parent** off-screen, and X virtualises it away.
+3. The reply is now the only article, so its index is 0.
+4. `first = max(0, idx - 1)` is also 0, so `top_el` is `None`.
+5. `_frame_covers`' parent check is guarded by `if top_el is not None`, so it
+   never runs. A one-article frame is validated against a one-article promise
+   and passes.
+
+**Why the existing guard did not save us.** `_ensure_parent` was written for
+exactly this failure. It bailed on:
+
+```python
+if idx > 0 or not _is_reply(tweet):      # <- the hole
+```
+
+and `_is_reply` tests for the literal string `"Replying to"`. **X omits that
+line whenever the parent is rendered directly above in conversation view** —
+which is the only situation where step 2 above can happen. So the guard's
+precondition was false in precisely the case it existed to catch.
+
+**The evidence** (two instrumented 60-link runs, DPR 1, an all-reply set):
+
+| | parent lost |
+|---|---|
+| healthy session | 4/60 (6.7%) |
+| degraded session (X throttling) | 38/60 (63.3%) |
+| with ~2s extra settle per capture | **0/60, twice** |
+
+**42 of 42 losses took the `bailed_not_reply` branch. Not one reached the
+remount** — so the single 600 ms attempt was never the bottleneck; control
+simply never got there. Do not "fix" a guard's retry budget before checking
+whether its precondition is ever true.
+
+**The fix** trades rendered text for a structural fact: `_locate_focused` now
+records `idx_before`, the article index from *before* it scrolls, which is the
+only moment a virtualised ancestor is still mounted. Only a post that HAD an
+ancestor can have lost one. A genuine root post has `idx_before == 0`, takes the
+same early return it always did, and pays nothing — no extra scroll, no extra
+wait.
+
+**Demotion is allowed here, and that is a deliberate exception to rule 7.**
+The pixel checks never demote because they infer. This one *observes*: the
+capture saw an ancestor, and the frame it produced has one article. A reply
+printed without the post it answers is **wrong** evidence, and wrong evidence is
+worse than missing evidence with an explanation — so after every retake is
+spent, the link is demoted to `status="parent_lost"` and listed as not-included
+with a plain reason. `report_builder._usable()` drops it with no builder change.
+
+**The fallback lever, if the index-based trigger ever proves flaky:** simply
+giving the page more time made the bug vanish entirely (0/120 above). A settle
+delay before the frame is decided is the blunt instrument that works; it costs
+wall-clock on every capture, which is why it is the fallback and not the fix.
+
+**Not affected:** `influencer/inf_capture.py` has no ancestor logic at all — it
+frames a single post by design — so there is no parallel bug there.
+
+---
+
+## 21. Capture budget: ~320 posts a day and the session starts to rot
+
+Measured on 2026-08-03, one shared account, ~320 captures inside a few hours.
+The tail of that day looked like a different tool:
+
+| | early runs | after ~320 captures |
+|---|---|---|
+| links needing a retry pass | 0 | 18 / 60 |
+| low-quality recaptures | 1 | 8 / 60 |
+| smallest frame produced | 598x152 | **598x80** |
+| parent losses (rule 20) | 4 / 60 | 38 / 60 |
+
+Nothing errored. X simply served slower, thinner pages, and every timing-sensitive
+part of the capture degraded together. Rule 13 says bulk captures get accounts
+rate-limited; this is what that looks like *before* the suspension.
+
+**Consequences:**
+
+* **Benchmark numbers from a throttled session prove nothing.** If a run shows
+  an unusual retry count, throw the numbers away and re-run after a rest — do
+  not average a healthy run with a degraded one.
+* **~320/day is the working ceiling** until someone measures a better one. When
+  scheduling or batch generation is built, that number is the budget, not
+  `MAX_LINKS`.
+* A second capture account buys headroom more cheaply than any code change.
+
+---
+
 ## Checklist before you ship a change
 
 - [ ] `git status` on `run.py`, `src/`, `install.py`, `requirements.txt` is clean
 - [ ] Ran **both** report types end to end
 - [ ] **Opened the PDF and the DOCX and looked at them**
 - [ ] Tested with a reply URL, a video post and an age-restricted post
+- [ ] Confirmed every reply screenshot still shows its **parent post** (rule 20)
+- [ ] Confirmed the run itself was healthy — an unusual retry/recapture count
+      means a throttled session, and its numbers prove nothing (rule 21)
 - [ ] Confirmed no X dialog, action bar or "Hide" toggle is in any screenshot
 - [ ] Checked peak memory if anything touches document building
 - [ ] Confirmed `.env` / `sessions/` are still untracked
 - [ ] Tested on the server, not only locally
+- [ ] Signed in once as a NON-admin and confirmed the app is usable and shows nothing it should not
+- [ ] `docs/BLUEPRINT.md` still describes the tree (rule 18c.8)

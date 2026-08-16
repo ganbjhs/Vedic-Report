@@ -1,127 +1,157 @@
 {% extends "base.html" %}
-{% block title %}New report — Report Automation{% endblock %}
+{% block title %}New report — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+{% block main_class %} narrow{% endblock %}
 
 {% block content %}
-<div class="page-head">
-  <h1>New Report</h1>
-  <p class="muted">Upload your list of X/Twitter post links, name the report, pick a type.</p>
-</div>
+<h1>New report</h1>
+<p class="sub">Pick a platform and a style, add your links, name it, generate.</p>
 
 {% if not x_login_ok %}
 <div class="alert alert-warn">
-  <strong>No X login saved on the server.</strong>
-  Captures will hit login walls until an admin uploads <code>sessions/x_state.json</code>.
-  <a href="/admin/session-status">How to fix this</a>
+  {% if is_admin %}<strong>No usable X login on the server.</strong> X captures will hit login walls until it is fixed — <a href="/admin/session-status">Accounts &amp; sessions</a>.
+  {% else %}<strong>X capture is currently unavailable</strong> — the server's X login needs renewing. Ask an admin; Facebook reports are unaffected.{% endif %}
 </div>
 {% endif %}
 
-<div class="grid">
-  <section class="card">
-    <form id="job-form" class="stack" novalidate>
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+<form id="job-form" novalidate
+      data-max-links="{{ max_links }}" data-default-workers="{{ default_workers }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="platform" id="platform" value="x">
+  <input type="hidden" name="report_type" id="report-type" value="">
 
-      <div class="field">
-        <span class="label">Links file</span>
-        <label id="drop" class="dropzone" for="file-input">
-          <input id="file-input" type="file" name="file" accept="{{ accept }}" hidden>
-          <svg viewBox="0 0 24 24" class="drop-icon" aria-hidden="true">
-            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
-          </svg>
-          <span class="drop-main">Drop a file here, or <u>browse</u></span>
-          <span class="drop-sub">.xlsx · .xls · .csv · .tsv · .txt — up to {{ max_mb }} MB, {{ max_links }} links</span>
-        </label>
-        <div id="file-chip" class="chip" hidden>
-          <span id="file-name"></span>
-          <button type="button" id="file-clear" aria-label="Remove file">×</button>
-        </div>
-      </div>
+  <!-- 1 · platform -->
+  <div class="step"><span class="n">1</span><h2>Platform</h2>
+    <select id="preset-pick" class="tail preset-pick" aria-label="Load a preset" {% if not presets %}hidden{% endif %}>
+      <option value="">Load a preset…</option>
+      {% for p in presets %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+    </select></div>
+  <div class="plat" id="plat" role="radiogroup" aria-label="Platform">
+    {% for p in platforms %}
+    <button type="button" data-platform="{{ p.slug }}" class="{{ 'soon' if not p.live else '' }}"
+            {% if not p.live %}aria-disabled="true" title="{{ p.note }}"{% endif %}
+            role="radio" aria-checked="{{ 'true' if p.slug == 'x' else 'false' }}">
+      <span class="pl {{ p.slug }}"></span> {{ 'X / Twitter' if p.slug == 'x' else p.label }}
+      {% if p.badge %}<span class="badge">{{ p.badge }}</span>{% endif %}
+    </button>
+    {% endfor %}
+  </div>
 
-      <label class="field">
-        <span class="label">Report / file name</span>
-        <input name="report_name" id="report-name" type="text" required
-               placeholder="Twitter Report" maxlength="80">
-        <span class="hint">Used for the document header and the download file name.</span>
-      </label>
+  <!-- 2 · style: compact rows; "Sample" opens the readable full page -->
+  <div class="step"><span class="n">2</span><h2>Style</h2><span class="hint">— how the pages are laid out</span>
+    <a class="link tail" href="/styles">All styles{% if is_admin %} &amp; designer{% endif %} →</a></div>
+  <div class="slist" id="styles" role="radiogroup" aria-label="Report style">
+    {% for rt in report_types %}
+    {% set pv = previews.get(rt.slug) %}
+    <div class="srow" role="radio" aria-checked="false" tabindex="0"
+         data-slug="{{ rt.slug }}" data-platform="{{ rt.platform }}" data-label="{{ rt.label }}"
+         data-worker-choice="{{ 1 if rt.allows_worker_choice else 0 }}"
+         data-keep-engagement="{{ 1 if rt.allows_keep_engagement else 0 }}"
+         data-pool="{{ rt.worker_pool }}"
+         data-large="{{ pv.img_large if pv else '' }}"
+         data-desc="{{ rt.description }}">
+      <span class="radio"></span>
+      <span class="mini-thumb">{% if pv %}<img src="{{ pv.img }}" alt="" loading="lazy">{% endif %}</span>
+      <span class="stext"><b>{{ rt.label }}</b><small>{{ rt.caption }}</small>
+        <span class="stags">{% for o in rt.outputs %}<span class="tag">{{ o | upper }}</span>{% endfor %}{% if rt.custom %}<span class="tag new">Custom</span>{% endif %}</span></span>
+      <button type="button" class="link sample" data-sample="{{ rt.slug }}" {% if not pv %}hidden{% endif %}>Sample</button>
+    </div>
+    {% endfor %}
+  </div>
 
-      <div class="field">
-        <span class="label">Report type</span>
-        <div class="choice-grid">
-          <label class="choice">
-            <input type="radio" name="report_type" value="twitter" checked>
-            <span class="choice-body">
-              <strong>Twitter Report</strong>
-              <small>Clean tweet screenshots with the engagement bar cropped out. One post per page, plus a links table.</small>
-            </span>
+<!-- 3 · links -->
+  <div class="step"><span class="n">3</span><h2>Links</h2><span class="hint">— file, paste, or a Google Sheet</span></div>
+  <div class="src">
+    <div class="tabs" role="tablist" aria-label="How to add links">
+      <button type="button" class="tab" role="tab" data-tab="file" aria-selected="true">Upload file</button>
+      <button type="button" class="tab" role="tab" data-tab="paste" aria-selected="false">Paste links</button>
+      <button type="button" class="tab" role="tab" data-tab="sheet" aria-selected="false">Google Sheet</button>
+      <span class="spacer"></span>
+      <select id="preset-pick" class="tab" style="width:auto;padding:6px 28px 6px 10px;font-size:12px" aria-label="Load a preset" {% if not presets %}hidden{% endif %}>
+        <option value="">Load preset ▾</option>
+        {% for p in presets %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="body">
+      <div>
+        <div data-panel="file">
+          <label id="drop" class="drop" for="file-input">
+            <input id="file-input" class="visually-hidden" type="file" name="file" accept="{{ accept }}">
+            <b>Drop .xlsx / .csv here</b> or click to browse
+            <small>Links auto-detected · account names optional · up to {{ max_mb }} MB, {{ max_links }} links</small>
           </label>
-          <label class="choice">
-            <input type="radio" name="report_type" value="influencer">
-            <span class="choice-body">
-              <strong>Influencer Report</strong>
-              <small>Keeps likes &amp; reposts in the screenshot and adds a metrics table: Reactions, Comments, Reach, Shares.</small>
-            </span>
-          </label>
+          <div id="file-chip" class="chip" hidden><span id="file-name"></span><button type="button" id="file-clear" aria-label="Remove file">×</button></div>
         </div>
+        <div data-panel="paste" hidden>
+          <label class="field"><span>Paste anything containing post links</span>
+            <textarea id="paste-input" name="text" rows="7" spellcheck="false"
+              placeholder="A list, a chat log, an email — surrounding words are fine.&#10;https://x.com/someone/status/123456&#10;https://www.facebook.com/page/posts/pfbid0…"></textarea>
+            <span class="hint">Several per line, bullets, numbering and trailing punctuation are all fine.</span></label>
+        </div>
+        <div data-panel="sheet" hidden>
+          <label class="field"><span>Google Sheets link</span>
+            <input id="sheet-input" name="sheet_url" type="url" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0">
+            <span class="hint">Share → <b>Anyone with the link</b>, or File → Share → <b>Publish to web</b>. Private sheets are not supported. Re-read when you press Generate, so late edits are picked up.</span></label>
+        </div>
+        <div class="pickers" id="pickers" hidden>
+          <label class="picker" id="pick-sheet-wrap" hidden><span>Tab</span><select id="pick-sheet"></select></label>
+          <label class="picker" id="pick-link-wrap" hidden><span>Link column</span><select id="pick-link"></select></label>
+          <label class="picker" id="pick-account-wrap" hidden><span>Account column</span><select id="pick-account"></select></label>
+        </div>
+        <label class="check" style="margin-top:12px"><input type="checkbox" id="dedupe" name="dedupe" value="1" checked>
+          <span>Remove duplicate posts <span class="faint">(same post twice, incl. <code>?s=20</code> variants)</span></span></label>
       </div>
 
-      <div class="field" id="crop-option">
-        <label class="toggle">
-          <input type="checkbox" name="keep_engagement" id="keep-engagement" value="1">
-          <span class="toggle-body">
-            <strong>Keep the engagement line in the screenshot</strong>
-            <small>Crops below the reply/repost/like/views row instead of above it.
-              On a comment link the shot keeps both lines — the parent post's and
-              the comment's. Leave it off for the usual clean crop.</small>
-          </span>
-        </label>
+      <div class="prev" id="prev">
+        <div class="hd">Preview <span class="pill" id="prev-pill"><span class="dot off"></span> nothing yet</span></div>
+        <div class="empty" id="prev-empty">Choose a file, paste links or add a sheet — this shows exactly what will be captured, before any browser time is spent.</div>
+        <div id="prev-loading" hidden><div class="skel"></div><div class="skel" style="width:70%"></div><div class="skel" style="width:85%"></div></div>
+        <div class="alert alert-error tight" id="prev-error" hidden style="margin:10px"></div>
+        <div class="scroll" id="prev-scroll" hidden>
+          <table><thead><tr><th>#</th><th>Account</th><th>Link</th><th></th></tr></thead><tbody id="prev-rows"></tbody></table>
+        </div>
+        <div class="stat" id="prev-stat" hidden></div>
       </div>
+    </div>
+  </div>
 
-      <label class="field" id="speed-option">
-        <span class="label">Capture speed</span>
-        <select name="workers" id="workers">
-          <option value="">Server default — {{ default_workers }} browser(s)</option>
-          {% for n in range(1, max_workers + 1) %}
-          <option value="{{ n }}">{{ n }} browser{{ 's' if n > 1 else '' }}{% if n == 1 %} — slowest, lightest{% endif %}</option>
-          {% endfor %}
-        </select>
-        <span class="hint">More browsers capture more posts at once. They only
-          go faster if the server has spare CPU cores — past that they take turns
-          on the same core and just use more memory. Capped at the number of
-          links, so 4 browsers on 2 links runs 2.</span>
-      </label>
+  <!-- options (capability-driven) -->
+  <div class="options">
+    <label class="toggle" id="crop-option" hidden>
+      <input type="checkbox" name="keep_engagement" id="keep-engagement" value="1">
+      <span><b>Keep the engagement line in the screenshot</b>
+        <small>Crops below the reply / repost / like / views row instead of above it. On a comment link the shot keeps both lines — the parent's and the comment's.</small></span>
+    </label>
+    <label class="field" id="speed-option" hidden><span>Capture speed</span>
+      <select name="workers" id="workers">
+        <option value="">Server default — {{ default_workers }} browser(s)</option>
+        {% for n in range(1, max_workers + 1) %}<option value="{{ n }}">{{ n }} browser{{ 's' if n > 1 else '' }}{% if n == 1 %} — slowest, lightest{% endif %}</option>{% endfor %}
+      </select>
+      <span class="hint">More browsers only go faster with spare CPU cores. Capped at the number of links.</span></label>
+  </div>
 
-      <div id="form-error" class="alert alert-error" hidden></div>
+  <!-- sticky action bar -->
+  <div class="actbar">
+    <input name="report_name" id="report-name" type="text" maxlength="80" required placeholder="Report name — e.g. Brand mentions 16-08-26" autocomplete="off">
+    <span class="summary" id="summary"><b>X</b> · <b>—</b> · <b>0</b> links</span>
+    <span class="spacer"></span>
+    <button type="button" class="btn" id="preset-save">☆ Save as preset</button>
+    <button type="submit" class="btn primary lg" id="submit-btn" disabled><span class="btn-label">Generate report →</span><span class="spinner" hidden></span></button>
+    <div class="alert alert-error err" id="form-error" hidden role="alert"></div>
+  </div>
+</form>
 
-      <button class="primary" id="submit-btn" type="submit">
-        <span class="btn-label">Generate report</span>
-        <span class="spinner" hidden></span>
-      </button>
-    </form>
-  </section>
-
-  <section class="card">
-    <h2 class="card-title">Recent reports</h2>
-    {% if jobs %}
-    <ul class="job-list" id="job-list">
-      {% for j in jobs %}
-      <li>
-        <a href="/jobs/{{ j.id }}" class="job-row">
-          <span class="job-main">
-            <strong>{{ j.name }}</strong>
-            <small>{{ 'Influencer' if j.report_type == 'influencer' else 'Twitter' }} · {{ j.link_count }} link(s)</small>
-          </span>
-          <span class="status status-{{ j.status }}">{{ j.status }}</span>
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="muted empty">No reports yet. Your finished reports will appear here.</p>
-    {% endif %}
-  </section>
+<div class="modal" id="sample-modal" hidden role="dialog" aria-modal="true" aria-label="Style sample">
+  <div class="modal-card"><button type="button" class="modal-x" id="sample-close" aria-label="Close">×</button>
+    <img id="sample-img" alt="Sample page"><h3 id="sample-title"></h3><p id="sample-desc" class="small muted"></p>
+    <div class="row"><button type="button" class="btn primary sm" id="sample-use">Use this style</button><a class="btn sm" id="sample-open" target="_blank" rel="noopener">Open image</a></div>
+  </div>
 </div>
 {% endblock %}
 
+
+
 {% block scripts %}
-<script src="/static/app.js"></script>
+<script id="presets-data" type="application/json">{{ presets | tojson }}</script>
 <script>initSubmitForm();</script>
 {% endblock %}

@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "slug": "influencer",
+  "label": "Influencer Report",
+  "description": "The existing Influencer report, expressed as a profile. Geometry mirrors influencer/inf_report_builder.py exactly: A4, two posts per page side by side, images in a 3.05x6.9in box, 0.6in margins. The live report still runs through run_influencer.py.",
+
+  "capture": {
+    "engine": "influencer",
+    "device_scale_factor": 1,
+    "viewport": {"width": 1280, "height": 2000},
+    "keep_engagement": true,
+    "workers": 1
+  },
+
+  "image": {
+    "max_in": [3.05, 6.9],
+    "aspect": null,
+    "fit": "fit",
+    "background": "#FFFFFF",
+    "radius_pt": 0,
+    "border": null,
+    "shadow": null,
+    "watermark": null
+  },
+
+  "page": {
+    "size": "a4",
+    "orientation": "portrait",
+    "grid": [2, 1],
+    "margins_in": [0.6, 0.6, 0.6, 0.6]
+  },
+
+  "content": {
+    "cover": false,
+    "header": "{title}",
+    "footer": null,
+    "per_post_fields": ["account_name", "post_link"],
+    "metrics": [
+      ["Followers", "followers"],
+      ["Reactions", "reactions"],
+      ["Comments", "comments"],
+      ["Reach", "reach"],
+      ["Shares", "shares"]
+    ],
+    "links_table": true
+  },
+
+  "outputs": ["pdf", "docx"]
+}

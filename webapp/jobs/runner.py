@@ -33,11 +33,11 @@ import time
 import zipfile
 from pathlib import Path
 
-from .. import config, x_login
+from .. import config, report_types, x_login
 from . import store
 
 # Code copied into each job's working directory.
-_CODE_ITEMS = ("run.py", "src", "influencer")
+_CODE_ITEMS = ("run.py", "src", "influencer", "profiles", "facebook")
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store", "reports",
                                  "sessions")
 
@@ -94,6 +94,12 @@ def build_job_dir(job_id: str, rows: list, upload_bytes: bytes,
         else:
             shutil.copy2(src, dst)
 
+    # A style designed in the app lives under DATA_DIR, outside the code tree.
+    # Copy it (and any user style it extends) into the job's private registry,
+    # so the subprocess finds it through the normal path and a later edit or
+    # delete cannot change a job that is already running (rule 2, in spirit).
+    _copy_user_profiles(job_id, app)
+
     # One shared, read-only login cookie — symlinked, never copied around.
     link = app / "sessions"
     try:
@@ -116,6 +122,24 @@ def build_job_dir(job_id: str, rows: list, upload_bytes: bytes,
     return jd
 
 
+def _copy_user_profiles(job_id: str, app: Path) -> None:
+    job = store.get(job_id)
+    slug = (job or {}).get("report_type") or ""
+    dest_dir = app / "profiles" / "registry"
+    seen = set()
+    while slug and slug not in seen:
+        seen.add(slug)
+        src = config.USER_PROFILES_DIR / f"{slug}.json"
+        if not src.is_file() or (dest_dir / src.name).exists():
+            return                       # shipped profile, or already copied
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest_dir / src.name)
+        try:
+            slug = json.loads(src.read_text()).get("extends") or ""
+        except ValueError:
+            return
+
+
 # --------------------------------------------------------------------------- #
 # Command
 # --------------------------------------------------------------------------- #
@@ -128,34 +152,45 @@ def build_command(report_type: str, title: str, date: str,
     the invocation stays reproducible by hand; the switch simply keeps it out of
     the header.
 
-    `--keep-engagement` is Twitter-only: the influencer capture already keeps
-    likes and reposts in frame, so the switch would be meaningless there and is
-    never passed to it.
+    Which entrypoint runs, whether `--keep-engagement` is offered and whether
+    the worker picker applies all come from `report_types`, never from the slug.
+    The capability flags encode the reasons:
 
-    `workers` is the per-job capture speed, and like `--keep-engagement` it is
-    Twitter-only. The influencer report keeps its INFLUENCER_WORKERS default
-    whatever the form said: its follower-count cache lives in the worker
-    PROCESS, so a second worker re-fetches the same profiles — more browsers
-    there buy X more requests for the same data, not a faster report.
+      * `allows_keep_engagement` is False for the influencer report because its
+        capture already keeps likes and reposts in frame, and False for profiles
+        because the profile itself declares the crop — offering it would promise
+        a choice that is not one.
+      * `allows_worker_choice` is False for the influencer report because its
+        follower-count cache lives in the worker PROCESS, so a second worker
+        re-fetches the same profiles (RULEBOOK rule 12). Because it is a flag
+        rather than a slug test, a crafted POST cannot override it.
 
-    0 falls back to the server default for the report type. The value is clamped
-    to MAX_WORKERS here as well as at the API boundary, because this function is
+    0 falls back to the server default for the type. The value is clamped to
+    MAX_WORKERS here as well as at the API boundary, because this function is
     also reachable from a stored job record, and one browser too many is an OOM
     kill, not an error message.
     """
-    influencer = report_type != "twitter"
-    entry = str(Path("influencer") / "run_influencer.py") if influencer else "run.py"
-    if influencer:
-        workers = config.INFLUENCER_WORKERS
-    else:
+    rt = report_types.get(report_type)
+    if rt is None:
+        # Unknown slug. Refusing beats guessing: the previous code was
+        # `influencer = report_type != "twitter"`, so ANY unrecognised slug
+        # silently ran the influencer report (docs/profile-engine.md §7).
+        raise JobFailed(
+            f"Unknown report type {report_type!r}. Known: "
+            f"{', '.join(report_types.slugs())}")
+
+    if rt.allows_worker_choice:
         workers = (min(workers, config.MAX_WORKERS) if workers > 0
-                   else config.CAPTURE_WORKERS)
-    cmd = [sys.executable, "-u", entry, "input.xlsx",
+                   else rt.default_workers())
+    else:
+        workers = rt.default_workers()
+
+    cmd = [sys.executable, "-u", *rt.argv, "input.xlsx",
            "--title", title,
            "--date", date,
            "--no-date",
            "--workers", str(workers)]
-    if keep_engagement and not influencer:
+    if keep_engagement and rt.allows_keep_engagement:
         cmd.append("--keep-engagement")
     return cmd
 
@@ -168,6 +203,10 @@ _RE_WORKERS = re.compile(r"^\[runner\]\s+capturing with (\d+) parallel worker")
 _RE_RETRY = re.compile(r"^\[runner\]\s+retrying (\d+) link")
 _RE_QUALITY = re.compile(r"^\[quality\]\s+recapturing (\d+)")
 _RE_BLOCKED = re.compile(r"^\[quality\]\s+dropping (\d+) shot")
+# "dropped", not "dropping" — deliberately distinct from _RE_BLOCKED above, or
+# a parent loss would be reported to the user as a stuck X dialog.
+_RE_PARENT_LOST = re.compile(r"^\[quality\]\s+dropped (\d+) shot\(s\) whose parent")
+_RE_TOO_SMALL = re.compile(r"^\[quality\]\s+dropped (\d+) shot\(s\) too small")
 _RE_CROPPED = re.compile(r"^\[quality\]\s+(\d+) shot\(s\) may be missing")
 _RE_VERIFY = re.compile(r"^\[verify\]\s+(\d+)/(\d+) links produced")
 _RE_RESULT = re.compile(r"^\s+\[x\]\s+(\S+)\s+(.*)$")
@@ -249,6 +288,18 @@ class _Progress:
                       "every retake — left out rather than shown as a popup.",
                       "warn")
             return
+        m = _RE_PARENT_LOST.match(text)
+        if m:
+            self.note(f"{m.group(1)} reply/replies could not be captured with "
+                      "their parent post and were left out — a reply without "
+                      "the post it answers is misleading evidence.", "warn")
+            return
+        m = _RE_TOO_SMALL.match(text)
+        if m:
+            self.note(f"{m.group(1)} capture(s) came out too small to contain a "
+                      "post and were left out — usually a deleted post whose "
+                      "page still shows the surrounding conversation.", "warn")
+            return
         m = _RE_CROPPED.match(text)
         if m:
             self.note(f"{m.group(1)} screenshot(s) may not show the whole post "
@@ -312,13 +363,21 @@ def _read_results(app: Path) -> list:
 
 
 _STATUS_REASON = {
-    "login_wall": "X asked for a login — the server's X session may have expired",
+    "login_wall": "the site asked for a login before showing this post — for X "
+                  "the server's session may have expired; on Facebook the post "
+                  "is not public",
     "not_found": "post unavailable, deleted, protected or suspended",
     "age_restricted": "X age-restricted this post and only accepts age "
                       "verification through its mobile app, so the content "
                       "cannot be shown in a desktop capture",
-    "overlay_blocked": "an X dialog stayed on top of the post through every "
+    "overlay_blocked": "a dialog stayed on top of the post through every "
                        "retake, so the screenshot showed the popup instead",
+    "parent_lost": "this post is a reply and its parent post could not be "
+                   "captured, so the screenshot would have shown the reply "
+                   "without the post it answers",
+    "too_small": "the capture came out too small to contain a post — usually a "
+                 "deleted post, or one whose author was suspended, where X "
+                 "still renders the surrounding conversation",
 }
 
 
@@ -356,7 +415,7 @@ def publish(job_id: str, app: Path, stem: str) -> dict:
     reports = app / "reports"
     artifacts = {}
 
-    for ext in ("pdf", "docx"):
+    for ext in ("pdf", "docx", "html", "xlsx"):
         produced = sorted(reports.glob(f"*.{ext}"),
                           key=lambda p: p.stat().st_mtime, reverse=True)
         if produced:
@@ -429,15 +488,16 @@ def run_job(job_id: str, on_line=None) -> dict:
     prog = _Progress(job_id, job.get("total") or job.get("link_count") or 0)
     prog.note(f"Job started — {job['report_type']} report, "
               f"{job.get('link_count', 0)} link(s).")
+    rt = report_types.get(job["report_type"])
     chosen = int(job.get("workers") or 0)
-    if chosen and job["report_type"] == "twitter":
+    if chosen and rt is not None and rt.allows_worker_choice:
         capped = min(chosen, config.MAX_WORKERS)
         # "up to": the pipeline also caps workers at the number of links, so a
         # 4-browser choice on 2 links really runs 2.
         prog.note(f"Capturing with up to {capped} browser(s)" +
                   (f" — {chosen} was above this server's limit of "
                    f"{config.MAX_WORKERS}." if capped < chosen else "."))
-    if keep_engagement and job["report_type"] == "twitter":
+    if keep_engagement and rt is not None and rt.allows_keep_engagement:
         prog.note("Screenshots will keep the engagement line (replies, reposts, "
                   "likes, views) — on a comment link, the parent's line and the "
                   "comment's own.")
@@ -445,12 +505,16 @@ def run_job(job_id: str, on_line=None) -> dict:
     # The cookie file lives on an ephemeral disk on free hosts, so make sure a
     # valid X session exists before the capture starts. Cheap when it already
     # does; signs in headlessly when it does not.
-    ok, message = x_login.ensure_session()
-    if not ok:
-        prog.note(f"X login: {message}", "warn")
-    elif "Signed in" in message:
-        prog.note("Signed in to X automatically (the saved session was missing "
-                  "or expired).")
+    if rt is not None and rt.platform != "x":
+        prog.note(f"{rt.platform.title()} capture — public posts, no account "
+                  "required.")
+    else:
+        ok, message = x_login.ensure_session()
+        if not ok:
+            prog.note(f"X login: {message}", "warn")
+        elif "Signed in" in message:
+            prog.note("Signed in to X automatically (the saved session was "
+                      "missing or expired).")
     prog.set_phase("Starting the browser")
 
     log = log_path(job_id).open("w", encoding="utf-8")
@@ -522,7 +586,8 @@ def run_job(job_id: str, on_line=None) -> dict:
         prog.note(f"Not in the report: {s['account'] or s['link']} — {s['reason']}",
                   "warn")
 
-    if any(r.get("status") == "login_wall" for r in results):
+    if any(r.get("status") == "login_wall" for r in results) and (
+            rt is None or rt.platform == "x"):
         prog.login_wall = True
         # The cookie exists but X is not honouring it. Drop it so the next job
         # signs in again — but only if the server can sign in; otherwise the

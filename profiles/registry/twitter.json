@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "slug": "twitter",
+  "label": "Twitter Report",
+  "description": "The existing Twitter report, expressed as a profile. Geometry mirrors src/report_builder.py exactly: letter, one post per page, images in a 4.9x7.0in box, 0.75in margins. Used by the parity harness as the oracle target; the live report still runs through run.py.",
+
+  "capture": {
+    "engine": "x",
+    "device_scale_factor": 1,
+    "viewport": {"width": 1280, "height": 1600},
+    "keep_engagement": false,
+    "workers": null
+  },
+
+  "image": {
+    "max_in": [4.9, 7.0],
+    "aspect": null,
+    "fit": "fit",
+    "background": "#FFFFFF",
+    "radius_pt": 0,
+    "border": null,
+    "shadow": null,
+    "watermark": null
+  },
+
+  "page": {
+    "size": "letter",
+    "orientation": "portrait",
+    "grid": [1, 1],
+    "margins_in": [0.75, 0.75, 0.75, 0.75]
+  },
+
+  "content": {
+    "cover": false,
+    "header": "{title}",
+    "footer": null,
+    "per_post_fields": ["category", "post_link"],
+    "metrics": null,
+    "links_table": true
+  },
+
+  "outputs": ["pdf", "docx"]
+}

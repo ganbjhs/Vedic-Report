@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Settings — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+{% block main_class %} narrow{% endblock %}
+
+{% block content %}
+<h1>Settings</h1>
+<p class="sub">The server's effective configuration. Values come from <code>.env</code> (or real environment variables) and are read-only here — change the file, then restart. Secrets are never shown.</p>
+
+{% if warnings %}
+<div class="alert alert-warn"><strong>Configuration warnings</strong><ul style="margin:6px 0 0 16px;padding:0">{% for w in warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+<div class="card">
+  <table class="kv">
+    {% for k, v in settings.items() %}<tr><td>{{ k }}</td><td><code>{{ v }}</code></td></tr>{% endfor %}
+  </table>
+</div>
+
+<section class="card">
+  <h2 class="card-title">Keyboard</h2>
+  <p class="small muted" style="margin:0"><code>N</code> New report · <code>H</code> History · <code>S</code> Report styles · <code>Esc</code> closes a preview. Theme: the ◐ button in the top bar cycles auto → light → dark.</p>
+</section>
+{% endblock %}

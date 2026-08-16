@@ -1,104 +1,61 @@
 {% extends "base.html" %}
-{% block title %}X login — Report Automation{% endblock %}
+{% block title %}Accounts & sessions — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+{% block main_class %} narrow{% endblock %}
 
 {% block content %}
-<div class="page-head with-back">
-  <a class="back" href="/">← New report</a>
-  <h1>X login</h1>
-  <p class="muted">
-    Captures sign in to X with one shared capture account. Credentials live only
-    on the server and are never sent to the browser.
-  </p>
-</div>
+<h1>Accounts &amp; sessions</h1>
+<p class="sub">Captures sign in with one shared account per platform. Credentials live only on the server and are never sent to the browser.</p>
 
-{% if flash %}
-<div class="alert {{ 'alert-ok' if flash.ok else 'alert-error' }}">
-  {{ flash.message }}
+{% if flash %}<div class="alert {{ 'alert-ok' if flash.ok else 'alert-error' }}">{{ flash.message }}</div>{% endif %}
+
+<div class="card">
+  {% for h in platform_health %}
+  <div class="sess" style="padding:12px 0">
+    <div><span class="pl {{ h.slug }}" style="vertical-align:-3px;margin-right:6px"></span><b>{{ 'X / Twitter' if h.slug == 'x' else h.label }}</b>
+      <small>{{ h.text }} {{ h.detail }}</small></div>
+    <span class="pill {{ 'ok' if h.state == 'ok' else ('bad' if h.state in ('invalid','missing') else '') }}"><span class="dot {{ 'ok' if h.state == 'ok' else ('warn' if h.state == 'expiring' else ('bad' if h.state in ('invalid','missing') else 'off')) }}"></span>
+      {{ {'ok':'healthy','expiring':'expiring','invalid':'expired','missing':'not signed in','no-engine':'not available yet'}[h.state] }}</span>
+  </div>
+  {% endfor %}
 </div>
-{% endif %}
 
 <section class="card">
+  <h2 class="card-title">X / Twitter session</h2>
   {% if info.valid %}
-    <div class="alert alert-ok">
-      <strong>Signed in.</strong> Reports can capture posts and read engagement metrics.
-    </div>
+    <div class="alert alert-ok"><strong>Signed in.</strong> Reports can capture posts and read engagement metrics.</div>
   {% elif info.auto_login %}
-    <div class="alert alert-warn">
-      <strong>No active session right now.</strong>
-      The server will sign in automatically when the next report starts, or you
-      can do it now with the button below.
-    </div>
+    <div class="alert alert-warn"><strong>No active session right now.</strong> The server signs in automatically when the next report starts, or you can do it now.</div>
   {% else %}
-    <div class="alert alert-error">
-      <strong>No X login, and no account configured to sign in with.</strong>
-      Every capture will hit a login wall until this is fixed — see below.
-    </div>
+    <div class="alert alert-error"><strong>No X login, and no account configured to sign in with.</strong> Every capture will hit a login wall until this is fixed — see below.</div>
   {% endif %}
-
   <dl class="facts">
-    <dt>Auto sign-in</dt>
-    <dd>
-      {% if info.auto_login %}
-        On — using <code>{{ info.account }}</code>
-        {%- if info.has_2fa_secret %} (with 2FA code){% endif %}
-      {% else %}
-        Off — <code>X_USERNAME</code> / <code>X_PASSWORD</code> are not set
-      {% endif %}
-    </dd>
-    <dt>Saved cookies</dt>
-    <dd>{{ info.cookies }}</dd>
-    {% if info.modified_text %}
-    <dt>Session saved</dt><dd>{{ info.modified_text }}</dd>
-    {% endif %}
-    {% if info.expires_in_days is not none %}
-    <dt>Expires in</dt><dd>{{ info.expires_in_days }} day(s)</dd>
-    {% endif %}
-    {% if info.last_attempt_text %}
-    <dt>Last sign-in attempt</dt>
-    <dd>{{ info.last_attempt_text }} — {{ info.last_attempt.message }}</dd>
-    {% endif %}
+    <dt>Auto sign-in</dt><dd>{% if info.auto_login %}On — using <code>{{ info.account }}</code>{% if info.has_2fa_secret %} (with 2FA code){% endif %}{% else %}Off — <code>X_USERNAME</code> / <code>X_PASSWORD</code> are not set{% endif %}</dd>
+    <dt>Saved cookies</dt><dd>{{ info.cookies }}</dd>
+    {% if info.modified_text %}<dt>Session saved</dt><dd>{{ info.modified_text }}</dd>{% endif %}
+    {% if info.expires_in_days is not none %}<dt>Expires in</dt><dd>{{ info.expires_in_days }} day(s)</dd>{% endif %}
+    {% if info.last_attempt_text %}<dt>Last sign-in attempt</dt><dd>{{ info.last_attempt_text }} — {{ info.last_attempt.message }}</dd>{% endif %}
+    <dt>Captured today</dt><dd>{{ budget.used }} of ~{{ budget.total }} posts{% if budget.warn %} — <span style="color:var(--warn)">near the daily ceiling; quality degrades past it</span>{% endif %}</dd>
   </dl>
-
   {% if info.auto_login %}
-  <form method="post" action="/admin/x-login" class="inline-form">
+  <form method="post" action="/admin/x-login" style="margin-top:14px">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <button class="primary" type="submit">Sign in to X now</button>
+    <button class="btn primary" type="submit">Sign in to X now</button>
+    <span class="hint" style="margin-left:10px">Takes 15–30 s. Use after changing the account password, or if reports start hitting login walls.</span>
   </form>
-  <p class="muted small">
-    Takes about 15–30 seconds. Use this after changing the account's password, or
-    if reports start failing with login walls.
-  </p>
   {% endif %}
 </section>
 
 <section class="card">
   <h2 class="card-title">How the login works</h2>
-  <p class="muted small">
-    This app runs on a host with an <strong>ephemeral disk</strong> — the saved
-    session file disappears whenever the server restarts. Rather than needing a
-    manual upload each time, the server signs in by itself.
-  </p>
-  <ol class="steps">
-    <li>
-      <strong>Set the account secrets once.</strong> In your Hugging Face Space:
-      <em>Settings → Variables and secrets</em>. Use a dedicated capture account,
-      never a personal one.
-      <pre><code>X_USERNAME   the @handle (without the @)
-X_PASSWORD   its password
-X_EMAIL      the account's email — X asks for it on unfamiliar logins
-X_TOTP_SECRET  only if 2FA is on (simpler: turn 2FA off on this account)</code></pre>
-    </li>
-    <li>
-      <strong>That's it.</strong> The server signs in at startup and again
-      whenever a report finds the session missing or rejected.
-    </li>
-    <li>
-      <strong>Optional fallback.</strong> You can still generate the file by hand
-      and place it at <code>{{ sessions_dir }}/x_state.json</code>:
-      <pre><code>python save_login.py x</code></pre>
-      On an ephemeral host this is lost on restart, so the secrets above are the
-      durable answer.
-    </li>
+  <ol style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">
+    <li><strong>Set the account secrets once</strong> in <code>.env</code> on the server (a dedicated capture account, never a personal one):
+      <pre style="font-size:12px;background:var(--surface2);padding:8px;border-radius:6px"><code>X_USERNAME    the @handle (without the @)
+X_PASSWORD    its password
+X_EMAIL       X asks for it on unfamiliar logins
+X_TOTP_SECRET only if 2FA is on</code></pre></li>
+    <li><strong>That's it.</strong> The server signs in at startup and whenever a report finds the session missing or rejected.</li>
+    <li><strong>Optional fallback:</strong> generate the cookie by hand with <code>python save_login.py x</code> and place it at <code>{{ sessions_dir }}/x_state.json</code>.</li>
   </ol>
 </section>
 {% endblock %}

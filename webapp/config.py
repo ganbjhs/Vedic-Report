@@ -89,6 +89,16 @@ def _load_users() -> dict:
 
 USERS = _load_users()
 
+# Who sees the setup pages (accounts & sessions, settings, the style designer,
+# health and the capture-budget meter). Comma-separated usernames. UNSET means
+# everyone is an admin, so an existing single-team deployment changes nothing;
+# set it once colleagues who only need to make reports are added.
+APP_ADMINS = {u.strip() for u in os.environ.get("APP_ADMINS", "").split(",") if u.strip()}
+
+
+def is_admin(user: str) -> bool:
+    return not APP_ADMINS or (user or "") in APP_ADMINS
+
 # --------------------------------------------------------------------------- #
 # Shared X capture account — used to sign in headlessly and regenerate
 # sessions/x_state.json when it is missing (free hosts have an ephemeral disk).
@@ -135,6 +145,15 @@ INFLUENCER_WORKERS = max(1, _int("INFLUENCER_WORKERS", 1))
 
 JOB_TIMEOUT_MINUTES = max(1, _int("JOB_TIMEOUT_MINUTES", 90))
 
+# How many posts one capture account can take in a day before the session starts
+# to rot. Not a guess: measured on 2026-08-03 at ~320 captures, after which retry
+# counts, frame heights and parent-losses all degraded together without a single
+# error being raised (RULEBOOK rule 21). The dashboard meter reads this so the
+# ceiling is visible BEFORE a run, not discovered afterwards in a bad report.
+# It is a warning line, not an enforced quota — raise it only after someone
+# measures a better number on the account you are actually using.
+DAILY_CAPTURE_BUDGET = max(1, _int("DAILY_CAPTURE_BUDGET", 320))
+
 # Upload limits
 MAX_UPLOAD_MB = max(1, _int("MAX_UPLOAD_MB", 5))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
@@ -152,6 +171,9 @@ DATA_DIR = _path("DATA_DIR", "data")
 SESSIONS_DIR = _path("SESSIONS_DIR", "sessions")
 JOBS_DIR = DATA_DIR / "jobs"
 DB_PATH = DATA_DIR / "jobs.db"
+# Report styles designed in the web app. Runtime state, not code — it lives
+# beside the jobs so a `docker compose up --build` cannot throw it away.
+USER_PROFILES_DIR = DATA_DIR / "profiles"
 X_STATE_FILE = SESSIONS_DIR / "x_state.json"
 
 PORT = _int("PORT", 8000)
@@ -160,6 +182,9 @@ PORT = _int("PORT", 8000)
 LOGIN_MAX_ATTEMPTS = _int("LOGIN_MAX_ATTEMPTS", 5)
 LOGIN_WINDOW_MINUTES = _int("LOGIN_WINDOW_MINUTES", 15)
 
+# Legacy constant: the built-in slugs. The authoritative list — built-ins PLUS
+# every valid profile — is webapp/report_types.py, which is what the API and the
+# form use. Kept so nothing that imported this breaks.
 REPORT_TYPES = ("twitter", "influencer")
 
 
@@ -203,3 +228,27 @@ def effective_session_secret() -> str:
 def ensure_dirs() -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    USER_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def public_settings() -> dict:
+    """The effective, NON-secret configuration, for the Settings page.
+    Deliberately a whitelist: nothing here can ever leak a credential."""
+    return {
+        "Execution mode": EXECUTION_MODE,
+        "Default browsers per job (WORKERS)": CAPTURE_WORKERS,
+        "Capture speed ceiling (MAX_WORKERS)": MAX_WORKERS,
+        "Influencer report browsers (INFLUENCER_WORKERS)": INFLUENCER_WORKERS,
+        "Reports running at once (MAX_CONCURRENT_JOBS)": MAX_CONCURRENT_JOBS,
+        "Links per report (MAX_LINKS)": MAX_LINKS,
+        "Upload size limit": f"{MAX_UPLOAD_MB} MB",
+        "Job time limit": f"{JOB_TIMEOUT_MINUTES} min",
+        "Reports kept for": f"{RETENTION_DAYS} day(s)",
+        "Disk cap for job data": f"{MAX_DATA_GB} GB",
+        "Daily capture budget (DAILY_CAPTURE_BUDGET)": DAILY_CAPTURE_BUDGET,
+        "Login session length": f"{SESSION_HOURS} h",
+        "Secure cookies (HTTPS)": "on" if COOKIE_SECURE else "off",
+        "X auto sign-in": "configured" if (X_USERNAME and X_PASSWORD) else "off",
+        "Data directory": str(DATA_DIR),
+        "Sessions directory": str(SESSIONS_DIR),
+    }

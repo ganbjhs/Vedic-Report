@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "slug": "facebook",
+  "label": "Facebook Report",
+  "platform": "facebook",
+  "description": "One public Facebook post per page: author, text, media and the reactions / comments / shares line, with Facebook's login dialog and cookie banner taken off first. Captured logged-out unless a Facebook session is saved on the server. Same page geometry as the Twitter report.",
+
+  "capture": {
+    "engine": "facebook",
+    "device_scale_factor": 1,
+    "viewport": {"width": 1280, "height": 2000},
+    "keep_engagement": true,
+    "workers": null
+  },
+
+  "image": {
+    "max_in": [4.9, 7.0],
+    "aspect": null,
+    "fit": "fit",
+    "background": "#FFFFFF",
+    "radius_pt": 0,
+    "border": null,
+    "shadow": null,
+    "watermark": null
+  },
+
+  "page": {
+    "size": "letter",
+    "orientation": "portrait",
+    "grid": [1, 1],
+    "margins_in": [0.75, 0.75, 0.75, 0.75]
+  },
+
+  "content": {
+    "cover": false,
+    "header": "{title}",
+    "footer": null,
+    "per_post_fields": ["account_name", "post_link"],
+    "metrics": null,
+    "links_table": true
+  },
+
+  "outputs": ["pdf", "docx"]
+}

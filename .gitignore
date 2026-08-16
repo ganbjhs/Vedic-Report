@@ -25,3 +25,6 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# Generated profile thumbnails (derived from profiles/registry)
+webapp/static/profiles/

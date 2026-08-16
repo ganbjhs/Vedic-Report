@@ -28,6 +28,8 @@ RUN pip install --no-cache-dir --break-system-packages \
 COPY run.py save_login.py install.py ./
 COPY src/ ./src/
 COPY influencer/ ./influencer/
+COPY profiles/ ./profiles/
+COPY facebook/ ./facebook/
 COPY webapp/ ./webapp/
 
 # Runtime state. docker-compose bind-mounts host folders over these, so the X

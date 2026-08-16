@@ -5,6 +5,7 @@ because a crashed container must not leave the UI claiming a job is still
 running. A connection is opened per call (cheap, and thread-safe by
 construction, since jobs are executed on a worker thread pool).
 """
+import datetime
 import json
 import sqlite3
 import time
@@ -40,6 +41,21 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at   REAL
 );
 CREATE INDEX IF NOT EXISTS jobs_owner_created ON jobs (owner, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS presets (
+    id            TEXT PRIMARY KEY,
+    owner         TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    platform      TEXT NOT NULL DEFAULT 'x',
+    report_type   TEXT NOT NULL,
+    keep_engagement INTEGER DEFAULT 0,
+    workers       INTEGER DEFAULT 0,
+    dedupe        INTEGER DEFAULT 1,
+    sheet_url     TEXT DEFAULT '',
+    report_name   TEXT DEFAULT '',
+    created_at    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS presets_owner ON presets (owner, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS login_attempts (
     ip   TEXT NOT NULL,
@@ -141,6 +157,25 @@ def list_all(limit: int = 500) -> list:
     return [_row_to_dict(r) for r in rows]
 
 
+def captures_today() -> int:
+    """Posts captured since local midnight, across every user.
+
+    Deliberately server-wide rather than per-user: the thing being spent is one
+    shared X account's daily headroom (RULEBOOK rule 21), so a per-user number
+    would show each person plenty of room while the account was already spent.
+
+    Counts `done` — captures actually taken — not `link_count`, so a cancelled
+    or half-finished job is charged for the browser time it really used.
+    """
+    midnight = datetime.datetime.now().replace(
+        hour=0, minute=0, second=0, microsecond=0).timestamp()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(done), 0) AS n FROM jobs WHERE created_at >= ?",
+            (midnight,)).fetchone()
+    return int(row["n"])
+
+
 def update(job_id: str, **fields) -> None:
     """Patch any subset of columns. JSON-typed fields are encoded here."""
     if not fields:
@@ -175,6 +210,42 @@ def append_activity(job_id: str, message: str, level: str = "info") -> None:
 def delete(job_id: str) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+
+
+# --------------------------------------------------------------------------- #
+# Presets — a saved set of form choices, per user. Never stores a file: an
+# upload cannot be re-run, only a Google Sheet or the paste box can, so a preset
+# carries the sheet URL (optional) and the options, and the user supplies links.
+# --------------------------------------------------------------------------- #
+def preset_create(owner: str, name: str, platform: str, report_type: str,
+                  keep_engagement: bool = False, workers: int = 0,
+                  dedupe: bool = True, sheet_url: str = "",
+                  report_name: str = "") -> str:
+    pid = uuid.uuid4().hex[:12]
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO presets (id, owner, name, platform, report_type, "
+            "keep_engagement, workers, dedupe, sheet_url, report_name, "
+            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, owner, name[:80], platform, report_type,
+             int(bool(keep_engagement)), max(0, int(workers)),
+             int(bool(dedupe)), sheet_url[:500], report_name[:80], time.time()))
+    return pid
+
+
+def presets_for(owner: str, limit: int = 50) -> list:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM presets WHERE owner=? ORDER BY created_at DESC "
+            "LIMIT ?", (owner, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def preset_delete(owner: str, pid: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM presets WHERE id=? AND owner=?",
+                           (pid, owner))
+    return cur.rowcount > 0
 
 
 # --------------------------------------------------------------------------- #

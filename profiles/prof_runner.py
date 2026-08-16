@@ -25,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = str(ROOT / "src")
 INF = str(ROOT / "influencer")
+FB = str(ROOT / "facebook")
 HERE = str(Path(__file__).resolve().parent)
 
 sys.path.insert(0, SRC)
@@ -34,6 +35,7 @@ import shot_quality   # noqa: E402  frozen, read-only
 import progress       # noqa: E402
 import registry       # noqa: E402
 import prof_worker    # noqa: E402
+import netlinks       # noqa: E402
 
 OUT = ROOT / "reports"
 SHOTS = OUT / "screenshots"
@@ -105,18 +107,36 @@ def x_storage_state():
     return {"cookies": d.get("cookies", []), "origins": d.get("origins", [])}
 
 
-def build_tasks(rows) -> list:
+def fb_storage_state():
+    """Facebook needs NO account for public posts. A saved login is used only
+    if someone put one at sessions/fb_state.json (same shape as x_state.json);
+    its absence is normal, not a warning."""
+    f = ROOT / "sessions" / "fb_state.json"
+    if not f.exists():
+        print("[runner] no Facebook session — capturing public posts logged-out",
+              flush=True)
+        return None
+    try:
+        d = json.loads(f.read_text())
+    except Exception:
+        print("[runner] fb_state.json unreadable — running logged-out", flush=True)
+        return None
+    print("[runner] loaded Facebook session", flush=True)
+    return {"cookies": d.get("cookies", []), "origins": d.get("origins", [])}
+
+
+def build_tasks(rows, platform="x") -> list:
     tasks = []
     for i, row in enumerate(rows, 1):
         capture_url = (row.get("link") or "").strip()
         if not capture_url:
             continue
-        account = row.get("account_name") or f"tweet_{i}"
+        account = row.get("account_name") or f"post_{i}"
         safe = "".join(c if c.isalnum() else "_" for c in account)[:40]
         tasks.append({
             "idx": i, "capture_url": capture_url,
             "post_link": (row.get("post_link") or "").strip() or capture_url,
-            "account": account, "platform": "x",
+            "account": account, "platform": platform,
             "category": row.get("category", "Uncategorized"),
             "shot": str(SHOTS / f"{i:02d}_{safe}.png"),
         })
@@ -135,7 +155,7 @@ def _why_poor(result):
     """Same evidence ordering as the frozen runners: DOM facts first, the pixel
     analyzer as the backstop (RULEBOOK rule 7 + rule 20)."""
     if result.get("overlay"):
-        return "an X dialog was still covering the post"
+        return "a dialog was still covering the post"
     if result.get("parent_lost"):
         return "the reply was framed without its parent post"
     if result.get("frame_ok") is False:
@@ -175,9 +195,10 @@ def main() -> None:
     workers = int(_arg_value(argv, "--workers", default_workers) or default_workers)
     ctx_kwargs = ctx_kwargs_for(profile)
 
+    platform = profile.get("platform", "x")
     SHOTS.mkdir(parents=True, exist_ok=True)
-    rows = input_loader.load(resolve_source(argv))
-    tasks = build_tasks(rows)
+    rows = netlinks.load_rows(resolve_source(argv), platform)
+    tasks = build_tasks(rows, platform)
     progress.total(len(tasks))
     dsf = profile["capture"].get("device_scale_factor") or 1
     print(f"[runner] profile={slug} engine={engine} dpr={dsf} "
@@ -187,7 +208,7 @@ def main() -> None:
         print("[runner] nothing to capture", flush=True)
         return
 
-    state = x_storage_state()
+    state = fb_storage_state() if engine == "facebook" else x_storage_state()
     workers = max(1, min(workers, len(tasks)))
     chunks = [[] for _ in range(workers)]
     for n, t in enumerate(tasks):
@@ -197,7 +218,7 @@ def main() -> None:
 
     def run(chunk_list):
         return prof_worker.run_chunk(chunk_list, headless, state, ctx_kwargs,
-                                     SRC, INF, engine, keep)
+                                     SRC, INF, engine, keep, FB)
 
     collected = []
     if len(chunks) == 1:
@@ -205,7 +226,7 @@ def main() -> None:
     else:
         with ProcessPoolExecutor(max_workers=len(chunks)) as ex:
             futures = [ex.submit(prof_worker.run_chunk, c, headless, state,
-                                 ctx_kwargs, SRC, INF, engine, keep)
+                                 ctx_kwargs, SRC, INF, engine, keep, FB)
                        for c in chunks]
             for fut in futures:
                 collected.extend(fut.result())

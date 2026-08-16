@@ -18,6 +18,17 @@ Two sources, deliberately kept separate:
 A broken profile is skipped with a log line rather than taking the app down
 (RULEBOOK rule 17: log every failure branch), so one bad JSON file cannot stop
 anyone submitting a Twitter report.
+
+THE PLATFORM AXIS. A report type answers two separate questions: *which network
+the posts come from* (platform) and *how the page is laid out* (style). Those
+were one thing while X was the only network, and folding them together is how
+you get the `report_type != "twitter"` bug a second time — on a new axis.
+
+`PLATFORMS` is that second axis as a table. A platform is `live` only when a
+capture engine actually exists behind it; the rest render as pills with a badge
+and are refused at the API boundary, not merely disabled in HTML. Adding
+Facebook later is one `Platform` entry here plus its rule-18 folder — the form,
+the gate and the grouping all read the table.
 """
 import sys
 from dataclasses import dataclass, field
@@ -28,6 +39,57 @@ from . import config
 _PROFILES_DIR = config.ROOT / "profiles"
 if str(_PROFILES_DIR) not in sys.path:
     sys.path.insert(0, str(_PROFILES_DIR))
+
+# Styles designed in the web app live under DATA_DIR and are read by the same
+# registry, after the shipped ones. Set once, here, because this module is the
+# first web-side importer of `registry`; previews/thumbnails share the module.
+try:
+    import registry as _registry
+    _registry.set_user_dir(config.USER_PROFILES_DIR)
+except Exception as e:                                  # pragma: no cover
+    print(f"[report-types] user profile registry not wired: {e}", flush=True)
+
+
+@dataclass(frozen=True)
+class Platform:
+    """One network the app can capture from — or will be able to.
+
+    `live` is the only gate that matters: it means "a capture engine exists and
+    a job for this platform can really run". Everything else here is presentation.
+
+    `combines` marks the pill that is not a network at all but the multi-platform
+    mode: it turns the picker into a multi-select over the live platforms and
+    takes one mixed link list. It is kept in this table rather than beside it so
+    the form renders one row of pills from one loop.
+    """
+    slug: str
+    label: str
+    live: bool = False
+    badge: str = ""             # shown on the pill when the platform is not live
+    note: str = ""              # one line explaining why, for the tooltip
+    combines: bool = False
+
+    @property
+    def enabled(self) -> bool:
+        return self.live
+
+
+_SOON = ("Capture engine not built yet — it lands as its own project, in its "
+         "own folder, alongside the X one (RULEBOOK rule 18).")
+
+PLATFORMS = (
+    Platform("x", "X", live=True),
+    # Live: facebook/fb_capture.py, run through the profile engine. Public
+    # posts need no account; a saved sessions/fb_state.json is used if present.
+    Platform("facebook", "Facebook", live=True),
+    Platform("instagram", "Instagram", badge="soon", note=_SOON),
+    Platform("combined", "Combined", badge="soon", combines=True,
+             note="Needs at least two live capture engines. One mixed link "
+                  "list, colour-coded by platform, grouped by platform in the "
+                  "output."),
+)
+
+DEFAULT_PLATFORM = "x"
 
 
 @dataclass(frozen=True)
@@ -48,6 +110,13 @@ class ReportType:
     caption: str = ""            # one line under the thumbnail
     builtin: bool = False
     outputs: tuple = field(default=("pdf", "docx"))
+    # True for a style designed in the web app (data/profiles/), which may be
+    # edited or deleted there; shipped profiles and built-ins may not.
+    custom: bool = False
+    # Which network this style captures from. Everything today is X; a style is
+    # offered only under its own platform, so the Style step never shows a card
+    # that cannot run.
+    platform: str = DEFAULT_PLATFORM
 
     def default_workers(self) -> int:
         return (config.INFLUENCER_WORKERS if self.worker_pool == "influencer"
@@ -133,7 +202,12 @@ def _from_profiles() -> list:
             allows_keep_engagement=False,
             description=p.get("description", ""),
             caption=_caption(p),
-            outputs=tuple(p.get("outputs") or ("pdf",))))
+            outputs=tuple(p.get("outputs") or ("pdf",)),
+            custom=registry.is_user(slug),
+            # Profiles may name their platform; registry.validate() has already
+            # checked it against this module's table, so an unknown value can
+            # never reach here.
+            platform=p.get("platform", DEFAULT_PLATFORM)))
     return out
 
 
@@ -157,3 +231,63 @@ def slugs() -> tuple:
 
 def is_known(slug: str) -> bool:
     return get(slug) is not None
+
+
+# --------------------------------------------------------------------------- #
+# Platforms
+# --------------------------------------------------------------------------- #
+def platform(slug: str):
+    """The Platform for `slug`, or None."""
+    for p in PLATFORMS:
+        if p.slug == slug:
+            return p
+    return None
+
+
+def platform_slugs() -> tuple:
+    return tuple(p.slug for p in PLATFORMS)
+
+
+def live_platforms() -> tuple:
+    """Platforms a job can actually run on today."""
+    return tuple(p for p in PLATFORMS if p.live and not p.combines)
+
+
+def is_live(slug: str) -> bool:
+    p = platform(slug)
+    return bool(p and p.live)
+
+
+def types_for(platform_slug: str) -> list:
+    """Every style available under one platform, in `all_types()` order.
+
+    The Style step reads this, so a style whose platform has no engine is never
+    offered — the gate is the same data the pills are drawn from.
+    """
+    return [rt for rt in all_types() if rt.platform == platform_slug]
+
+
+def check_runnable(platform_slug: str, type_slug: str) -> str:
+    """'' when this pairing can run, else why not — for the API boundary.
+
+    Disabling a pill in HTML is a hint, not a gate: a hand-crafted POST naming
+    `platform=facebook` must be refused here, or the job would be created and
+    then fail deep in a runner with an unrecognisable error.
+    """
+    p = platform(platform_slug)
+    if p is None:
+        return (f"Unknown platform {platform_slug!r}. Known: "
+                f"{', '.join(platform_slugs())}")
+    if p.combines:
+        return (f"{p.label} reports need at least two capture engines and "
+                "there is one. This is not available yet.")
+    if not p.live:
+        return f"{p.label} reports are not available yet — {p.note}"
+
+    rt = get(type_slug)
+    if rt is None:
+        return f"Unknown report type {type_slug!r}."
+    if rt.platform != platform_slug:
+        return (f"{rt.label} is a {rt.platform} report and cannot run under "
+                f"{p.label}.")
+    return ""

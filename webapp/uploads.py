@@ -26,6 +26,8 @@ from . import config
 
 # The frozen loader is imported read-only — never modified.
 sys.path.insert(0, str(config.ROOT / "src"))
+if str(config.ROOT / "profiles") not in sys.path:
+    sys.path.insert(0, str(config.ROOT / "profiles"))     # netlinks (platform links)
 import input_loader  # noqa: E402
 
 ALLOWED_SUFFIXES = (".xlsx", ".xls", ".csv", ".tsv", ".txt")
@@ -434,7 +436,7 @@ def _status_key(link: str) -> str:
     return re.sub(r"[?#].*$", "", (link or "").lower()).rstrip("/")
 
 
-def analyse(grid: list, dedupe: bool = False) -> dict:
+def analyse(grid: list, dedupe: bool = False, platform: str = "x") -> dict:
     """Rows the pipeline would capture, plus WHY anything was left out.
 
     The frozen `_rows_from_grid` silently drops non-X links and reports only a
@@ -442,7 +444,10 @@ def analyse(grid: list, dedupe: bool = False) -> dict:
     "row 14" instead of starting a manual hunt (roadmap A5). The loader itself
     is untouched and remains the single source of truth for what a sheet means.
     """
-    rows = input_loader._rows_from_grid(grid)
+    import netlinks                     # profiles/netlinks.py (on sys.path)
+    rows = netlinks.rows_from_grid(grid, platform)
+    is_ours = netlinks.MATCHERS.get(platform, input_loader.is_x_url)
+    ours = {"x": "an x.com / twitter.com", "facebook": "a facebook.com"}.get(platform, f"a {platform}")
 
     kept = set()
     for r in rows:
@@ -457,9 +462,9 @@ def analyse(grid: list, dedupe: bool = False) -> dict:
                 if cleaned in kept or cleaned in seen_raw:
                     continue
                 seen_raw.add(cleaned)
-                reason = ("this is not an x.com / twitter.com link"
-                          if not input_loader.is_x_url(cleaned)
-                          else "not recognised as an X post link")
+                reason = (f"this is not {ours} link"
+                          if not is_ours(cleaned)
+                          else f"not recognised as a {platform} post link")
                 dropped.append({"row": line_no, "value": cleaned[:180],
                                 "reason": reason})
 

@@ -22,13 +22,33 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REGISTRY_DIR = HERE / "registry"
 
+# A second, OPTIONAL registry for profiles people design in the web app's style
+# designer. Kept out of the code tree (it is runtime state, like jobs), and
+# consulted AFTER the in-repo registry so a user profile can never shadow a
+# shipped one. `None` = feature off; the CLI never needs it. Inside a job the
+# runner copies the chosen user profile into the job's private
+# `profiles/registry/`, so the subprocess reads it through the normal path and
+# rule 2's isolation still holds.
+USER_REGISTRY_DIR = None
+
 SCHEMA_VERSION = 1
 
 # Engines a profile may select, and what each one's result dict carries.
 ENGINES = {
-    "x": {"metrics": False},              # src/capture/x_capture.py
-    "influencer": {"metrics": True},      # influencer/inf_capture.py
+    "x": {"metrics": False, "platform": "x"},              # src/capture/x_capture.py
+    "influencer": {"metrics": True, "platform": "x"},      # influencer/inf_capture.py
+    "facebook": {"metrics": False, "platform": "facebook"},  # facebook/fb_capture.py
 }
+
+# Which network a profile's posts come from. NOT the same axis as `engine`:
+# both engines above are X engines — one crops the engagement bar, the other
+# keeps it and adds metrics. A second platform means a new rule-18 folder and a
+# new entry in BOTH this tuple and `PLATFORMS` in webapp/report_types.py, which
+# owns how the pill looks and whether it is live. This list is deliberately
+# permissive of not-yet-live platforms so a profile can be written and validated
+# before its engine exists; the web layer refuses to *run* it.
+PLATFORMS = ("x", "facebook", "instagram")
+DEFAULT_PLATFORM = "x"
 
 # Page sizes in inches, portrait.
 PAGE_SIZES = {"letter": (8.5, 11.0), "a4": (8.2677, 11.6929)}
@@ -46,8 +66,8 @@ _ALLOWED = {
     "content": {"cover", "header", "footer", "per_post_fields", "metrics",
                 "links_table"},
 }
-_TOP = {"schema", "slug", "label", "description", "extends", "capture", "image",
-        "page", "content", "outputs"}
+_TOP = {"schema", "slug", "label", "description", "extends", "platform",
+        "capture", "image", "page", "content", "outputs"}
 
 # Capture knobs that DO NOT EXIST, with the reason, so a typo gets a real answer
 # instead of "unknown key".
@@ -67,10 +87,39 @@ class ProfileError(ValueError):
 # --------------------------------------------------------------------------- #
 # Load + merge
 # --------------------------------------------------------------------------- #
+def set_user_dir(path) -> None:
+    """Point the optional user registry at `path` (or None to turn it off)."""
+    global USER_REGISTRY_DIR
+    USER_REGISTRY_DIR = Path(path) if path else None
+
+
+def _dirs(registry_dir: Path) -> list:
+    dirs = [registry_dir]
+    if USER_REGISTRY_DIR and USER_REGISTRY_DIR != registry_dir:
+        dirs.append(USER_REGISTRY_DIR)
+    return dirs
+
+
+def _path_for(slug: str, registry_dir: Path):
+    for d in _dirs(registry_dir):
+        p = d / f"{slug}.json"
+        if p.exists():
+            return p
+    return None
+
+
+def is_user(slug: str, registry_dir: Path = None) -> bool:
+    """True when `slug` comes from the user registry, not the shipped one."""
+    registry_dir = registry_dir or REGISTRY_DIR
+    p = _path_for(slug, registry_dir)
+    return bool(p and USER_REGISTRY_DIR and p.parent == USER_REGISTRY_DIR)
+
+
 def _read(slug: str, registry_dir: Path) -> dict:
-    path = registry_dir / f"{slug}.json"
-    if not path.exists():
-        raise ProfileError(f"no such profile: {slug!r} (looked in {registry_dir})")
+    path = _path_for(slug, registry_dir)
+    if path is None:
+        raise ProfileError(f"no such profile: {slug!r} (looked in "
+                           f"{', '.join(str(d) for d in _dirs(registry_dir))})")
     try:
         return json.loads(path.read_text())
     except ValueError as e:
@@ -108,22 +157,51 @@ def load(slug: str, registry_dir: Path = None, _seen=None) -> dict:
     return raw
 
 
+def resolve(raw: dict, registry_dir: Path = None) -> dict:
+    """Resolve + validate an in-memory profile (one not yet saved to disk).
+
+    Same merge as `load`, so what the style designer previews is exactly what
+    a saved file would load as. `extends` may only name a profile that already
+    exists on disk — a chain of unsaved profiles is not a thing.
+    """
+    registry_dir = registry_dir or REGISTRY_DIR
+    if not isinstance(raw, dict):
+        raise ProfileError("a profile must be a JSON object")
+    parent = raw.get("extends")
+    if parent:
+        if not isinstance(parent, str):
+            raise ProfileError("extends must be a profile slug")
+        base = load(parent, registry_dir)
+        base.pop("extends", None)
+        merged = _merge(base, {k: v for k, v in raw.items() if k != "extends"})
+        merged["slug"] = raw.get("slug")
+    else:
+        merged = copy.deepcopy(raw)
+    validate(merged)
+    return merged
+
+
 def available(registry_dir: Path = None) -> list:
-    """Slugs of every profile that loads and validates, sorted.
+    """Slugs of every profile that loads and validates — shipped ones first
+    (sorted), then user-designed ones (sorted).
 
     A broken profile is skipped rather than taking the whole app down — but it
     is reported, because a silent disappearance is worse than a loud one
     (RULEBOOK rule 17: log every failure branch).
     """
     registry_dir = registry_dir or REGISTRY_DIR
-    good = []
-    for path in sorted(registry_dir.glob("*.json")):
-        try:
-            load(path.stem, registry_dir)
-            good.append(path.stem)
-        except ProfileError as e:
-            print(f"[profiles] IGNORING broken profile {path.name}: {e}",
-                  flush=True)
+    good, seen = [], set()
+    for d in _dirs(registry_dir):
+        for path in sorted(d.glob("*.json")):
+            if path.stem in seen:
+                continue                 # shipped registry wins on collision
+            try:
+                load(path.stem, registry_dir)
+                good.append(path.stem)
+                seen.add(path.stem)
+            except ProfileError as e:
+                print(f"[profiles] IGNORING broken profile {path.name}: {e}",
+                      flush=True)
     return good
 
 
@@ -197,6 +275,9 @@ def validate(p: dict) -> dict:
         raise ProfileError("every profile needs a non-empty string slug")
     if not isinstance(p.get("label"), str) or not p["label"]:
         raise ProfileError(f"{slug}: needs a non-empty label")
+    if p.get("platform", DEFAULT_PLATFORM) not in PLATFORMS:
+        raise ProfileError(f"{slug}: unknown platform "
+                           f"{p.get('platform')!r}; allowed: {list(PLATFORMS)}")
 
     for section in ("capture", "image", "page", "content"):
         if not isinstance(p.get(section), dict):
@@ -207,6 +288,14 @@ def validate(p: dict) -> dict:
     if cap.get("engine") not in ENGINES:
         raise ProfileError(f"{slug}: capture.engine must be one of "
                            f"{sorted(ENGINES)}, got {cap.get('engine')!r}")
+    # An engine captures ONE network. A profile that says platform=facebook
+    # with the X engine would show Facebook links to a capture that cannot
+    # read them — refuse it here, not deep in a worker.
+    want = ENGINES[cap["engine"]]["platform"]
+    if p.get("platform", DEFAULT_PLATFORM) != want:
+        raise ProfileError(f"{slug}: capture.engine {cap['engine']!r} captures "
+                           f"{want!r} posts, but platform is "
+                           f"{p.get('platform', DEFAULT_PLATFORM)!r}")
     _num(cap.get("device_scale_factor", 1), "capture.device_scale_factor",
          slug, 1, 3)
     vp = cap.get("viewport") or {}

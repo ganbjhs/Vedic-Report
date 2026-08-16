@@ -145,10 +145,13 @@ check("preview calls uploads.analyse", "uploads.analyse" in src_preview)
 check("submit calls uploads.analyse", "uploads.analyse" in src_submit)
 
 print("\n7. the routes exist with the right methods")
-by_path = {r.path: sorted(getattr(r, "methods", []) or [])
-           for r in RJ.router.routes}
-check("/api/preview is POST", by_path.get("/api/preview"), ["POST"])
-check("/api/jobs is POST", by_path.get("/api/jobs"), ["POST"])
+by_path = {}
+for r in RJ.router.routes:            # one path may carry several methods
+    by_path.setdefault(r.path, set()).update(getattr(r, "methods", []) or [])
+check("/api/preview is POST", "POST" in by_path.get("/api/preview", ()), True)
+check("/api/jobs accepts POST (submit)", "POST" in by_path.get("/api/jobs", ()), True)
+check("/api/jobs accepts GET (the dashboard's job list)",
+      "GET" in by_path.get("/api/jobs", ()), True)
 check("preview accepts file, text, dedupe, csrf",
       {"file", "text", "dedupe", "csrf_token"}
       <= set(inspect.signature(RJ.preview).parameters), True)

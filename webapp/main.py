@@ -14,12 +14,29 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, previews, report_types, routes_jobs,
-               uploads, x_login)
+from . import (auth, config, health, previews, report_types, routes_extras,
+               routes_jobs, uploads, x_login)
 from .jobs import cleanup, queue, store
 
 HERE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
+
+
+def _asset_version() -> str:
+    """Short hash of the CSS + JS contents. Appended to their URLs as ?v=…, so
+    a browser that cached the previous build can never pair an old stylesheet
+    with new markup — the URL itself changes whenever the file does."""
+    import hashlib
+    h = hashlib.sha1()
+    for name in ("static/app.css", "static/app.js"):
+        try:
+            h.update((HERE / name).read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:10]
+
+
+templates.env.globals["asset_v"] = _asset_version()
 
 
 @contextlib.asynccontextmanager
@@ -60,6 +77,24 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 app.include_router(routes_jobs.router)
+app.include_router(routes_extras.router)
+
+
+def _shell(request: Request, user: str, nav: str, **extra) -> dict:
+    """Context every signed-in page shares: the top-bar health pills, the
+    budget meter in the nav, the CSRF token. One place, so the shell can never
+    disagree with itself between pages."""
+    admin = config.is_admin(user)
+    ctx = {"user": user, "csrf": auth.csrf_token(request), "nav": nav,
+           "is_admin": admin,
+           # Health and budget are admin concerns; a colleague who only makes
+           # reports never sees them (they still get a plain "X capture is
+           # unavailable" line when it matters).
+           "platform_health": health.platform_health() if admin else [],
+           "budget": health.capture_budget() if admin else None,
+           "x_login_ok": x_login.session_is_valid()}
+    ctx.update(extra)
+    return ctx
 
 
 # --------------------------------------------------------------------------- #
@@ -74,11 +109,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
                             headers=exc.headers)
     if exc.status_code == 401:
         return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
-    return templates.TemplateResponse(
-        request, "error.html",
-        {"code": exc.status_code, "detail": exc.detail,
-         "user": auth.current_user(request)},
-        status_code=exc.status_code)
+    user = auth.current_user(request)
+    ctx = (_shell(request, user, "") if user else {"user": None})
+    ctx.update({"code": exc.status_code, "detail": exc.detail})
+    return templates.TemplateResponse(request, "error.html", ctx,
+                                      status_code=exc.status_code)
 
 
 # --------------------------------------------------------------------------- #
@@ -150,18 +185,20 @@ async def logout(request: Request, csrf_token: str = Form("")):
 # --------------------------------------------------------------------------- #
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, user: str = Depends(auth.require_user)):
-    jobs = [routes_jobs.public_job(j) for j in store.list_for(user, limit=12)]
+    jobs = [routes_jobs.public_job(j) for j in store.list_for(user, limit=8)]
     return templates.TemplateResponse(
         request, "index.html",
-        {"user": user, "csrf": auth.csrf_token(request), "jobs": jobs,
-         "max_links": config.MAX_LINKS, "max_mb": config.MAX_UPLOAD_MB,
-         "accept": ",".join(uploads.ALLOWED_SUFFIXES),
-         "default_workers": config.CAPTURE_WORKERS,
-         "max_workers": config.MAX_WORKERS,
-         "report_types": report_types.all_types(),
-         "previews": previews.manifest(),
-         "nav": "new",
-         "x_login_ok": config.X_STATE_FILE.exists()})
+        _shell(request, user, "new",
+               jobs=jobs,
+               max_links=config.MAX_LINKS, max_mb=config.MAX_UPLOAD_MB,
+               accept=",".join(uploads.ALLOWED_SUFFIXES),
+               default_workers=config.CAPTURE_WORKERS,
+               max_workers=config.MAX_WORKERS,
+               report_types=report_types.all_types(),
+               previews=previews.manifest(),
+               platforms=report_types.PLATFORMS,
+               presets=[routes_extras._public_preset(p)
+                        for p in store.presets_for(user)]))
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
@@ -172,8 +209,22 @@ async def job_page(job_id: str, request: Request,
         raise HTTPException(status_code=404, detail="Job not found")
     return templates.TemplateResponse(
         request, "job.html",
-        {"user": user, "csrf": auth.csrf_token(request),
-         "job": routes_jobs.public_job(job)})
+        _shell(request, user, "history", job=routes_jobs.public_job(job)))
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history_page(request: Request, user: str = Depends(auth.require_user)):
+    jobs = [routes_jobs.public_job(j) for j in store.list_for(user, limit=200)]
+    return templates.TemplateResponse(
+        request, "history.html", _shell(request, user, "history", jobs=jobs))
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, user: str = Depends(auth.require_admin)):
+    return templates.TemplateResponse(
+        request, "settings.html",
+        _shell(request, user, "settings", settings=config.public_settings(),
+               warnings=config.startup_warnings()))
 
 
 def _session_context(request: Request, user: str, flash=None) -> dict:
@@ -186,24 +237,29 @@ def _session_context(request: Request, user: str, flash=None) -> dict:
     info["last_attempt_text"] = (
         datetime.datetime.fromtimestamp(last["at"]).strftime("%d %b %Y, %H:%M")
         if last.get("at") else None)
-    return {"user": user, "csrf": auth.csrf_token(request), "info": info,
-            "nav": "x",
-            "sessions_dir": str(config.SESSIONS_DIR), "flash": flash}
+    return _shell(request, user, "accounts", info=info,
+                  sessions_dir=str(config.SESSIONS_DIR), flash=flash)
 
 
-@app.get("/report-types", response_class=HTMLResponse)
-async def report_types_page(request: Request,
-                            user: str = Depends(auth.require_user)):
-    """The gallery: one large, readable preview per report type."""
+@app.get("/report-types")
+async def report_types_redirect():
+    return RedirectResponse("/styles", status_code=301)
+
+
+@app.get("/styles", response_class=HTMLResponse)
+async def styles_page(request: Request, user: str = Depends(auth.require_user)):
+    """The gallery of report styles, plus the designer for new ones."""
     return templates.TemplateResponse(
-        request, "report_types.html",
-        {"user": user, "csrf": auth.csrf_token(request), "nav": "types",
-         "report_types": report_types.all_types(),
-         "previews": previews.manifest()})
+        request, "styles.html",
+        _shell(request, user, "styles",
+               report_types=report_types.all_types(),
+               previews=previews.manifest(),
+               platforms=report_types.PLATFORMS,
+               max_workers=config.MAX_WORKERS))
 
 
 @app.get("/admin/session-status", response_class=HTMLResponse)
-async def session_status(request: Request, user: str = Depends(auth.require_user)):
+async def session_status(request: Request, user: str = Depends(auth.require_admin)):
     """Is a usable X login available, and can the server renew it itself?"""
     return templates.TemplateResponse(
         request, "session_status.html", _session_context(request, user))
@@ -211,7 +267,7 @@ async def session_status(request: Request, user: str = Depends(auth.require_user
 
 @app.post("/admin/x-login", response_class=HTMLResponse)
 async def admin_x_login(request: Request, csrf_token: str = Form(""),
-                        user: str = Depends(auth.require_user)):
+                        user: str = Depends(auth.require_admin)):
     """Sign in to X now. Credentials come from the environment, never the form."""
     auth.verify_csrf(request, csrf_token)
     ok, message = await asyncio.to_thread(x_login.force_login)

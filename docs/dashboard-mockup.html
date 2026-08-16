@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report Maker — dashboard redesign mockup</title>
+<style>
+:root{
+  --bg:#f5f6f8;--surface:#fff;--surface2:#f0f2f5;--border:#e3e6ea;--border-strong:#c9ced6;
+  --text:#14171c;--text2:#5b6472;--text3:#8a93a1;
+  --accent:#2563eb;--accent-bg:#e8effe;--accent-fg:#1d4ed8;
+  --ok:#16a34a;--ok-bg:#e7f7ec;--warn:#d97706;--warn-bg:#fef3e2;--bad:#dc2626;--bad-bg:#fdecec;--info:#0891b2;
+  --x:#111;--fb:#1877f2;--ig:#d62976;
+  --r:10px;--r-sm:6px;--sh:0 1px 2px rgba(0,0,0,.05),0 4px 14px rgba(0,0,0,.05);
+  --sh2:0 6px 24px rgba(0,0,0,.10);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1115;--surface:#171a20;--surface2:#1e222a;--border:#262b34;--border-strong:#39404b;
+  --text:#e8eaee;--text2:#a5adba;--text3:#6f7886;--accent-bg:#1a2b55;--accent-fg:#8fb0ff;
+  --ok-bg:#12331d;--warn-bg:#3a2a0d;--bad-bg:#3d1616;--x:#e8eaee;--sh:none;--sh2:0 8px 28px rgba(0,0,0,.5)}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;background:var(--bg);color:var(--text)}
+.app{display:grid;grid-template-columns:220px 1fr 300px;grid-template-rows:56px 1fr;min-height:100vh}
+/* top bar */
+.top{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--border)}
+.brand{font-weight:700;letter-spacing:.2px;display:flex;align-items:center;gap:8px}
+.brand i{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--accent),#7c3aed);display:inline-block}
+.spacer{flex:1}
+.health{display:flex;gap:6px;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--surface2)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}.dot.off{background:var(--text3)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-weight:600;font-size:13px;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--text2)}
+.btn.lg{padding:12px 22px;font-size:15px;border-radius:var(--r)}
+.avatar{width:30px;height:30px;border-radius:50%;background:var(--accent-bg);color:var(--accent-fg);display:grid;place-items:center;font-weight:700;font-size:12px}
+/* left nav */
+.nav{background:var(--surface);border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--r-sm);color:var(--text2);text-decoration:none;font-weight:500}
+.nav a.active{background:var(--accent-bg);color:var(--accent-fg);font-weight:600}
+.nav a .k{margin-left:auto;font-size:11px;color:var(--text3);border:1px solid var(--border);border-radius:4px;padding:0 5px}
+.nav .sec{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);padding:14px 12px 4px;font-weight:700}
+.nav .quota{margin-top:auto;padding:12px;border-radius:var(--r);background:var(--surface2);font-size:12px;color:var(--text2)}
+.bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin:6px 0 4px}
+.bar b{display:block;height:100%;width:38%;background:var(--ok);border-radius:3px}
+/* main */
+.main{padding:24px 28px 110px;max-width:1040px}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:var(--text2);margin:0 0 22px}
+.step{display:flex;align-items:center;gap:10px;margin:26px 0 12px}
+.step .n{width:24px;height:24px;border-radius:50%;background:var(--text);color:var(--bg);display:grid;place-items:center;font-size:12px;font-weight:700}
+.step h2{font-size:15px;margin:0}
+.step .hint{color:var(--text3);font-size:13px;margin-left:4px}
+/* platform tabs */
+.plat{display:flex;gap:8px;flex-wrap:wrap}
+.plat button{display:flex;align-items:center;gap:8px;padding:10px 16px;border-radius:999px;border:1px solid var(--border-strong);background:var(--surface);font-weight:600;font-size:13px;color:var(--text2);cursor:pointer}
+.plat button.on{border-color:var(--text);color:var(--text);box-shadow:inset 0 0 0 1px var(--text)}
+.plat button.soon{opacity:.55;cursor:default}
+.plat .badge{font-size:10px;padding:1px 6px;border-radius:4px;background:var(--surface2);border:1px solid var(--border);color:var(--text3);font-weight:700;letter-spacing:.3px}
+.pl{width:16px;height:16px;border-radius:4px;display:inline-block}
+.pl.x{background:var(--x)}.pl.fb{background:var(--fb)}.pl.ig{background:linear-gradient(135deg,#f9ce34,#ee2a7b,#6228d7)}.pl.all{background:linear-gradient(90deg,var(--x) 33%,var(--fb) 33% 66%,var(--ig) 66%)}
+/* style cards */
+.styles{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px;cursor:pointer;box-shadow:var(--sh);position:relative;transition:transform .12s,box-shadow .12s}
+.card:hover{transform:translateY(-2px);box-shadow:var(--sh2)}
+.card.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-bg),var(--sh2)}
+.card .tick{position:absolute;top:8px;right:8px;width:18px;height:18px;border-radius:50%;background:var(--accent);color:#fff;display:none;place-items:center;font-size:11px}
+.card.on .tick{display:grid}
+.thumb{aspect-ratio:3/4;background:var(--surface2);border-radius:6px;border:1px solid var(--border);display:grid;place-items:center;padding:12px;margin-bottom:10px;position:relative;overflow:hidden}
+.page{background:#fff;border:1px solid #d5d9df;width:100%;height:100%;padding:8%;display:grid;gap:5%;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.page.two{grid-template-columns:1fr 1fr;grid-template-rows:1fr}
+.page.six{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr 1fr}
+.shot{background:linear-gradient(#e6e9ee,#dfe3e9);border-radius:2px;border:1px solid #cfd5dd}
+.shot.card3d{border-radius:5px;box-shadow:0 2px 6px rgba(0,0,0,.18);border:1px solid #c7cdd6}
+.page.deck{background:#f7f8fa;place-items:center}
+.page.deck .shot{width:70%;height:78%}
+.page.inf .shot{margin-bottom:0}
+.page.inf .m{height:2px;background:#cbd1da;border-radius:1px}
+.page.inf .stack{display:grid;grid-template-rows:1fr auto;gap:4px}
+.page.inf .stack .rows{display:grid;gap:2px}
+.card h3{font-size:13px;margin:0 0 3px}
+.card p{font-size:12px;color:var(--text2);margin:0}
+.card .meta{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.tag{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--surface2);border:1px solid var(--border);color:var(--text3);font-weight:600}
+.tag.hot{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+/* source */
+.src{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh)}
+.tabs{display:flex;border-bottom:1px solid var(--border);padding:0 8px}
+.tabs button{padding:12px 14px;border:0;background:none;font-weight:600;color:var(--text2);border-bottom:2px solid transparent;cursor:pointer;font-size:13px}
+.tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+.src .body{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.drop{border:1.5px dashed var(--border-strong);border-radius:var(--r);padding:26px;text-align:center;color:var(--text2);background:var(--surface2)}
+.drop b{color:var(--text)}
+.prev{border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+.prev .hd{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:12px;font-weight:600}
+.prev table{width:100%;border-collapse:collapse;font-size:12px}
+.prev td,.prev th{padding:7px 12px;border-bottom:1px solid var(--border);text-align:left}
+.prev th{color:var(--text3);font-weight:600;font-size:11px}
+.prev tr.bad td{background:var(--bad-bg)}
+.prev tr.dup td{color:var(--text3)}
+.pp{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.stat{display:flex;gap:14px;font-size:12px;color:var(--text2);padding:10px 12px}
+.stat b{color:var(--text)}
+/* sticky action bar */
+.actbar{position:fixed;left:220px;right:300px;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 28px;display:flex;align-items:center;gap:14px;box-shadow:0 -6px 20px rgba(0,0,0,.05)}
+.actbar input{flex:1;max-width:340px;padding:10px 12px;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface);color:var(--text);font-size:14px}
+.summary{color:var(--text2);font-size:13px}
+.summary b{color:var(--text)}
+/* right rail */
+.rail{background:var(--surface);border-left:1px solid var(--border);padding:18px 16px;display:flex;flex-direction:column;gap:18px}
+.rail h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--text3)}
+.job{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
+.job:last-child{border-bottom:0}
+.job .t{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.job .s{font-size:11px;color:var(--text3)}
+.st{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+.st.done{background:var(--ok-bg);color:var(--ok)}.st.run{background:var(--accent-bg);color:var(--accent-fg)}.st.q{background:var(--surface2);color:var(--text2)}.st.fail{background:var(--bad-bg);color:var(--bad)}
+.mini{height:4px;background:var(--border);border-radius:2px;margin-top:5px;overflow:hidden}
+.mini b{display:block;height:100%;width:62%;background:var(--accent)}
+.rail .link{font-size:12px;color:var(--accent-fg);font-weight:600;text-decoration:none}
+.sess{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.sess:last-child{border-bottom:0}
+.sess small{display:block;color:var(--text3);font-size:11px}
+.note{margin-top:34px;padding:14px 16px;border-radius:var(--r);background:var(--accent-bg);color:var(--accent-fg);font-size:13px}
+.note b{display:block;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="top">
+    <div class="brand"><i></i> Report Maker</div>
+    <div class="spacer"></div>
+    <div class="health" title="Capture account health — click for details">
+      <span class="pill"><span class="dot ok"></span> X · healthy · 41/300 today</span>
+      <span class="pill"><span class="dot off"></span> Facebook · not set up</span>
+      <span class="pill"><span class="dot off"></span> Instagram · not set up</span>
+    </div>
+    <button class="btn ghost" title="Theme">◐</button>
+    <div class="avatar">T</div>
+  </header>
+
+  <nav class="nav">
+    <a class="active" href="#">＋ New report <span class="k">N</span></a>
+    <a href="#">▤ History <span class="k">H</span></a>
+    <a href="#">★ Presets</a>
+    <div class="sec">Setup</div>
+    <a href="#">◉ Accounts &amp; sessions</a>
+    <a href="#">▦ Report styles</a>
+    <a href="#">⚙ Settings</a>
+    <div class="quota">
+      <div style="font-weight:600;color:var(--text)">Capture budget today</div>
+      <div class="bar"><b></b></div>
+      41 of ~300 · resets 00:00
+    </div>
+  </nav>
+
+  <main class="main">
+    <h1>New report</h1>
+    <p class="sub">Pick a platform, pick a style, add your links. Preview shows exactly what will be captured before a single browser opens.</p>
+
+    <div class="step"><span class="n">1</span><h2>Platform</h2><span class="hint">— where the posts live</span></div>
+    <div class="plat">
+      <button class="on"><span class="pl x"></span> X / Twitter</button>
+      <button class="soon"><span class="pl fb"></span> Facebook <span class="badge">SOON</span></button>
+      <button class="soon"><span class="pl ig"></span> Instagram <span class="badge">SOON</span></button>
+      <button class="soon"><span class="pl all"></span> Combined <span class="badge">SOON</span></button>
+    </div>
+
+    <div class="step"><span class="n">2</span><h2>Style</h2><span class="hint">— how the report looks. Hover a card to see a full sample.</span></div>
+    <div class="styles">
+      <div class="card on"><span class="tick">✓</span>
+        <div class="thumb"><div class="page"><div class="shot"></div></div></div>
+        <h3>Standard</h3><p>One post per page. The evidence report.</p>
+        <div class="meta"><span class="tag">Letter</span><span class="tag">PDF · DOCX</span></div>
+      </div>
+      <div class="card">
+        <div class="thumb"><div class="page two inf"><div class="stack"><div class="shot"></div><div class="rows"><i class="m"></i><i class="m"></i><i class="m"></i></div></div><div class="stack"><div class="shot"></div><div class="rows"><i class="m"></i><i class="m"></i><i class="m"></i></div></div></div></div>
+        <h3>Influencer</h3><p>Two per page with reach &amp; engagement metrics.</p>
+        <div class="meta"><span class="tag">A4</span><span class="tag">PDF · DOCX · XLSX</span></div>
+      </div>
+      <div class="card">
+        <div class="thumb"><div class="page six"><div class="shot"></div><div class="shot"></div><div class="shot"></div><div class="shot"></div><div class="shot"></div><div class="shot"></div></div></div>
+        <h3>Contact sheet</h3><p>Six per page. Review a batch at a glance.</p>
+        <div class="meta"><span class="tag">2×3 grid</span><span class="tag">PDF · HTML</span></div>
+      </div>
+      <div class="card">
+        <div class="thumb"><div class="page deck"><div class="shot card3d"></div></div></div>
+        <h3>Client deck</h3><p>Cover + one styled card per page.</p>
+        <div class="meta"><span class="tag">Presentation</span><span class="tag">PDF · DOCX · HTML</span></div>
+      </div>
+      <div class="card">
+        <div class="thumb"><div class="page"><div class="shot" style="background:repeating-linear-gradient(45deg,#e6e9ee 0 3px,#dfe3e9 3px 6px)"></div></div></div>
+        <h3>Standard · Hi-res</h3><p>Same layout, 2× sharper capture.</p>
+        <div class="meta"><span class="tag hot">+24% time</span><span class="tag">PDF · DOCX</span></div>
+      </div>
+    </div>
+
+    <div class="step"><span class="n">3</span><h2>Links</h2><span class="hint">— file, paste, or a Google Sheet</span></div>
+    <div class="src">
+      <div class="tabs"><button class="on">Upload file</button><button>Paste links</button><button>Google Sheet</button><button style="margin-left:auto;color:var(--text3)">Load preset ▾</button></div>
+      <div class="body">
+        <div class="drop"><b>Drop .xlsx / .csv here</b> or click to browse<br><small>Links auto-detected · account names optional</small></div>
+        <div class="prev">
+          <div class="hd">Preview <span class="pill" style="margin-left:auto"><span class="dot ok"></span> 11 will be captured</span></div>
+          <table>
+            <tr><th>#</th><th>Account</th><th>Link</th><th></th></tr>
+            <tr><td>1</td><td>@handle_one</td><td><span class="pp" style="background:var(--x)"></span>x.com/…/status/18823…</td><td></td></tr>
+            <tr><td>2</td><td>@handle_two</td><td><span class="pp" style="background:var(--x)"></span>x.com/…/status/18831…</td><td></td></tr>
+            <tr class="dup"><td>3</td><td>@handle_two</td><td><span class="pp" style="background:var(--x)"></span>x.com/…/status/18831…?s=20</td><td><span class="tag">duplicate of 2</span></td></tr>
+            <tr class="bad"><td>4</td><td>—</td><td>facebook.com/nope</td><td><span class="tag" style="color:var(--bad)">not an X link</span></td></tr>
+            <tr><td>5</td><td>@handle_three</td><td><span class="pp" style="background:var(--x)"></span>x.com/…/status/18840…</td><td></td></tr>
+          </table>
+          <div class="stat"><span><b>13</b> rows</span><span><b>11</b> capture</span><span><b>1</b> duplicate</span><span><b>1</b> rejected</span><span style="margin-left:auto">≈ <b>4 min</b></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="note"><b>Mockup notes</b>
+      Platform → Style → Links is a fixed left-to-right story, so a new user never asks "where do I start". Styles are shown as thumbnails auto-drawn from each profile's own config, so a new profile appears here with no template change. Combined = multi-select platforms + one mixed link list, grouped by platform in the output. Right rail is the "what's happening" column; left nav is "where else can I go". Everything a power user needs (presets, budget, session health) is one glance away but never in the way of the three steps.
+    </div>
+  </main>
+
+  <aside class="rail">
+    <div>
+      <h4>Recent reports</h4>
+      <div class="job"><span class="st run">Running</span><div><div class="t">Weekly brand mentions</div><div class="s">Standard · 12 / 40 captured</div><div class="mini"><b></b></div></div><span class="s">3m</span></div>
+      <div class="job"><span class="st q">Queued</span><div><div class="t">Influencer Aug w1</div><div class="s">Influencer · 24 links · #2 in queue</div></div><span class="s">—</span></div>
+      <div class="job"><span class="st done">Done</span><div><div class="t">Client deck — Acme</div><div class="s">Client deck · 18 posts · 1 not included</div></div><span class="s">1h</span></div>
+      <div class="job"><span class="st done">Done</span><div><div class="t">Review sheet Jul</div><div class="s">Contact sheet · 36 posts</div></div><span class="s">Yest</span></div>
+      <div class="job"><span class="st fail">Failed</span><div><div class="t">Test run</div><div class="s">X session expired</div></div><span class="s">2d</span></div>
+      <a class="link" href="#">All history →</a>
+    </div>
+    <div>
+      <h4>Capture accounts</h4>
+      <div class="sess"><div>X / Twitter<small>@tool_account · session valid 9d</small></div><span class="dot ok"></span></div>
+      <div class="sess"><div>Facebook<small>not configured</small></div><span class="dot off"></span></div>
+      <div class="sess"><div>Instagram<small>not configured</small></div><span class="dot off"></span></div>
+    </div>
+    <div>
+      <h4>Presets</h4>
+      <div class="sess"><div>Weekly mentions<small>X · Standard · Sheet</small></div><a class="link" href="#">Run</a></div>
+      <div class="sess"><div>Monthly client deck<small>X · Client deck · file</small></div><a class="link" href="#">Run</a></div>
+    </div>
+  </aside>
+
+  <div class="actbar">
+    <input placeholder="Report name — e.g. Brand mentions 04-08-26">
+    <span class="summary"><b>X</b> · <b>Standard</b> · <b>11</b> links · ≈ 4 min</span>
+    <div class="spacer"></div>
+    <button class="btn">☆ Save as preset</button>
+    <button class="btn primary lg">Generate report →</button>
+  </div>
+</div>
+</body>
+</html>

@@ -18,17 +18,20 @@ _MISSING_METRICS = {"followers": "—", "reactions": "—", "comments": "—",
 
 
 def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
-              engine, keep_engagement=False):
-    """Capture one chunk of links with `engine` ('x' | 'influencer')."""
-    for p in (src_path, inf_path):
+              engine, keep_engagement=False, fb_path=None):
+    """Capture one chunk of links with `engine` ('x' | 'influencer' | 'facebook')."""
+    for p in (src_path, inf_path, fb_path):
         if p and p not in sys.path:
             sys.path.insert(0, p)
     from playwright.sync_api import sync_playwright
 
     influencer = engine == "influencer"
+    facebook = engine == "facebook"
     if influencer:
         import inf_capture                      # read-only
         followers_cache = {}
+    elif facebook:
+        import fb_capture                       # facebook/, its own engine
     else:
         from capture import x_capture           # read-only
 
@@ -45,6 +48,9 @@ def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
             try:
                 if influencer:
                     res = inf_capture.capture(page, t["capture_url"], shot)
+                elif facebook:
+                    res = fb_capture.capture(page, t["capture_url"], shot,
+                                             keep_engagement)
                 else:
                     res = x_capture.capture(page, t["capture_url"], shot,
                                             keep_engagement)
@@ -53,7 +59,7 @@ def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
                        "screenshot": None, "handle": ""}
                 if influencer:
                     res["metrics"] = dict(_MISSING_METRICS)
-            res["platform"] = "x"
+            res["platform"] = "facebook" if facebook else "x"
             res.update({"idx": t["idx"], "category": t["category"],
                         "account_name": t["account"],
                         "post_link": t["post_link"]})

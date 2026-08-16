@@ -37,7 +37,7 @@ from .. import config, report_types, x_login
 from . import store
 
 # Code copied into each job's working directory.
-_CODE_ITEMS = ("run.py", "src", "influencer", "profiles")
+_CODE_ITEMS = ("run.py", "src", "influencer", "profiles", "facebook")
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store", "reports",
                                  "sessions")
 
@@ -94,6 +94,12 @@ def build_job_dir(job_id: str, rows: list, upload_bytes: bytes,
         else:
             shutil.copy2(src, dst)
 
+    # A style designed in the app lives under DATA_DIR, outside the code tree.
+    # Copy it (and any user style it extends) into the job's private registry,
+    # so the subprocess finds it through the normal path and a later edit or
+    # delete cannot change a job that is already running (rule 2, in spirit).
+    _copy_user_profiles(job_id, app)
+
     # One shared, read-only login cookie — symlinked, never copied around.
     link = app / "sessions"
     try:
@@ -114,6 +120,24 @@ def build_job_dir(job_id: str, rows: list, upload_bytes: bytes,
 
     uploads.write_canonical_xlsx(rows, app / "input.xlsx")
     return jd
+
+
+def _copy_user_profiles(job_id: str, app: Path) -> None:
+    job = store.get(job_id)
+    slug = (job or {}).get("report_type") or ""
+    dest_dir = app / "profiles" / "registry"
+    seen = set()
+    while slug and slug not in seen:
+        seen.add(slug)
+        src = config.USER_PROFILES_DIR / f"{slug}.json"
+        if not src.is_file() or (dest_dir / src.name).exists():
+            return                       # shipped profile, or already copied
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest_dir / src.name)
+        try:
+            slug = json.loads(src.read_text()).get("extends") or ""
+        except ValueError:
+            return
 
 
 # --------------------------------------------------------------------------- #
@@ -339,12 +363,14 @@ def _read_results(app: Path) -> list:
 
 
 _STATUS_REASON = {
-    "login_wall": "X asked for a login — the server's X session may have expired",
+    "login_wall": "the site asked for a login before showing this post — for X "
+                  "the server's session may have expired; on Facebook the post "
+                  "is not public",
     "not_found": "post unavailable, deleted, protected or suspended",
     "age_restricted": "X age-restricted this post and only accepts age "
                       "verification through its mobile app, so the content "
                       "cannot be shown in a desktop capture",
-    "overlay_blocked": "an X dialog stayed on top of the post through every "
+    "overlay_blocked": "a dialog stayed on top of the post through every "
                        "retake, so the screenshot showed the popup instead",
     "parent_lost": "this post is a reply and its parent post could not be "
                    "captured, so the screenshot would have shown the reply "
@@ -389,7 +415,7 @@ def publish(job_id: str, app: Path, stem: str) -> dict:
     reports = app / "reports"
     artifacts = {}
 
-    for ext in ("pdf", "docx", "html"):
+    for ext in ("pdf", "docx", "html", "xlsx"):
         produced = sorted(reports.glob(f"*.{ext}"),
                           key=lambda p: p.stat().st_mtime, reverse=True)
         if produced:
@@ -479,12 +505,16 @@ def run_job(job_id: str, on_line=None) -> dict:
     # The cookie file lives on an ephemeral disk on free hosts, so make sure a
     # valid X session exists before the capture starts. Cheap when it already
     # does; signs in headlessly when it does not.
-    ok, message = x_login.ensure_session()
-    if not ok:
-        prog.note(f"X login: {message}", "warn")
-    elif "Signed in" in message:
-        prog.note("Signed in to X automatically (the saved session was missing "
-                  "or expired).")
+    if rt is not None and rt.platform != "x":
+        prog.note(f"{rt.platform.title()} capture — public posts, no account "
+                  "required.")
+    else:
+        ok, message = x_login.ensure_session()
+        if not ok:
+            prog.note(f"X login: {message}", "warn")
+        elif "Signed in" in message:
+            prog.note("Signed in to X automatically (the saved session was "
+                      "missing or expired).")
     prog.set_phase("Starting the browser")
 
     log = log_path(job_id).open("w", encoding="utf-8")
@@ -556,7 +586,8 @@ def run_job(job_id: str, on_line=None) -> dict:
         prog.note(f"Not in the report: {s['account'] or s['link']} — {s['reason']}",
                   "warn")
 
-    if any(r.get("status") == "login_wall" for r in results):
+    if any(r.get("status") == "login_wall" for r in results) and (
+            rt is None or rt.platform == "x"):
         prog.login_wall = True
         # The cookie exists but X is not honouring it. Drop it so the next job
         # signs in again — but only if the server can sign in; otherwise the

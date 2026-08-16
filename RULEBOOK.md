@@ -463,6 +463,95 @@ code:
 
 ---
 
+## 18a. Styles designed in the app are profiles, and only profiles
+
+The style designer (`webapp/styles.py`, `/styles`) writes profile JSON to
+`data/profiles/`. Three things keep it inside the lines drawn by rule 1 and the
+design note:
+
+* Every save and every preview goes through `registry.resolve()` — the same
+  merge + `validate()` a file in `profiles/registry/` gets. A style the runner
+  would refuse cannot be saved, and the error shown is the registry's own.
+* Built-in and shipped slugs are reserved (`styles.reserved_slugs()`), and the
+  shipped registry is consulted first, so a user style can never shadow one.
+* The runner copies the chosen user style into the job's private
+  `profiles/registry/` (`runner._copy_user_profiles`), so the subprocess reads
+  it through the normal path and a later edit or delete cannot change a job
+  already running.
+
+The designer can only set what the schema already allows. A new *capture*
+behaviour is still a new engine (rule 18), not a form field.
+
+---
+
+## 18b. The Facebook engine is a profile engine, and starts logged-out
+
+`facebook/fb_capture.py` is rule 18 done literally: its own folder, imported
+directly by `profiles/prof_worker.py`, no change to `src/` or `influencer/`.
+It is reached ONLY through `profiles/run_profile.py --profile <fb style>`;
+there is no `run_facebook.py`, and `run.py` never sees a Facebook link.
+
+Three facts to keep straight:
+
+* **Links are platform-scoped at the edge.** `profiles/netlinks.py` decides
+  what a Facebook link is, for BOTH the preview (`uploads.analyse(..., platform)`)
+  and the job (`prof_runner` → `netlinks.load_rows`). The frozen
+  `input_loader._rows_from_grid` stays the X reader; its layout helpers are
+  imported read-only, its X-only filter is not copied. A profile's `platform`
+  must match its engine's platform (`registry.validate` refuses otherwise).
+* **No account is the normal state.** Public Page posts render for a
+  logged-out desktop visitor once the login sheet, backdrop, cookie banner and
+  bottom bar are removed and the scroll-lock released — the same one-bug logic
+  as rule 19, re-implemented for Facebook's layers. `sessions/fb_state.json`
+  is honoured if present and never required; `health.py` reports "no account
+  needed" as OK, not as a warning.
+* **The frame ends at the actions row.** Like · Comment · Share is the one
+  boundary (rule 6.2 again): above it when `keep_engagement` is false, below it
+  when true. Comments are `role="article"` nodes *inside* the post's article,
+  so cutting at that row is also what keeps them out. If the row is not found
+  the whole article ships with `frame_ok=False`.
+
+Selectors are Facebook's Aug 2026 desktop DOM. When it breaks, run
+`scripts/probe_logged_out.py` on the link and look (rule 3) before touching
+the engine.
+
+---
+
+## 18c. Web-layer rules (v2 dashboard) — short, each one earned
+
+1. **Assets are versioned.** `base.html` links `app.css?v=<hash>` /
+   `app.js?v=<hash>` (`main._asset_version`). The first deploy of v2 rendered
+   as an unstyled list on a colleague's Chrome because it paired the OLD
+   cached stylesheet with the new markup. Never link a static asset bare.
+2. **Hiding is not a gate.** Anything admin-only is hidden in the template
+   AND refused by `auth.require_admin` (pages) / the same dependency on the
+   write APIs (`/api/styles` save/preview/delete). Same principle as the
+   platform pills: a disabled button is a hint, `check_runnable` is the gate.
+3. **The dashboard shows report information only.** Health, budget, sessions
+   and settings live under *Admin* in the nav. A colleague who only makes
+   reports must be able to use the app without ever seeing them; the one
+   exception is a plain "X capture is currently unavailable — ask an admin"
+   line, because that changes whether their run will work.
+4. **A thumbnail never pretends to be legible.** Style rows carry a 44 px
+   thumbnail for recognition; the *Sample* modal shows the readable page. Big
+   cards with unreadable content were tried and rejected by the people using it.
+5. **Preview and submit share one parser.** `_grid_from_request` +
+   `uploads.analyse(grid, dedupe, platform)` for both. If a link shows in the
+   preview it is captured; if it is rejected it says which row and why.
+6. **Platform is a form field, not a guess.** The preview re-reads when the
+   platform pill changes; `netlinks.MATCHERS[platform]` decides what a link is
+   in the web layer and in the runner. Never infer the platform from the URL
+   mix.
+7. **`.env` is read once.** `APP_USERS`/`APP_ADMINS`/everything else need a
+   uvicorn restart; `--reload` watches `.py`, not `.env`. Usernames in
+   `APP_ADMINS` must match `APP_USERS` exactly; passwords cannot contain `,`
+   or `:`.
+8. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
+   file to hand to the next redesign; update it in the same commit as any
+   structural change (new folder, new route family, new contract).
+
+---
+
 ## 19. A stray dialog and a cropped reply are the same bug
 
 Both captures used to clear overlays like this, once, right after load:
@@ -624,3 +713,5 @@ rate-limited; this is what that looks like *before* the suspension.
 - [ ] Checked peak memory if anything touches document building
 - [ ] Confirmed `.env` / `sessions/` are still untracked
 - [ ] Tested on the server, not only locally
+- [ ] Signed in once as a NON-admin and confirmed the app is usable and shows nothing it should not
+- [ ] `docs/BLUEPRINT.md` still describes the tree (rule 18c.8)

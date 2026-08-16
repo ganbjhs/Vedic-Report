@@ -3,36 +3,69 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Report Automation{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <title>{% block title %}Report Maker{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script>
+    // Theme before first paint: no flash. "auto" = follow the OS.
+    (function () { try { var t = localStorage.getItem("rm-theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {} })();
+  </script>
 </head>
 <body>
 {% if user %}
-<header class="topbar">
-  <a class="brand" href="/">
-    {% include "_brand.svg" %}
-    <span>Report Automation</span>
-  </a>
-  <nav class="topbar-nav">
-    <a href="/" class="navlink{{ ' on' if nav == 'new' else '' }}">New report</a>
-    <a href="/report-types" class="navlink{{ ' on' if nav == 'types' else '' }}">Report types</a>
-    <a href="/admin/session-status" class="navlink{{ ' on' if nav == 'x' else '' }}">X login</a>
+<div class="app{% block app_class %}{% endblock %}">
+
+  <header class="top">
+    <a class="brand" href="/">{% include "_brand.svg" %} Report Maker</a>
+    <span class="spacer"></span>
+    <button class="btn ghost sm" id="theme-btn" type="button" title="Theme: auto / light / dark" aria-label="Toggle theme">Auto</button>
+    <div class="menu">
+      <button class="avatar" id="menu-btn" type="button" aria-haspopup="true" aria-expanded="false" title="{{ user }}">{{ user[:1] }}</button>
+      <div class="menu-pop" id="menu-pop" hidden>
+        <div class="who">Signed in as <b>{{ user }}</b>{% if is_admin %} · admin{% endif %}</div>
+        {% if is_admin %}<a class="btn ghost" href="/settings">Settings</a>{% endif %}
+        <form method="post" action="/logout">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button class="btn ghost" type="submit">Sign out</button>
+        </form>
+      </div>
+    </div>
+  </header>
+
+  <nav class="nav" aria-label="Main">
+    <a href="/" class="{{ 'active' if nav == 'new' else '' }}" data-key="n"><span class="ico">＋</span> New report <span class="k">N</span></a>
+    <a href="/history" class="{{ 'active' if nav == 'history' else '' }}" data-key="h"><span class="ico">▤</span> History <span class="k">H</span></a>
+    <a href="/styles" class="{{ 'active' if nav == 'styles' else '' }}" data-key="s"><span class="ico">▦</span> Report styles <span class="k">S</span></a>
+    {% if is_admin %}
+    <div class="sec">Admin</div>
+    <a href="/admin/session-status" class="{{ 'active' if nav == 'accounts' else '' }}"><span class="ico">◉</span> Accounts &amp; sessions
+      {% set worst = (platform_health | selectattr('live') | map(attribute='state') | list) %}
+      <span class="dot {{ 'bad' if ('invalid' in worst or 'missing' in worst) else ('warn' if 'expiring' in worst else 'ok') }}" style="margin-left:auto" title="Capture account health"></span></a>
+    <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}"><span class="ico">⚙</span> Settings</a>
+    {% if budget %}
+    <div class="quota" title="Posts captured today on the shared X account. Quality degrades past the ceiling (RULEBOOK rule 21).">
+      <b class="t">Capture budget today</b>
+      <div class="bar {{ 'over' if budget.over else ('warn' if budget.warn else '') }}"><i style="width:{{ budget.percent }}%"></i></div>
+      {{ budget.used }} of ~{{ budget.total }} · {{ budget.resets_text | lower }}
+    </div>
+    {% endif %}
+    {% endif %}
   </nav>
-  <nav class="topbar-actions">
-    <span class="who">{{ user }}</span>
-    <form method="post" action="/logout">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <button class="ghost" type="submit">Sign out</button>
-    </form>
-  </nav>
-</header>
+
+  <main class="main{% block main_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block rail %}{% endblock %}
+</div>
+{% else %}
+<main class="centered">
+  {% block content_anon %}{% endblock %}
+</main>
 {% endif %}
 
-<main class="{% block main_class %}wrap{% endblock %}">
-  {% block content %}{% endblock %}
-</main>
-
+<script src="/static/app.js?v={{ asset_v }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

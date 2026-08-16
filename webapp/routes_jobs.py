@@ -25,6 +25,8 @@ _KINDS = {"pdf": "application/pdf",
           "docx": "application/vnd.openxmlformats-officedocument."
                   "wordprocessingml.document",
           "html": "text/html; charset=utf-8",
+          "xlsx": "application/vnd.openxmlformats-officedocument."
+                  "spreadsheetml.sheet",
           "zip": "application/zip"}
 
 
@@ -43,11 +45,16 @@ def public_job(job: dict) -> dict:
     """The JSON the browser polls. Deliberately excludes paths and the owner."""
     total = job.get("total") or job.get("link_count") or 0
     done = min(job.get("done") or 0, total) if total else (job.get("done") or 0)
+    rt = report_types.get(job["report_type"])
     return {
         "id": job["id"],
         "name": job["name"],
         "title": job["title"],
         "report_type": job["report_type"],
+        # Label + platform ride along so the UI never has to map a slug itself
+        # (an unknown slug — a deleted custom style — still shows something).
+        "report_label": rt.label if rt else job["report_type"],
+        "platform": rt.platform if rt else report_types.DEFAULT_PLATFORM,
         "keep_engagement": bool(job.get("keep_engagement")),
         "workers": job.get("workers") or 0,
         "status": job["status"],
@@ -127,8 +134,8 @@ async def _grid_from_request(file, text: str, sheet_url: str = "",
         grid = uploads.grid_from_text(pasted)
         if not grid:
             raise uploads.UploadError(
-                "No links found in that text. Paste anything containing "
-                "x.com or twitter.com post links — surrounding words are fine.")
+                "No links found in that text. Paste anything containing post "
+                "links — surrounding words are fine.")
         return grid, "pasted links", pasted.encode("utf-8")
 
     if file is None or not getattr(file, "filename", ""):
@@ -164,6 +171,7 @@ async def preview(request: Request,
                   link_col: str = Form(""),
                   account_col: str = Form(""),
                   dedupe: str = Form(""),
+                  platform: str = Form(report_types.DEFAULT_PLATFORM),
                   csrf_token: str = Form(...),
                   user: str = Depends(auth.require_user_api)):
     """What WOULD be captured, without spending a capture slot.
@@ -174,6 +182,10 @@ async def preview(request: Request,
     """
     auth.verify_csrf(request, csrf_token)
     want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
+    if not report_types.is_live(platform) or report_types.platform(platform).combines:
+        return JSONResponse({"ok": False, "detail": f"{platform!r} is not a "
+                             "platform this server can capture yet."}, status_code=400)
+    ours = {"x": "X/Twitter", "facebook": "Facebook"}.get(platform, platform)
 
     try:
         _TABS_SEEN.clear()
@@ -182,7 +194,7 @@ async def preview(request: Request,
         columns = uploads.detect_columns(grid)
         if link_col != "":
             grid = uploads.reshape(grid, link_col, account_col)
-        report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe)
+        report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe, platform)
     except (uploads.UploadError, sheets.SheetError) as e:
         return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
     except Exception as e:
@@ -193,10 +205,10 @@ async def preview(request: Request,
 
     rows = report["rows"]
     if not rows:
-        detail = ("Found link(s), but none are X/Twitter posts. This tool only "
-                  "captures x.com / twitter.com posts."
+        detail = (f"Found link(s), but none are {ours} posts — the platform "
+                  "picked in step 1 decides which links count."
                   if report["dropped"] else
-                  "No links found. Put one X/Twitter post URL per row or per "
+                  f"No links found. Put one {ours} post URL per row or per "
                   "line, or use a sheet with a column headed 'Link'.")
         if tabs and len(tabs) > 1:
             others = ", ".join(t for t in tabs if t != (sheet or tabs[0]))
@@ -246,6 +258,9 @@ async def submit_job(request: Request,
                      dedupe: str = Form(""),
                      report_name: str = Form(...),
                      report_type: str = Form(...),
+                     # Optional, defaulting to the one live platform, so every
+                     # existing caller keeps working unchanged.
+                     platform: str = Form(report_types.DEFAULT_PLATFORM),
                      csrf_token: str = Form(...),
                      keep_engagement: str = Form(""),
                      workers: str = Form(""),
@@ -255,6 +270,13 @@ async def submit_job(request: Request,
     rt = report_types.get(report_type)
     if rt is None:
         raise HTTPException(status_code=400, detail="Unknown report type.")
+
+    # A disabled pill is a hint; this is the gate. Without it a hand-crafted
+    # POST naming a platform with no capture engine would create a job that
+    # fails deep inside a runner with an error nobody can act on.
+    why_not = report_types.check_runnable(platform, report_type)
+    if why_not:
+        raise HTTPException(status_code=400, detail=why_not)
 
     # An unticked checkbox is simply absent from the form body, so anything that
     # arrives means "on". Twitter-only: the influencer capture always keeps the
@@ -282,14 +304,15 @@ async def submit_job(request: Request,
         grid, source, raw = await _grid_from_request(file, pasted, sheet_url, sheet)
         if link_col != "":
             grid = uploads.reshape(grid, link_col, account_col)
-        report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe)
+        report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe, platform)
         rows = report["rows"]
         if not rows:
             raise uploads.UploadError(
-                "No X/Twitter post links found in that input.")
+                f"No {report_types.platform(platform).label} post links found "
+                "in that input.")
         if len(rows) > config.MAX_LINKS:
             raise uploads.UploadError(
-                f"That input has {len(rows)} X links — the limit is "
+                f"That input has {len(rows)} links — the limit is "
                 f"{config.MAX_LINKS} per job. Split it into smaller batches.")
     except uploads.UploadError as e:
         return JSONResponse({"detail": str(e)}, status_code=400)
@@ -330,6 +353,14 @@ async def submit_job(request: Request,
 # --------------------------------------------------------------------------- #
 # Status / cancel
 # --------------------------------------------------------------------------- #
+@router.get("/jobs")
+async def job_list(limit: int = 12, user: str = Depends(auth.require_user_api)):
+    """The signed-in user's recent jobs — what the dashboard rail and the
+    History page poll. Same shape per job as the status endpoint."""
+    limit = max(1, min(int(limit or 12), 200))
+    return {"jobs": [public_job(j) for j in store.list_for(user, limit=limit)]}
+
+
 @router.get("/jobs/{job_id}")
 async def job_status(job_id: str, user: str = Depends(auth.require_user_api)):
     return public_job(_owned_job(job_id, user))

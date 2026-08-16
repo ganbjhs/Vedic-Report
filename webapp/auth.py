@@ -79,6 +79,18 @@ def require_user_api(request: Request) -> str:
     return user
 
 
+def require_admin(request: Request) -> str:
+    """Pages/APIs for the people who run the server. Everyone else gets 403 —
+    the link is simply not shown to them, but hiding is not a gate."""
+    user = require_user(request) if not request.url.path.startswith("/api/") \
+        else require_user_api(request)
+    if not config.is_admin(user):
+        raise HTTPException(status_code=403,
+                            detail="This page is for administrators. Ask the "
+                                   "person who runs Report Maker.")
+    return user
+
+
 def redirect_to_login(request: Request) -> RedirectResponse:
     return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
 

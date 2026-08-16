@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Report styles — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+
+{% block content %}
+<h1>Report styles</h1>
+<p class="sub">What each style produces.{% if is_admin %} The designer below makes new ones; the two built-in reports (Twitter, Influencer) are the proven pipelines and cannot be edited.{% endif %}</p>
+
+<div class="gallery">
+  {% for rt in report_types %}
+  {% set pv = previews.get(rt.slug) %}
+  <section class="card gcard" id="style-{{ rt.slug }}">
+    <div class="shot">{% if pv %}<img src="{{ pv.img_large }}" alt="Preview of the {{ rt.label }} page layout" loading="lazy">{% endif %}</div>
+    <div>
+      <h2>{{ rt.label }}
+        {% if rt.builtin %}<span class="tag">Built-in</span>{% elif rt.custom %}<span class="tag new">Custom</span>{% else %}<span class="tag">Profile</span>{% endif %}
+        {% for o in rt.outputs %}<span class="tag">{{ o | upper }}</span>{% endfor %}
+      </h2>
+      <p class="cap">{{ rt.caption }}{% if rt.allows_keep_engagement %} · engagement line optional{% endif %}{% if rt.allows_worker_choice %} · capture speed selectable{% endif %}</p>
+      <p class="desc">{{ rt.description }}</p>
+      <div class="acts">
+        <a class="btn primary sm" href="/?type={{ rt.slug }}">Use this style</a>
+        {% if not rt.builtin and is_admin %}<button type="button" class="btn sm" data-dup="{{ rt.slug }}">Duplicate into designer</button>{% endif %}
+        {% if rt.custom and is_admin %}
+        <button type="button" class="btn sm" data-edit="{{ rt.slug }}">Edit</button>
+        <button type="button" class="btn sm danger" data-delete="{{ rt.slug }}" data-label="{{ rt.label }}">Delete</button>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+
+{% if is_admin %}
+<div class="step" id="designer" style="margin-top:34px"><span class="n">＋</span><h2>Style designer</h2><span class="hint">— page size, grid, card look, cover, outputs. Validated by the same rules the runner uses; the preview is the real geometry.</span></div>
+
+<form id="designer-form" class="designer card" novalidate>
+  <div>
+    <fieldset><legend>Identity</legend>
+      <div class="fields">
+        <label class="field"><span>Name</span><input name="label" type="text" maxlength="60" placeholder="e.g. Board deck" required></label>
+        <label class="field"><span>Id <span class="faint">(filename)</span></span><input name="slug" type="text" maxlength="40" pattern="[a-z0-9][a-z0-9-]{1,39}" placeholder="board-deck"></label>
+        <label class="field"><span>Start from</span><select name="extends"></select></label>
+        <label class="field wide"><span>Description <span class="faint">(shown on the card)</span></span><input name="description" type="text" maxlength="200" placeholder="One line on what this is for"></label>
+      </div>
+    </fieldset>
+
+    <fieldset><legend>Page</legend>
+      <div class="fields">
+        <label class="field"><span>Size</span><select name="size"><option value="letter">Letter</option><option value="a4">A4</option></select></label>
+        <label class="field"><span>Orientation</span><select name="orientation"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
+        <label class="field"><span>Columns</span><input name="cols" type="number" min="1" max="6" value="1"></label>
+        <label class="field"><span>Rows</span><input name="rows" type="number" min="1" max="6" value="1"></label>
+        <label class="field"><span>Margin top (in)</span><input name="m_top" type="number" step="0.05" min="0" value="0.75"></label>
+        <label class="field"><span>Right</span><input name="m_right" type="number" step="0.05" min="0" value="0.75"></label>
+        <label class="field"><span>Bottom</span><input name="m_bottom" type="number" step="0.05" min="0" value="0.75"></label>
+        <label class="field"><span>Left</span><input name="m_left" type="number" step="0.05" min="0" value="0.75"></label>
+      </div>
+    </fieldset>
+
+    <fieldset><legend>Image</legend>
+      <div class="fields">
+        <label class="field"><span>Box width (in)</span><input name="img_w" type="number" step="0.05" min="0.25" value="4.9"></label>
+        <label class="field"><span>Box height (in)</span><input name="img_h" type="number" step="0.05" min="0.25" value="7"></label>
+        <label class="field"><span>Aspect</span><select name="aspect"><option value="">Natural</option><option value="4:5">4:5 (card)</option><option value="1:1">1:1</option><option value="3:4">3:4</option><option value="9:16">9:16</option><option value="16:9">16:9</option></select></label>
+        <label class="field"><span>Fit</span><select name="fit"><option value="fit">Fit (shrink only)</option><option value="pad">Pad to aspect (never crops)</option><option value="crop-top">Crop to aspect (lossy!)</option></select></label>
+        <label class="field"><span>Background</span><input name="background" type="color" value="#FFFFFF"></label>
+        <label class="field"><span>Corner radius (pt)</span><input name="radius" type="number" step="1" min="0" value="0"></label>
+        <label class="field"><span>Border (pt, 0 = none)</span><input name="border_pt" type="number" step="0.25" min="0" value="0"></label>
+        <label class="field"><span>Border colour</span><input name="border_color" type="color" value="#E1E8ED"></label>
+        <label class="field"><span>Shadow blur (pt, 0 = none)</span><input name="shadow_blur" type="number" step="1" min="0" value="0"></label>
+        <label class="field"><span>Shadow opacity</span><input name="shadow_opacity" type="number" step="0.02" min="0" max="1" value="0.16"></label>
+        <label class="field"><span>Shadow offset (pt)</span><input name="shadow_dy" type="number" step="0.5" min="0" value="4"></label>
+      </div>
+      <p class="hint" style="margin:8px 0 0">Pad, never crop, for evidence: a reply capture is <em>parent + reply</em>, and a crop throws the reply away (RULEBOOK dead-ends).</p>
+    </fieldset>
+
+    <fieldset><legend>Content</legend>
+      <div class="fields">
+        <label class="check"><input type="checkbox" name="cover"><span>Cover page</span></label>
+        <label class="check"><input type="checkbox" name="links_table" checked><span>Links table at the end</span></label>
+        <label class="field"><span>Header <span class="faint">({title})</span></span><input name="header" type="text" value="{title}"></label>
+        <label class="field"><span>Footer <span class="faint">({page} / {pages})</span></span><input name="footer" type="text" value="" placeholder="none"></label>
+        <div class="field wide"><span>Under each post</span>
+          <div class="chips">
+            <label><input type="checkbox" name="fields" value="account_name" checked> account name</label>
+            <label><input type="checkbox" name="fields" value="post_link" checked> post link</label>
+            <label><input type="checkbox" name="fields" value="category"> category</label>
+          </div></div>
+        <div class="field wide" id="dp-inf-only" hidden><span>Metrics rows <span class="faint">(influencer engine)</span></span>
+          <div class="chips">
+            {% for k in ['followers','reactions','comments','reach','shares'] %}<label><input type="checkbox" name="metrics" value="{{ k }}" checked> {{ k }}</label>{% endfor %}
+          </div></div>
+      </div>
+    </fieldset>
+
+    <fieldset><legend>Capture &amp; outputs</legend>
+      <div class="fields">
+        <label class="field"><span>Resolution</span><select name="dpr"><option value="1">1× (default)</option><option value="2">2× hi-res (+24% time)</option></select></label>
+        <label class="field"><span>Browsers <span class="faint">(blank = server default)</span></span><input name="workers" type="number" min="1" max="{{ max_workers }}" placeholder="default"></label>
+        <label class="check" id="dp-x-only"><input type="checkbox" name="keep_engagement"><span>Keep the engagement line (X engine)</span></label>
+        <div class="field wide"><span>Outputs</span>
+          <div class="chips">
+            <label><input type="checkbox" name="outputs" value="pdf" checked> PDF</label>
+            <label><input type="checkbox" name="outputs" value="docx" checked> DOCX</label>
+            <label><input type="checkbox" name="outputs" value="html"> HTML</label>
+          </div></div>
+      </div>
+    </fieldset>
+
+    <div class="row">
+      <button type="submit" class="btn primary" id="dp-save" disabled>Save style</button>
+      <label class="check"><input type="checkbox" name="overwrite"><span>Replace an existing style with this id</span></label>
+      <span id="dp-save-msg"></span>
+    </div>
+  </div>
+
+  <aside class="dpreview">
+    <div class="frame" id="dp-frame"><img id="dp-img" alt="Preview of the designed page" hidden></div>
+    <p id="dp-msg" class="small faint" style="margin:8px 0 0">Loading…</p>
+    <details style="margin-top:10px"><summary class="small faint" style="cursor:pointer">Profile JSON</summary><pre id="dp-json"></pre></details>
+    <p class="small faint" style="margin-top:10px">Rule 3 still applies: the thumbnail is the real layout, but open the first PDF a new style produces and look at it.</p>
+  </aside>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}<script>initStyles();</script>{% endblock %}

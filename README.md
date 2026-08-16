@@ -79,12 +79,13 @@ Two kinds of report:
 
 1. [Quick start (local)](#quick-start-local)
 2. [How it works](#how-it-works)
-3. [Project structure](#project-structure)
-4. [The input file](#the-input-file)
-5. [Configuration](#configuration)
-6. [Deploying (free, no credit card)](#deploying-free-no-credit-card)
-7. [Operations and troubleshooting](#operations-and-troubleshooting)
-8. [Design notes](#design-notes)
+3. [Designing a style in Canva](#designing-a-style-in-canva)
+4. [Project structure](#project-structure)
+5. [The input file](#the-input-file)
+6. [Configuration](#configuration)
+7. [Deploying on your own server](#deploying-on-your-own-server)
+8. [Operations and troubleshooting](#operations-and-troubleshooting)
+9. [Design notes](#design-notes)
 
 ---
 
@@ -212,6 +213,55 @@ X account — push it hard enough and you trade speed for rate-limit retries.
 
 ---
 
+## Designing a style in Canva
+
+A report style is a page you design — anywhere that exports a PNG — with
+*slots* the app prints into. Nothing here needs code, and the app draws the
+guide for you so nothing has to be measured by hand.
+
+**1 · Start from a style, not from zero.** Report styles → any designed style →
+**Make my own version**. Its slots, logo, summary box and text arrive in the
+designer with the original art greyed out behind them, and a banner: *replace
+the page art, keep the slots*. (Starting from a blank page instead? Upload your
+PNG and press **Place standard slots**.)
+
+**2 · Download the Canva guide.** Press **⬇ Download Canva guide**. You get a
+transparent PNG at exactly the page's pixel size — 1920 × 1080 for a 16:9
+slide, 1440 × 1080 for 4:3, A4/Letter at 150 dpi — with every slot drawn as a
+labelled outline.
+
+**3 · Design underneath it.** In Canva, create the design at the size the note
+under the button tells you (for slides: *Presentation (16:9)*). Upload the
+guide, put it on top, lock it, and build the art beneath: backgrounds, pills,
+frames, brand marks. **Art only** — no post numbers, no account names, no
+platform logos and no metric values; the app prints those into the slots, and a
+number painted into the art would be wrong on every other page.
+
+**4 · Export and drop it back.** Delete the guide layer, **Share → Download →
+PNG**, then drag that file onto the designer's page tab. The paper size follows
+the image, so a slide is never squashed onto A4.
+
+**5 · Preview before you save.** Press **👁 Preview page**. The server renders
+one real page beside the editor — your art, a sample screenshot, sample values
+(*Kashi Ke Wasi*, Like 676, Impressions 63,900, LINK) — and refreshes as you
+drag. Nudge boxes with the arrow keys (Shift = 10 px), duplicate with ⌘/Ctrl+D,
+or type exact X/Y/W/H percentages. Boxes snap to each other and to the page
+centre.
+
+**6 · Save, then get it approved.** Name the style and **Save style**. It stays
+*pending* until an admin approves it on the Report styles page; then it appears
+on New report like any other style.
+
+**Optional — your own fonts.** Upload up to three `.ttf`/`.otf` files (≤2 MB
+each) and pick one per text slot. They are embedded in the PDF and inlined into
+the HTML, and they travel with the style into every job.
+
+**Then look at the first PDF.** The preview is drawn from the same geometry as
+the document, but it is a picture of one page — open the first real report and
+check it (this project's rule 3, and it has been earned).
+
+---
+
 ## Project structure
 
 ```
@@ -237,7 +287,10 @@ X account — push it hard enough and you trade speed for rate-limit retries.
 │   └── inf_report_builder.py A4 PDF + DOCX, two posts per page
 │
 ├── profiles/                 the profile engine (styles as JSON) — see docs/profile-engine.md
+│   ├── tpl_builder.py        documents for designed-page (Canva) styles
+│   └── tpl_preview.py        the design kit: Canva slot guide + one-page preview
 ├── facebook/                 the Facebook capture engine (public posts, logged-out) — via profiles/
+├── instagram/                the Instagram capture engine (public posts, logged-out) — via profiles/
 │
 ├── webapp/                   the web layer
 │   ├── main.py               app, pages, auth routes

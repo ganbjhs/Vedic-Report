@@ -17,10 +17,24 @@ Fidelity by output:
 import base64
 import datetime
 import html
+import re
 from pathlib import Path
 
 import registry
 import layout
+
+# One human name per text field, so the designer, the Canva guide and this
+# builder cannot drift apart on what a slot is called.
+FIELD_LABELS = {
+    "title": "Report title", "date": "Date", "page": "Page no.",
+    "pages": "Pages", "index": "#", "account_name": "Account",
+    "post_link": "Post URL", "category": "Category", "metrics": "Metrics",
+    "handle": "Handle name", "section": "Section", "post_no": "Post 1",
+    "post_total": "Top 9 Posts", "platform": "Platform", "link": "LINK",
+    **{f"metric.{k}": f"{k.title()} value" for k in
+       ("like", "impressions", "views", "reach", "comments", "shares",
+        "followers", "reactions")},
+}
 
 
 def _text_items(profile, page_kind):
@@ -124,6 +138,50 @@ def _bg(profile, kind):
 
 
 # --------------------------------------------------------------------------- #
+# Template fonts — up to 3 uploaded files per style, living beside the page
+# images so the runner's copy of assets/<slug>/ carries them into the job.
+# --------------------------------------------------------------------------- #
+def _font_key(name):
+    return "tplf-" + re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-")
+
+
+def register_fonts(profile) -> dict:
+    """{filename: reportlab font name} for every font that really loaded.
+
+    A font that fails to register is REPORTED and dropped, never silently
+    swapped — the text still prints in Helvetica, and the log says which file
+    the renderer could not read (RULEBOOK rule 17).
+    """
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    out = {}
+    for name in (profile.get("template") or {}).get("fonts") or []:
+        path = registry.font_path(profile, name)
+        if not path:
+            print(f"[tpl] font {name!r} is not in this style's assets — "
+                  "falling back to Helvetica", flush=True)
+            continue
+        key = _font_key(name)
+        try:
+            pdfmetrics.registerFont(TTFont(key, str(path)))
+            out[name] = key
+        except Exception as e:
+            print(f"[tpl] could not register font {name!r}: {e} — "
+                  "falling back to Helvetica", flush=True)
+    return out
+
+
+def _pdf_font(t, fonts):
+    """The reportlab font name for one text slot. An uploaded TTF has one
+    weight, so `bold` only picks Helvetica-Bold — a designer who wants bold art
+    uploads the bold file and selects it."""
+    name = fonts.get(t.get("font") or "")
+    if name:
+        return name
+    return "Helvetica-Bold" if t.get("bold") else "Helvetica"
+
+
+# --------------------------------------------------------------------------- #
 # PDF
 # --------------------------------------------------------------------------- #
 def build_pdf(results, images, places, profile, title, out):
@@ -144,16 +202,19 @@ def build_pdf(results, images, places, profile, title, out):
         if bg:
             c.drawImage(bg, 0, 0, width=W, height=H, mask="auto")
 
+    fonts = register_fonts(profile)
+
     def draw_text(t, ctx):
         value = _field_value(t["field"], ctx)
         if not value:
             return
         size = float(t.get("size_pt", 10))
-        c.setFont("Helvetica-Bold" if t.get("bold") else "Helvetica", size)
+        font = _pdf_font(t, fonts)
+        c.setFont(font, size)
         c.setFillColor(colors.HexColor(t.get("color") or "#111111"))
         x, y, w = t["x"] * W, H - t["y"] * H - size, t["w"] * W
-        # trim to the slot width
-        while len(value) > 1 and c.stringWidth(value, "Helvetica", size) > w:
+        # trim to the slot width — measured in the font it will print in
+        while len(value) > 1 and c.stringWidth(value, font, size) > w:
             value = value[:-2] + "…"
         if t.get("align") == "center":
             c.drawCentredString(x + w / 2, y, value)
@@ -263,13 +324,36 @@ def _data_uri(path):
     return f"data:{mime};base64," + base64.b64encode(p.read_bytes()).decode("ascii")
 
 
+def _font_faces(profile) -> str:
+    """@font-face rules with the file inlined, so the single HTML page still
+    renders in its own typeface on a machine that has never seen it."""
+    css = []
+    for name in (profile.get("template") or {}).get("fonts") or []:
+        path = registry.font_path(profile, name)
+        if not path:
+            continue
+        fmt = "opentype" if str(path).lower().endswith(".otf") else "truetype"
+        blob = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+        css.append(f"@font-face{{font-family:'{_font_key(name)}';"
+                   f"src:url(data:font/{fmt};base64,{blob}) format('{fmt}')}}")
+    return "".join(css)
+
+
+def _html_font(t) -> str:
+    name = t.get("font")
+    if not name or name == registry.DEFAULT_FONT:
+        return ""
+    return f"font-family:'{_font_key(name)}',Helvetica,Arial,sans-serif;"
+
+
 def build_html(results, images, places, profile, title, out):
     pw_in, ph_in = registry.page_inches(profile["page"])
     date = datetime.date.today().strftime("%d-%m-%Y")
     pages = _pages(results, (images, places))
     n_pages = len(pages)
     parts = [f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{html.escape(title)}</title>',
-             '<style>body{margin:0;background:#e5e7eb;font-family:Helvetica,Arial,sans-serif}'
+             '<style>' + _font_faces(profile) +
+             'body{margin:0;background:#e5e7eb;font-family:Helvetica,Arial,sans-serif}'
              f'.pg{{position:relative;width:{pw_in}in;height:{ph_in}in;margin:16px auto;background:#fff;'
              'box-shadow:0 2px 12px rgba(0,0,0,.15);overflow:hidden;page-break-after:always;background-size:100% 100%}'
              '.pg img.shot{position:absolute;object-fit:contain}'
@@ -286,7 +370,8 @@ def build_html(results, images, places, profile, title, out):
             return ""
         style = (f"left:{t['x']*100:.3f}%;top:{t['y']*100:.3f}%;width:{t['w']*100:.3f}%;"
                  f"font-size:{t.get('size_pt', 10)}pt;color:{t.get('color') or '#111'};"
-                 f"text-align:{t.get('align', 'left')};font-weight:{'700' if t.get('bold') else '400'}")
+                 f"text-align:{t.get('align', 'left')};font-weight:{'700' if t.get('bold') else '400'};"
+                 + _html_font(t))
         inner = html.escape(v)
         if t["field"] in ("post_link", "link") and ctx.get("post_link"):
             inner = f'<a href="{html.escape(ctx["post_link"], quote=True)}" style="color:inherit">{inner}</a>'

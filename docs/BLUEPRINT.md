@@ -1,4 +1,4 @@
-# Report Maker — Blueprint (v2.2, August 2026)
+# Report Maker — Blueprint (v2.3, August 2026)
 
 One file that describes the whole system precisely enough to rebuild it — or
 to hand to a new session and say "redesign this without breaking it". Read
@@ -99,6 +99,8 @@ profiles/                  the profile engine — presentation as data
   prof_worker.py           imports the engine DIRECTLY (x | influencer | facebook)
   prof_builder.py          PDF/DOCX/HTML from profile + results.json
   tpl_builder.py           the same for TEMPLATE styles (designed PNG pages + slots)
+  tpl_preview.py           the design kit: Canva slot guide + one-page preview
+                           (PIL; same fractions as tpl_builder — RULEBOOK §18a)
   thumbnails.py            renders the style thumbnails from real geometry
   run_profile.py           entrypoint mirroring run.py's CLI
   tests/run_all.py         7 zero-capture suites (parity, dispatch, inputs, …)
@@ -115,7 +117,7 @@ webapp/
   styles.py                style designers (numeric + template), assets under
                            data/profiles/assets/<slug>/, curation (style_settings.json)
   routes_jobs.py           /api/preview /api/jobs… /download
-  routes_extras.py         /api/presets /api/styles
+  routes_extras.py         /api/presets /api/styles (+ /guide, /preview-page)
   x_login.py               headless X sign-in for the shared account
   jobs/store.py            SQLite: jobs, presets, login_attempts
   jobs/queue.py            bounded worker pool
@@ -195,12 +197,27 @@ profiles unless hidden; app-designed styles only once approved
 (`data/style_settings.json`).
 
 **Template styles** (Canva flow): a designer exports page PNGs (post, optional
-cover/end), uploads them at /styles, drags screenshot slots and text slots
+cover/summary/end), uploads them at /styles, drags screenshot slots and text slots
 (title/date/page/account/link/category/metrics) on the page. Stored as a
 normal profile with a `template` section (`registry._validate_template`);
-assets in `data/profiles/assets/<slug>/`, copied into the job dir with the
-profile. `layout.placements` fits screenshots into slots (never crops);
-`tpl_builder` paints background + slots. PDF/HTML exact; DOCX approximate.
+assets in `data/profiles/assets/<slug>/` (page PNGs + `fonts/`), copied into the
+job dir with the profile. `layout.placements` fits screenshots into slots (never
+crops); `tpl_builder` paints background + slots. PDF/HTML exact; DOCX approximate.
+
+**The design kit (v2.3)** turns that from "place boxes blind" into a loop:
+
+| Piece | Where | What it is |
+|---|---|---|
+| Make my own version | `[data-mine]` → `loadTemplate(slug, true)` | any template style's slots, its art greyed as a placeholder, `copy_from` in the meta so unreplaced pages are copied on save |
+| Canva slot guide | `GET/POST /api/styles/guide` → `tpl_preview.guide_png` | transparent PNG at the page's pixel size (16:9 → 1920×1080), every slot a labelled outline |
+| Live preview | `POST /api/styles/preview-page` → `tpl_preview.page_png` | ONE page with sample data + a fixture screenshot, auto-refreshed 800 ms after a change |
+| Editor ergonomics | `app.js initTemplateDesigner` | arrow-nudge, ⌘D duplicate, snapping with guide lines, numeric X/Y/W/H %, text presets, live slot numbering |
+| Template fonts | `template.fonts` + `text.font` | ≤3 × ≤2 MB .ttf/.otf per style in `assets/<slug>/fonts/`; `pdfmetrics.registerFont` in the PDF, base64 `@font-face` in the HTML |
+
+All of it goes through `styles._template_profile` → `registry.resolve`, so the
+guide, the preview and the save agree by construction. `tpl_preview` is a
+deliberate second implementation of the drawing rules in PIL (no rasteriser in
+this project) — see RULEBOOK §18a for what that costs and what pins it down.
 
 ---
 

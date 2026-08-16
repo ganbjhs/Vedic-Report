@@ -7,6 +7,9 @@ would refuse — presets are checked against `report_types` on save, styles
 against the registry.
 """
 import json
+import re
+import tempfile
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -110,6 +113,25 @@ async def list_styles(user: str = Depends(auth.require_user_api)):
             "options": styles.designer_options()}
 
 
+@router.get("/styles/guide")
+async def style_guide(meta: str, page: str = "post",
+                      user: str = Depends(auth.require_designer)):
+    """Transparent PNG at the page's pixel size, every slot outlined and named.
+
+    A GET so the browser can download it from one link; the meta rides in the
+    query string. Nothing is stored and nothing is mutated. DECLARED BEFORE
+    `/styles/{slug}` — FastAPI matches in declaration order, and a dynamic
+    route above this one would swallow "guide" as a style name.
+    """
+    m = _meta_object(meta)
+    try:
+        png = styles.guide_png(m, page)
+    except styles.StyleError as e:
+        return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
+    name = f"slot-guide-{(m.get('slug') or m.get('label') or 'style')}-{page}.png"
+    return _png(png, re.sub(r"[^A-Za-z0-9._-]+", "-", name))
+
+
 @router.get("/styles/{slug}")
 async def get_style(slug: str, user: str = Depends(auth.require_user_api)):
     try:
@@ -163,6 +185,24 @@ async def delete_style(slug: str, request: Request,
     return {"ok": True}
 
 
+def _meta_object(meta: str) -> dict:
+    try:
+        m = json.loads(meta)
+        if not isinstance(m, dict):
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=400, detail="meta must be a JSON object.")
+    return m
+
+
+async def _page_files(post, cover, summary, end) -> dict:
+    files = {}
+    for kind, up in (("post", post), ("cover", cover), ("summary", summary), ("end", end)):
+        if up is not None and getattr(up, "filename", ""):
+            files[kind] = await up.read()
+    return files
+
+
 @router.post("/styles/template")
 async def save_template_style(request: Request,
                               meta: str = Form(...),
@@ -170,26 +210,97 @@ async def save_template_style(request: Request,
                               cover: UploadFile = File(None),
                               summary: UploadFile = File(None),
                               end: UploadFile = File(None),
+                              fonts: list[UploadFile] = File(None),
                               overwrite: str = Form(""),
                               csrf_token: str = Form(...),
                               user: str = Depends(auth.require_designer)):
     """A designed-page (Canva) template: page PNGs + the slots drawn on them."""
     auth.verify_csrf(request, csrf_token)
-    try:
-        m = json.loads(meta)
-        if not isinstance(m, dict):
-            raise ValueError
-    except ValueError:
-        raise HTTPException(status_code=400, detail="meta must be a JSON object.")
-    files = {}
-    for kind, up in (("post", post), ("cover", cover), ("summary", summary), ("end", end)):
-        if up is not None and getattr(up, "filename", ""):
-            files[kind] = await up.read()
+    m = _meta_object(meta)
+    files = await _page_files(post, cover, summary, end)
+    files["fonts"] = [(up.filename, await up.read()) for up in (fonts or [])
+                      if getattr(up, "filename", "")]
     try:
         resolved = styles.save_template(m, files, overwrite=overwrite.lower() in ("1", "true", "on"))
     except styles.StyleError as e:
         return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
     return {"ok": True, "slug": resolved["slug"], "label": resolved["label"]}
+
+
+# --------------------------------------------------------------------------- #
+# The design kit — the Canva slot guide and the live page preview.
+#
+# Both take the meta the designer is editing right now (never a stored style),
+# both go through `styles._draft_profile` → `registry.resolve`, and both answer
+# a validation error as JSON 400 with the registry's own words. Designer role:
+# they render a style's art, which is not something a member may ask for.
+# --------------------------------------------------------------------------- #
+def _png(data: bytes, filename: str = None) -> Response:
+    headers = {"Cache-Control": "no-store"}
+    if filename:
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return Response(data, media_type="image/png", headers=headers)
+
+
+@router.post("/styles/guide")
+async def style_guide_post(request: Request,
+                           user: str = Depends(auth.require_designer)):
+    """Same picture for a style whose meta is too big for a URL."""
+    data = await _json_body(request)
+    _csrf(request, data)
+    try:
+        png = styles.guide_png(data.get("meta") or {}, str(data.get("page") or "post"))
+    except styles.StyleError as e:
+        return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
+    return _png(png)
+
+
+@router.post("/styles/preview-page")
+async def preview_template_page(request: Request,
+                                meta: str = Form(...),
+                                page: str = Form("post"),
+                                post: UploadFile = File(None),
+                                cover: UploadFile = File(None),
+                                summary: UploadFile = File(None),
+                                end: UploadFile = File(None),
+                                fonts: list[UploadFile] = File(None),
+                                csrf_token: str = Form(...),
+                                user: str = Depends(auth.require_designer)):
+    """ONE page of the report, rendered from the current slots with sample data
+    and a fixture screenshot — the same drawing rules `tpl_builder` uses."""
+    auth.verify_csrf(request, csrf_token)
+    m = _meta_object(meta)
+    uploaded = await _page_files(post, cover, summary, end)
+    with tempfile.TemporaryDirectory() as td:
+        paths, font_paths = {}, {}
+        for kind, data in uploaded.items():
+            # The same ceilings the save enforces — a preview must not be the
+            # way around them.
+            if len(data) > 12 * 1024 * 1024:
+                return JSONResponse({"ok": False, "detail": f"The {kind} page image is over 12 MB."},
+                                    status_code=400)
+            p = Path(td) / f"{kind}.png"
+            p.write_bytes(data)
+            paths[kind] = p
+        for up in (fonts or []):
+            if not getattr(up, "filename", ""):
+                continue
+            data = await up.read()
+            if len(data) > 2 * 1024 * 1024:
+                return JSONResponse({"ok": False, "detail": f"'{up.filename}' is over 2 MB."},
+                                    status_code=400)
+            name = Path(up.filename).name
+            p = Path(td) / name
+            p.write_bytes(data)
+            font_paths[name] = str(p)
+        try:
+            png = styles.page_preview_png(m, paths, str(page or "post"), font_paths)
+        except styles.StyleError as e:
+            return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
+        except Exception as e:
+            return JSONResponse({"ok": False, "detail": f"Could not draw that: {e}"},
+                                status_code=400)
+    return _png(png)
 
 
 @router.get("/styles/{slug}/asset/{kind}")

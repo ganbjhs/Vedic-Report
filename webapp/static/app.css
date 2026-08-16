@@ -358,3 +358,28 @@ textarea { resize:vertical; min-height:120px; font-family:ui-monospace,SFMono-Re
 .titem.logo .lbl { color:#7c3aed; justify-content:center; }
 .titem.summary { border:2px dashed var(--ok); background:rgba(22,163,74,.08); }
 .titem.summary .lbl { color:var(--ok); justify-content:center; }
+
+/* ---------- design kit (v2.3): guide, live preview, snapping ---------- */
+.tbanner { padding:10px 12px; margin-bottom:12px; border:1px solid var(--accent); border-radius:var(--r);
+           background:var(--accent-bg,rgba(37,99,235,.08)); font-size:13px; color:var(--text); }
+.tkit { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:-4px 0 12px; }
+.tkit .hint { flex:1 1 320px; min-width:220px; }
+.tstage { display:grid; gap:12px; grid-template-columns:minmax(0,1fr); min-width:0; }
+.tstage.split { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+@media (max-width:1200px) { .tstage.split { grid-template-columns:minmax(0,1fr); } }
+.tpv { align-content:start; gap:8px; }
+.tpv .pvhead { justify-self:stretch; display:flex; align-items:baseline; gap:8px; }
+.tpv img { max-width:100%; max-height:640px; display:block; box-shadow:0 2px 12px rgba(0,0,0,.15); }
+.tpv.busy img { opacity:.55; transition:opacity .15s; }
+.tpv .tempty { width:auto; min-width:220px; height:220px; }
+.tcanvas.ghosted img { opacity:.35; filter:grayscale(1); }
+/* the tools column is 240px: two short columns, not one stacked list */
+.ttools .fields { display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; }
+.ttools .fields input, .ttools .fields select { padding:6px 8px; font-size:12px; }
+.ttools .field > span { font-size:11px; }
+.tfonts { display:grid; gap:4px; font-size:12px; }
+.tfonts .frow { display:flex; align-items:center; gap:6px; justify-content:space-between; }
+.tfonts .frow code { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tguide { position:absolute; background:var(--hot,#e11d48); pointer-events:none; z-index:5; }
+.tguide.v { top:0; bottom:0; width:1px; }
+.tguide.h { left:0; right:0; height:1px; }

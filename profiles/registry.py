@@ -82,7 +82,7 @@ _TOP = {"schema", "slug", "label", "description", "extends", "platform",
 # the background is painted, screenshots are fitted (never cropped) into the
 # image slots in reading order, and text slots print report fields. When
 # `template` is present it replaces the grid: posts per page = image slots.
-_TEMPLATE_KEYS = {"pages", "slots", "text", "logos", "summary_box"}
+_TEMPLATE_KEYS = {"pages", "slots", "text", "logos", "summary_box", "fonts"}
 _TEMPLATE_PAGES = {"post", "cover", "end", "summary"}
 # Text slots. `metric.<key>` prints that metric's VALUE (from the sheet columns
 # or a capture engine); `post_no` / `post_total` count within the post's section;
@@ -94,8 +94,16 @@ _TEXT_FIELDS = {"title", "date", "page", "pages", "index", "account_name",
                 "post_no", "post_total", "link", "platform"} | {
                     f"metric.{k}" for k in _METRIC_KEYS}
 _TEXT_KEYS = {"field", "x", "y", "w", "h", "size_pt", "color", "align", "page",
-              "bold"}
+              "bold", "font"}
 _SLOT_KEYS = {"x", "y", "w", "h"}
+
+# The one font every renderer has without an upload. A text slot naming
+# anything else must name a file listed in `template.fonts`, which lives beside
+# the page images in assets/<slug>/fonts/ — so a profile can never reference a
+# font that will not travel into the job directory with it.
+DEFAULT_FONT = "Helvetica"
+FONT_SUFFIXES = (".ttf", ".otf")
+MAX_FONTS = 3
 
 # Capture knobs that DO NOT EXIST, with the reason, so a typo gets a real answer
 # instead of "unknown key".
@@ -432,6 +440,26 @@ def asset_path(profile: dict, kind: str, registry_dir: Path = None):
     return asset_dir(profile["slug"], registry_dir) / name
 
 
+def fonts_dir(slug: str, registry_dir: Path = None) -> Path:
+    """Where a template style's uploaded fonts live — beside its page images,
+    so the runner's one `copytree` of assets/<slug>/ carries them into the job."""
+    return asset_dir(slug, registry_dir) / "fonts"
+
+
+def font_path(profile: dict, name: str, registry_dir: Path = None):
+    """Absolute path of an uploaded font, or None for Helvetica / unknown.
+
+    Returns None rather than raising: a missing font file must fall back to
+    Helvetica in the document, never take the build down.
+    """
+    if not name or name == DEFAULT_FONT:
+        return None
+    if name not in (profile.get("template") or {}).get("fonts", []):
+        return None
+    p = fonts_dir(profile["slug"], registry_dir) / name
+    return p if p.exists() else None
+
+
 def _validate_template(p: dict, slug: str) -> None:
     tpl = p.get("template")
     if tpl is None:
@@ -476,9 +504,31 @@ def _validate_template(p: dict, slug: str) -> None:
             _num(sb.get(k), f"template.summary_box.{k}", slug, 0, 1)
         for k in ("w", "h"):
             _num(sb.get(k), f"template.summary_box.{k}", slug, 0.05, 1)
+    fonts = tpl.get("fonts")
+    if fonts is not None:
+        if not isinstance(fonts, list) or len(fonts) > MAX_FONTS:
+            raise ProfileError(f"{slug}: template.fonts must be a list of at "
+                               f"most {MAX_FONTS} font filenames")
+        for i, name in enumerate(fonts):
+            if (not isinstance(name, str) or not name or "/" in name
+                    or "\\" in name or name.startswith(".")):
+                raise ProfileError(f"{slug}: template.fonts[{i}] must be a "
+                                   "plain filename")
+            if not name.lower().endswith(FONT_SUFFIXES):
+                raise ProfileError(f"{slug}: template.fonts[{i}] must be a "
+                                   f"{' or '.join(FONT_SUFFIXES)} file")
+        if len(set(fonts)) != len(fonts):
+            raise ProfileError(f"{slug}: template.fonts lists the same file twice")
     for i, t in enumerate(tpl.get("text") or []):
         if not isinstance(t, dict) or set(t) - _TEXT_KEYS:
             raise ProfileError(f"{slug}: template.text[{i}] has unknown keys")
+        font = t.get("font", DEFAULT_FONT)
+        # A named font must be one this style ships. Silently falling back to
+        # Helvetica would be a setting that looks applied and is not.
+        if font != DEFAULT_FONT and font not in (fonts or []):
+            raise ProfileError(f"{slug}: template.text[{i}].font is {font!r}, "
+                               f"which is not one of this style's fonts "
+                               f"({', '.join([DEFAULT_FONT] + list(fonts or []))})")
         if t.get("field") not in _TEXT_FIELDS:
             raise ProfileError(f"{slug}: template.text[{i}].field must be one of {sorted(_TEXT_FIELDS)}")
         for k in ("x", "y"):

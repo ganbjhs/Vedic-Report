@@ -24,6 +24,7 @@ import json
 import re
 import shutil
 import sys
+from pathlib import Path
 
 from . import config, previews, report_types
 
@@ -225,6 +226,41 @@ def asset_dir(slug: str):
     return config.USER_PROFILES_DIR / "assets" / slug
 
 
+def fonts_dir(slug: str):
+    return asset_dir(slug) / "fonts"
+
+
+_MAX_FONT_BYTES = 2 * 1024 * 1024
+_FONT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,58}\.(ttf|otf)$", re.I)
+
+
+def _store_font(slug: str, filename: str, data: bytes) -> str:
+    """Validate an uploaded .ttf/.otf and store it beside the page images.
+
+    Validated by PARSING it, not by trusting the extension: a file the renderer
+    cannot read would print as Helvetica in the PDF and as nothing at all in
+    the preview, which is exactly the kind of silently-not-applied setting the
+    registry exists to refuse.
+    """
+    from PIL import ImageFont
+    name = Path(filename or "").name
+    if not _FONT_NAME.match(name):
+        raise StyleError(f"'{name}' — a font must be a .ttf or .otf file with a "
+                         "plain name (letters, digits, spaces, . _ -).")
+    if len(data) > _MAX_FONT_BYTES:
+        raise StyleError(f"'{name}' is over 2 MB. Use a subset or a lighter file.")
+    if not data:
+        raise StyleError(f"'{name}' is empty.")
+    try:
+        ImageFont.truetype(io.BytesIO(data), 20)
+    except Exception:
+        raise StyleError(f"'{name}' is not a font file this renderer can read.")
+    d = fonts_dir(slug)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_bytes(data)
+    return name
+
+
 def _store_page(slug: str, kind: str, data: bytes) -> str:
     """Validate + normalise an uploaded page image; return its filename."""
     from PIL import Image, UnidentifiedImageError
@@ -250,37 +286,23 @@ def _store_page(slug: str, kind: str, data: bytes) -> str:
     return name
 
 
-def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
-    """`meta`: label, slug, base (engine profile), paper, orientation, slots,
-    text, outputs, links_table, description. `files`: {"post": bytes,
-    "cover": bytes|None, "end": bytes|None}. Returns the resolved profile."""
-    label = str(meta.get("label") or "").strip()
-    slug = str(meta.get("slug") or slugify(label)).strip()
-    if not label:
-        raise StyleError("Give the style a name.")
-    if not _SLUG.match(slug):
-        raise StyleError("The style id must be 2–40 characters: lowercase letters, digits and hyphens.")
-    if slug in reserved_slugs():
-        raise StyleError(f"'{slug}' is a built-in style. Pick another name.")
-    dest = _path(slug)
-    if dest.exists() and not overwrite:
-        raise StyleError(f"A style called '{slug}' already exists. Tick 'replace' to overwrite it.")
+PAGE_KINDS = ("post", "cover", "summary", "end")
+
+
+def _template_profile(meta: dict, slug: str, label: str, pages: dict,
+                      fonts: list) -> dict:
+    """The profile JSON for a template style, from the designer's `meta`.
+
+    ONE construction, used by the save AND by the live preview / Canva guide —
+    the same reason the link preview and the job share a parser (rule 18c.5):
+    if the preview built the profile its own way, it could show a page the save
+    would refuse, or refuse one it would accept.
+    """
     base = str(meta.get("base") or "twitter")
     try:
         base_p = registry.load(base)
     except registry.ProfileError as e:
         raise StyleError(f"Unknown base engine profile: {e}")
-
-    existing = json.loads(dest.read_text()) if dest.exists() else {}
-    pages = dict(((existing.get("template") or {}).get("pages") or {})) if overwrite else {}
-    for kind in ("post", "cover", "summary", "end"):
-        data = files.get(kind)
-        if data:
-            pages[kind] = _store_page(slug, kind, data)
-        elif meta.get(f"remove_{kind}"):
-            pages.pop(kind, None)
-    if not pages.get("post"):
-        raise StyleError("Upload the post page image (the page a screenshot goes on).")
 
     slots = meta.get("slots") or []
     text = meta.get("text") or []
@@ -289,7 +311,7 @@ def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
     outputs = [o for o in (meta.get("outputs") or ["pdf"]) if o in registry.OUTPUTS] or ["pdf"]
     paper = str(meta.get("paper") or "a4").lower()
     if paper not in registry.PAGE_SIZES:
-        raise StyleError("Paper must be letter or A4.")
+        raise StyleError(f"Page size must be one of {', '.join(sorted(registry.PAGE_SIZES))}.")
     orient = "landscape" if str(meta.get("orientation")) == "landscape" else "portrait"
     pw, ph = registry.PAGE_SIZES[paper]
     if orient == "landscape":
@@ -299,7 +321,12 @@ def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
     max_w = max((float(sl.get("w", 0)) for sl in slots), default=0.5) * pw
     max_h = max((float(sl.get("h", 0)) for sl in slots), default=0.5) * ph
 
-    p = {
+    tpl = {"pages": pages, "slots": slots, "text": text, "logos": logos}
+    if summary_box:
+        tpl["summary_box"] = summary_box
+    if fonts:
+        tpl["fonts"] = list(fonts)
+    return {
         "schema": 1, "slug": slug, "label": label, "extends": base,
         "description": str(meta.get("description") or f"Designed page template on {paper.upper()}."),
         "capture": {"keep_engagement": bool(meta.get("keep_engagement", base_p["capture"].get("keep_engagement")))}
@@ -312,10 +339,89 @@ def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
         "content": {"cover": False, "header": None, "footer": None,
                     "per_post_fields": [], "metrics": None,
                     "links_table": bool(meta.get("links_table", True))},
-        "template": {"pages": pages, "slots": slots, "text": text, "logos": logos,
-                     **({"summary_box": summary_box} if summary_box else {})},
+        "template": tpl,
         "outputs": outputs,
     }
+
+
+def _copy_assets_from(src_slug: str, slug: str, pages: dict, fonts: list) -> None:
+    """"Make my own version": carry the source style's page art and fonts into
+    the new style for every page the designer did NOT replace.
+
+    Without this, a version made from a shipped style would save with no page
+    image at all — the designer sees the art in the editor but only ever holds
+    a URL to it.
+    """
+    if not _SLUG.match(src_slug or ""):
+        raise StyleError("Unknown style to copy from.")
+    try:
+        src = registry.load(src_slug)
+    except registry.ProfileError as e:
+        raise StyleError(f"Cannot copy from that style: {e}")
+    src_tpl = src.get("template") or {}
+    for kind in PAGE_KINDS:
+        if pages.get(kind) or not (src_tpl.get("pages") or {}).get(kind):
+            continue
+        p = registry.asset_path(src, kind)
+        if p and p.is_file():
+            pages[kind] = _store_page(slug, kind, p.read_bytes())
+    for name in src_tpl.get("fonts") or []:
+        if name in fonts:
+            continue
+        p = registry.font_path(src, name)
+        if p and p.is_file():
+            fonts.append(_store_font(slug, name, p.read_bytes()))
+
+
+def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
+    """`meta`: label, slug, base (engine profile), paper, orientation, slots,
+    text, logos, summary_box, fonts (names to keep), copy_from, outputs,
+    links_table, description. `files`: {"post"|"cover"|"summary"|"end": bytes}
+    plus `files["fonts"]` = [(filename, bytes), …]. Returns the resolved profile."""
+    label = str(meta.get("label") or "").strip()
+    slug = str(meta.get("slug") or slugify(label)).strip()
+    if not label:
+        raise StyleError("Give the style a name.")
+    if not _SLUG.match(slug):
+        raise StyleError("The style id must be 2–40 characters: lowercase letters, digits and hyphens.")
+    if slug in reserved_slugs():
+        raise StyleError(f"'{slug}' is a built-in style. Pick another name.")
+    dest = _path(slug)
+    if dest.exists() and not overwrite:
+        raise StyleError(f"A style called '{slug}' already exists. Tick 'replace' to overwrite it.")
+
+    existing = json.loads(dest.read_text()) if dest.exists() else {}
+    ex_tpl = (existing.get("template") or {}) if overwrite else {}
+    pages = dict(ex_tpl.get("pages") or {})
+    for kind in PAGE_KINDS:
+        data = files.get(kind)
+        if data:
+            pages[kind] = _store_page(slug, kind, data)
+        elif meta.get(f"remove_{kind}"):
+            pages.pop(kind, None)
+
+    keep = [n for n in (meta.get("fonts") or []) if n in (ex_tpl.get("fonts") or [])]
+    fonts = list(keep)
+    for filename, data in (files.get("fonts") or []):
+        name = _store_font(slug, filename, data)
+        if name not in fonts:
+            fonts.append(name)
+    if len(fonts) > registry.MAX_FONTS:
+        raise StyleError(f"A style may carry at most {registry.MAX_FONTS} fonts.")
+
+    if meta.get("copy_from"):
+        _copy_assets_from(str(meta["copy_from"]), slug, pages, fonts)
+    if not pages.get("post"):
+        raise StyleError("Upload the post page image (the page a screenshot goes on).")
+
+    for name in list(fonts):                 # a font whose file went missing
+        if not (fonts_dir(slug) / name).is_file():
+            fonts.remove(name)
+    if fonts_dir(slug).is_dir():             # a font the designer removed
+        for f in fonts_dir(slug).iterdir():
+            if f.is_file() and f.name not in fonts:
+                f.unlink(missing_ok=True)
+    p = _template_profile(meta, slug, label, pages, fonts)
     resolved = resolve(p)                # registry validates slots/text/pages
     config.USER_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".json.tmp")
@@ -323,6 +429,89 @@ def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
     tmp.replace(dest)
     previews.refresh()
     return resolved
+
+
+# --------------------------------------------------------------------------- #
+# The design kit: the Canva slot guide and the live page preview. Both render
+# an UNSAVED style, both from `_template_profile`, so what a designer sees is
+# what a save would store (RULEBOOK §18a).
+# --------------------------------------------------------------------------- #
+def _draft_profile(meta: dict, page_files: dict) -> tuple:
+    """(resolved profile, {kind: temp path}) for a style still being designed.
+
+    The profile keeps its real slug when it names a saved style, so stored page
+    art and fonts are found; an unnamed draft gets 'draft', and its art comes
+    from the uploads in `page_files`.
+    """
+    slug = str(meta.get("slug") or "").strip()
+    if not _SLUG.match(slug) or slug in reserved_slugs():
+        slug = "draft"
+    label = str(meta.get("label") or "").strip() or "Untitled style"
+    pages = {}
+    stored = {}
+    if slug != "draft":
+        try:
+            stored = ((json.loads(_path(slug).read_text()).get("template") or {})
+                      .get("pages") or {}) if _path(slug).exists() else {}
+        except ValueError:
+            stored = {}
+    borrowed, borrowed_fonts = {}, {}
+    src = str(meta.get("copy_from") or "")
+    if src and _SLUG.match(src):
+        # "Make my own version": until the designer replaces a page, the source
+        # style's art is what they are looking at in the editor — so it is what
+        # the preview must draw, or the preview would show a blank page and
+        # then a different one after saving.
+        try:
+            sp = registry.load(src)
+        except registry.ProfileError:
+            sp = None
+        for kind in (PAGE_KINDS if sp else ()):
+            p = registry.asset_path(sp, kind)
+            if p and p.is_file():
+                borrowed[kind] = str(p)
+        for name in ((sp or {}).get("template") or {}).get("fonts") or []:
+            p = registry.font_path(sp, name)
+            if p:
+                borrowed_fonts[name] = str(p)
+    for kind in PAGE_KINDS:
+        if page_files.get(kind) or stored.get(kind) or borrowed.get(kind):
+            pages[kind] = stored.get(kind) or f"{kind}.png"
+    pages.setdefault("post", "post.png")     # the schema always wants one
+    fonts = [n for n in (meta.get("fonts") or []) if isinstance(n, str)]
+    p = _template_profile(meta, slug, label, pages, fonts)
+    assets = dict(borrowed)                  # uploads win over borrowed art
+    assets.update({k: str(v) for k, v in page_files.items() if v})
+    return resolve(p), assets, borrowed_fonts
+
+
+def guide_png(meta: dict, kind: str = "post") -> bytes:
+    """Transparent PNG at the page's real pixel size with every slot outlined
+    and named — the layer the designer builds the Canva page underneath."""
+    if kind not in PAGE_KINDS:
+        raise StyleError("Unknown page.")
+    profile, _, _ = _draft_profile(meta, {})
+    import tpl_preview
+    try:
+        return tpl_preview.guide_png(profile, kind)
+    except Exception as e:                       # never a traceback page
+        raise StyleError(f"Could not draw the guide: {e}")
+
+
+def page_preview_png(meta: dict, page_files: dict, kind: str = "post",
+                     font_files: dict = None) -> bytes:
+    """One page rendered with sample data, exactly as tpl_builder would."""
+    if kind not in PAGE_KINDS:
+        raise StyleError("Unknown page.")
+    profile, assets, borrowed_fonts = _draft_profile(meta, page_files)
+    use_fonts = dict(borrowed_fonts)
+    use_fonts.update(font_files or {})        # a just-uploaded file wins
+    import tpl_preview
+    try:
+        return tpl_preview.page_png(profile, kind, assets=assets,
+                                    fonts=use_fonts)
+    except Exception as e:
+        raise StyleError(f"Could not draw that page: {e}")
 
 
 def designer_options() -> dict:

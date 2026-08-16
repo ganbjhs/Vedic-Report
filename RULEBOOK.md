@@ -482,6 +482,51 @@ design note:
 The designer can only set what the schema already allows. A new *capture*
 behaviour is still a new engine (rule 18), not a form field.
 
+### The design kit (v2.3) — the guide and the preview are the same geometry
+
+A designer used to place slots by hand against art they could not see the
+result of. Three things now close that loop, and all three are drawn from the
+**one meta object the save uses** (`styles._template_profile` →
+`registry.resolve`), for the same reason preview and submit share one link
+parser (18c.5): a picture drawn its own way can show a page the save would
+refuse, or refuse one it would accept.
+
+* **The Canva slot guide** (`GET|POST /api/styles/guide`) is a transparent PNG
+  at the page's real pixel size — 16:9 → 1920x1080 and 4:3 → 1440x1080 at
+  144 dpi, A4/Letter at 150 dpi, orientation honoured by `registry.page_inches`
+  and never swapped again downstream. The designer imports it into Canva as the
+  top layer, designs underneath, deletes it, exports PNG.
+* **The live preview** (`POST /api/styles/preview-page`) renders ONE page with
+  sample data and a fixture screenshot.
+* **"Make my own version"** loads a shipped style's slots with its art greyed
+  out and `copy_from` in the meta, so pages the designer does not replace are
+  **copied into the new style on save**. Without that copy the new style would
+  hold a URL to someone else's asset and save with no page image at all.
+
+**`profiles/tpl_preview.py` is a SECOND implementation of `tpl_builder`'s
+drawing rules, in PIL.** That is a real cost and it was taken deliberately:
+this project has no rasteriser (no pdftoppm, no PyMuPDF, and adding one to
+preview a page is not a trade worth making). Consequences you must respect:
+
+* Every number it uses comes from `registry` / `layout` / `tpl_builder` —
+  never a constant retyped. `test_builder.py` §9 asserts the two agree on page
+  pixels and on where a slot lands.
+* **Helvetica has no font file.** reportlab has it built in; PIL does not, so
+  the preview substitutes DejaVu / Liberation / Arial. Type metrics therefore
+  differ by a hair — the PDF is the authority, and rule 3 is not repealed by a
+  pretty preview. Look at the first real PDF.
+* The preview draws **one** page. Multi-page behaviour (pagination, the links
+  table, DOCX approximation) is only visible in a real run.
+
+**Template fonts** (up to 3 per style, ≤2 MB) live in
+`assets/<slug>/fonts/` — inside the directory the runner already copies into
+the job, so they travel with the style and no new copy step exists to forget.
+They are validated by *parsing* the file, not by trusting the extension, and a
+`text.font` naming a font the style does not ship is a registry error: a font
+that silently became Helvetica is the same class of bug as rule 20's guard. A
+font file that goes missing at build time falls back to Helvetica **and says so
+on stdout** (rule 17).
+
 ---
 
 ## 18b. The Facebook engine is a profile engine, and starts logged-out
@@ -608,7 +653,11 @@ before touching the engine.
     `size: "16:9", orientation: "landscape"`. The designer picks paper from
     the uploaded PNG's aspect so a slide is never squashed onto A4 again
     (that is exactly what `test2.pdf` was).
-12. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
+12. **A route with a fixed name goes ABOVE the one with a path parameter.**
+    FastAPI matches in declaration order, so `/api/styles/guide` declared after
+    `/api/styles/{slug}` is never reached — it comes back as "Unknown style",
+    which reads like a broken designer and is a routing mistake.
+13. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
    file to hand to the next redesign; update it in the same commit as any
    structural change (new folder, new route family, new contract).
 

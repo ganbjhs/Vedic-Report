@@ -230,6 +230,149 @@ with tempfile.TemporaryDirectory() as td:
     except Exception as e:
         check(f"handled cleanly (raised {type(e).__name__}: {e})", False)
 
+print("\n9. the design kit: the Canva guide and the live preview")
+# What these pin down is AGREEMENT. The guide and the preview are a second
+# implementation of tpl_builder's drawing rules in PIL (there is no rasteriser
+# in this project), so the thing worth asserting is that they land a slot where
+# the PDF lands it — a guide that disagreed would be worse than no guide.
+import tpl_preview                          # noqa: E402
+from PIL import Image as _Image             # noqa: E402
+
+_tpl = registry.load("combined-16x9")
+W, H, ppp = tpl_preview.page_pixels(_tpl)
+check("16:9 landscape renders at 1920x1080", (W, H), (1920, 1080))
+check("points scale with the page", round(ppp, 4), round(144 / 72, 4))
+for size, orient, want in (("a4", "portrait", (1240, 1754)),
+                           ("a4", "landscape", (1754, 1240)),
+                           ("letter", "portrait", (1275, 1650)),
+                           ("4:3", "landscape", (1440, 1080))):
+    p = json.loads(json.dumps(_tpl))
+    p["page"]["size"], p["page"]["orientation"] = size, orient
+    check(f"{size} {orient} -> {want[0]}x{want[1]}",
+          tpl_preview.page_pixels(p)[:2], want)
+
+guide = tpl_preview.guide_png(_tpl, "post")
+with tempfile.TemporaryDirectory() as td:
+    gp = Path(td) / "g.png"
+    gp.write_bytes(guide)
+    with _Image.open(gp) as g:
+        check("the guide is a transparent RGBA layer", g.mode, "RGBA")
+        check("the guide is the page's pixel size", g.size, (W, H))
+        alpha = g.split()[3]
+        check("the guide is mostly transparent (art shows through)",
+              alpha.getextrema()[0], 0)
+        check("the guide actually draws something", alpha.getextrema()[1], 255)
+
+# The slot the guide outlines is the slot the PDF fills.
+pw_in, _ = registry.page_inches(_tpl["page"])
+scale = W / pw_in
+for i, (idx, _c, sx, sy, sw, sh) in enumerate(layout.slot_boxes(_tpl)):
+    frac = _tpl["template"]["slots"][i]
+    check(f"slot {i}: guide px == builder inches x{scale:.0f}",
+          (round(frac["x"] * W), round(frac["y"] * H)),
+          (round(sx * scale), round(sy * scale)))
+
+page_png = tpl_preview.page_png(_tpl, "post")
+with tempfile.TemporaryDirectory() as td:
+    pp = Path(td) / "p.png"
+    pp.write_bytes(page_png)
+    with _Image.open(pp) as im:
+        check("the preview is the page's pixel size", im.size, (W, H))
+        check("the preview is not a blank page",
+              len(im.convert("RGB").getcolors(maxcolors=200000) or []) > 50, True)
+check("a summary page renders too", len(tpl_preview.page_png(_tpl, "summary")) > 5000, True)
+
+print("\n10. template fonts are validated, never silently dropped")
+
+
+def bad_profile(mutate, why):
+    p = json.loads(json.dumps(_tpl))
+    mutate(p)
+    try:
+        registry.validate(p)
+        check(f"refused: {why}", False)
+    except registry.ProfileError:
+        check(f"refused: {why}", True)
+
+
+def ok_profile(mutate, why):
+    p = json.loads(json.dumps(_tpl))
+    mutate(p)
+    try:
+        registry.validate(p)
+        check(f"accepted: {why}", True)
+    except registry.ProfileError as e:
+        check(f"accepted: {why} ({e})", False)
+
+
+ok_profile(lambda p: p["template"].update(fonts=["Brand.ttf"]),
+           "a style with one font and no slot using it")
+ok_profile(lambda p: (p["template"].update(fonts=["Brand.otf"]),
+                      p["template"]["text"][0].update(font="Brand.otf")),
+           "a text slot naming a font the style ships")
+bad_profile(lambda p: p["template"]["text"][0].update(font="Brand.ttf"),
+            "a text slot naming a font the style does NOT ship")
+bad_profile(lambda p: p["template"].update(fonts=["a.ttf", "b.ttf", "c.ttf", "d.ttf"]),
+            "a fourth font")
+bad_profile(lambda p: p["template"].update(fonts=["../../etc/passwd.ttf"]),
+            "a font path instead of a filename")
+bad_profile(lambda p: p["template"].update(fonts=["Brand.exe"]),
+            "a font that is not .ttf/.otf")
+bad_profile(lambda p: p["template"].update(fonts=["a.ttf", "a.ttf"]),
+            "the same font twice")
+
+# A font file that is not there must fall back to Helvetica and SAY so, rather
+# than take the build down (rule 17).
+missing = json.loads(json.dumps(_tpl))
+missing["template"]["fonts"] = ["Nope.ttf"]
+missing["template"]["text"][0]["font"] = "Nope.ttf"
+try:
+    import tpl_builder                      # noqa: E402
+    got = tpl_builder.register_fonts(missing)
+    check("a missing font file registers nothing and does not raise", got, {})
+    check("its text slot falls back to Helvetica",
+          tpl_builder._pdf_font(missing["template"]["text"][0], got), "Helvetica")
+except Exception as e:
+    check(f"missing font handled cleanly (raised {type(e).__name__}: {e})", False)
+
+# End to end with a REAL font file, through the whole builder.
+_face = None
+for cand in tpl_preview._FONT_CANDIDATES:
+    if Path(cand).exists():
+        _face = Path(cand)
+        break
+if _face is None:
+    print("  SKIP  no system TTF on this machine to test embedding with")
+else:
+    with tempfile.TemporaryDirectory() as reg, tempfile.TemporaryDirectory() as td:
+        reg = Path(reg)
+        (reg / "assets" / "fontstyle" / "fonts").mkdir(parents=True)
+        (reg / "assets" / "fontstyle" / "fonts" / "Brand.ttf").write_bytes(_face.read_bytes())
+        _Image.new("RGB", (1920, 1080), "#FFFFFF").save(
+            reg / "assets" / "fontstyle" / "post.png")
+        p = json.loads(json.dumps(_tpl))
+        p.update(slug="fontstyle", label="Font style", outputs=["pdf", "html"])
+        p["template"]["pages"] = {"post": "post.png"}
+        p["template"]["fonts"] = ["Brand.ttf"]
+        p["template"]["text"] = [dict(p["template"]["text"][1], font="Brand.ttf")]
+        (reg / "fontstyle.json").write_text(json.dumps(p))
+        registry.set_user_dir(reg)
+        try:
+            root = Path(td)
+            make_fixture(root, n=2)
+            made = build("fontstyle", root)
+            check("a style with an uploaded font builds a PDF", "pdf" in made)
+            # reportlab writes the TTF's OWN name (subset-tagged, e.g.
+            # "AAAAAA+ArialMT"), not the name it was registered under — so the
+            # evidence of embedding is the embedded font FILE, /FontFile2.
+            raw = made["pdf"].read_bytes()
+            check("the font file is embedded in the PDF",
+                  b"/FontFile2" in raw and b"/TrueType" in raw, True)
+            check("the HTML inlines it as @font-face",
+                  "@font-face" in made["html"].read_text(errors="ignore"), True)
+        finally:
+            registry.set_user_dir(None)
+
 print()
 if FAILS:
     print(f"FAILED {len(FAILS)}: {FAILS}")

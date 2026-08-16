@@ -667,26 +667,39 @@ document.addEventListener("click", async (e) => {
 
 /* =========================================================================
    Template designer — a designed page (Canva PNG) + slots drawn on it.
-   State: pages {post|cover|end: {file, url, w, h}}, items[] with fractional
-   x/y/w/h, kind 'slot' | 'text', and for text: field/size/color/align/bold/page.
+   State: pages {post|cover|summary|end: {file, url, w, h, ghost}}, items[] with
+   fractional x/y/w/h, kind 'slot' | 'logo' | 'summary' | 'text', and for text:
+   field/size/color/align/bold/font/page.
+
+   v2.3 "design kit": every picture the designer looks at — the Canva slot
+   guide and the live page preview — is drawn by the SERVER from this same
+   meta, so nothing here re-implements the page. See RULEBOOK §18a.
    ========================================================================= */
 function initTemplateDesigner() {
   const canvas = $("tcanvas"); if (!canvas) return;
   const img = $("t-img"), layer = $("tlayer"), empty = $("t-empty"), status = $("t-status");
   const props = $("t-props"), fileIn = $("t-file"), removeBtn = $("t-remove");
   const pages = { post: null, cover: null, summary: null, end: null };
-  let cur = "post", items = [], sel = null, editingSlug = "", editingLoadedFromServer = { post: false, cover: false, summary: false, end: false };
+  let cur = "post", items = [], sel = null, editingSlug = "", copyFrom = "", fonts = [];
   const LABELS = { title: "Report title", date: "Date", page: "Page no.", pages: "Pages", index: "#", account_name: "Account", post_link: "Post URL", category: "Category", metrics: "Metrics",
     handle: "Handle name", section: "Section", post_no: "Post 1", post_total: "Top 9 Posts", platform: "Platform", link: "LINK",
     "metric.like": "Like →", "metric.impressions": "Impressions →", "metric.views": "Views →", "metric.reach": "Reach →", "metric.comments": "Comments →", "metric.shares": "Shares →", "metric.followers": "Followers →" };
   const PAGE_KINDS = ["post", "cover", "summary", "end"];
+  // Same numbers the server renders at: slides at 144 dpi (16:9 -> 1920x1080),
+  // paper at 150. Shown so a designer picks the right Canva page size.
+  const PAPER_IN = { "16:9": [7.5, 13.3333], "4:3": [7.5, 10], a4: [8.2677, 11.6929], letter: [8.5, 11] };
+  const TEXT_PRESETS = {
+    pill: { size: 18, color: "#ffffff", align: "center", bold: true },
+    heading: { size: 22, bold: true },
+    label: { size: 11, bold: false },
+  };
 
   const setStatus = (t) => { status.textContent = t; };
   const pageTag = (k) => $(`t-has-${k}`);
   const refreshTabs = () => {
     for (const k of PAGE_KINDS) {
       const t = pageTag(k); if (!t) continue;
-      t.textContent = pages[k] ? "✓ image" : (k === "post" ? "required" : "optional");
+      t.textContent = pages[k] ? (pages[k].ghost ? "✓ borrowed" : "✓ image") : (k === "post" ? "required" : "optional");
       t.className = "tag" + (pages[k] ? " new" : "");
     }
     removeBtn.hidden = !pages[cur] || cur === "post";
@@ -697,10 +710,26 @@ function initTemplateDesigner() {
     const p = pages[k];
     img.hidden = !p; empty.hidden = !!p;
     if (p) img.src = p.url;
+    canvas.classList.toggle("ghosted", !!(p && p.ghost));
     empty.innerHTML = k === "post" ? "Drop a PNG here<br><small>16:9 slide, A4 or Letter page exported from Canva — the art only, no numbers or names</small>"
       : `No ${k} page yet — upload one to add it<br><small>Optional. Cover first, Summary (section counts) second, End page last.</small>`;
-    select(null); render(); refreshTabs();
+    select(null); render(); refreshTabs(); schedulePreview(0);
   };
+  // What to pick in Canva, and how big the guide comes out — derived from the
+  // same page table the server renders with, never typed in twice.
+  function guidePixels() {
+    const key = $("t-paper").value, land = $("t-orient").value === "landscape";
+    const dpi = (key === "16:9" || key === "4:3") ? 144 : 150;
+    let [w, h] = PAPER_IN[key] || PAPER_IN.letter;
+    if (land) [w, h] = [h, w];
+    return [Math.round(w * dpi), Math.round(h * dpi)];
+  }
+  function syncKitNote() {
+    const [w, h] = guidePixels(), key = $("t-paper").value;
+    const name = key === "16:9" ? "Presentation (16:9)" : key === "4:3" ? "Presentation (4:3)"
+      : key === "a4" ? "A4 document" : "US Letter document";
+    $("t-canva-size").textContent = `${name} — ${w} × ${h} px`;
+  }
   document.querySelectorAll("[data-tpage]").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.tpage)));
 
   const loadFile = (file, k = cur) => {
@@ -708,11 +737,12 @@ function initTemplateDesigner() {
     const url = URL.createObjectURL(file);
     const probe = new Image();
     probe.onload = () => {
-      pages[k] = { file, url, w: probe.naturalWidth, h: probe.naturalHeight }; editingLoadedFromServer[k] = false;
+      pages[k] = { file, url, w: probe.naturalWidth, h: probe.naturalHeight, ghost: false };
       if (k === "post") {                       // paper follows the art
         const r = probe.naturalWidth / probe.naturalHeight, land = r > 1, a = land ? r : 1 / r;
         const paper = Math.abs(a - 16 / 9) < 0.06 ? "16:9" : Math.abs(a - 4 / 3) < 0.06 ? "4:3" : Math.abs(a - 297 / 210) < 0.05 ? "a4" : "letter";
         $("t-paper").value = paper; $("t-orient").value = land ? "landscape" : "portrait";
+        syncKitNote();
       }
       showPage(k); setStatus(`${k} page: ${probe.naturalWidth}×${probe.naturalHeight}px${k === "post" ? ` → ${$("t-paper").value} ${$("t-orient").value}. Now add a screenshot slot (or "Place standard slots").` : "."}`);
     };
@@ -730,7 +760,7 @@ function initTemplateDesigner() {
   let nextId = 1;
   function add(kind, field, box) {
     const it = { id: nextId++, kind, page: cur, ...box };
-    if (kind === "text") Object.assign(it, { field, size: field === "title" ? 20 : 11, color: "#111111", align: "left", bold: field === "title" });
+    if (kind === "text") Object.assign(it, { field, size: field === "title" ? 20 : 11, color: "#111111", align: "left", bold: field === "title", font: "Helvetica" });
     items.push(it); render(); select(it);
   }
   const rectFrac = (x1, y1, x2, y2) => {
@@ -779,8 +809,14 @@ function initTemplateDesigner() {
     add("text", b.dataset.addText, { x: 0.08, y: 0.05, w: 0.6, h: 0.04 });
   }));
 
-  function render() {
+  function render(guides) {
     layer.innerHTML = "";
+    for (const g of guides || []) {
+      const l = document.createElement("i");
+      l.className = `tguide ${g[0]}`;
+      l.style[g[0] === "v" ? "left" : "top"] = `${g[1] * 100}%`;
+      layer.append(l);
+    }
     for (const it of visible()) {
       const d = document.createElement("div");
       d.className = `titem ${it.kind}${sel === it ? " sel" : ""}`;
@@ -799,7 +835,9 @@ function initTemplateDesigner() {
       d.innerHTML += `<i class="h"></i>`;
       layer.append(d);
     }
-    setSaveable();
+    const n = items.filter((it) => it.kind === "slot").length;
+    $("t-perpage").textContent = n ? `${n} post${n === 1 ? "" : "s"} per page` : "no screenshot slot yet";
+    setSaveable(); schedulePreview();
   }
   function select(it) {
     sel = it;
@@ -807,21 +845,137 @@ function initTemplateDesigner() {
     props.hidden = !it;
     if (!it) return;
     const isText = it.kind === "text";
-    props.querySelectorAll(".field, .check").forEach((f) => { f.hidden = !isText; });
-    if (isText) { $("tp-size").value = it.size; $("tp-color").value = it.color; $("tp-align").value = it.align; $("tp-bold").checked = !!it.bold; }
+    props.querySelectorAll("[data-text-only]").forEach((f) => { f.hidden = !isText; });
+    $("tp-what").textContent = isText ? (LABELS[it.field] || it.field)
+      : it.kind === "slot" ? "screenshot slot" : it.kind === "logo" ? "platform logo" : "summary table";
+    syncNums();
+    if (isText) {
+      $("tp-size").value = it.size; $("tp-color").value = it.color;
+      $("tp-align").value = it.align; $("tp-bold").checked = !!it.bold;
+      renderFontOptions(); $("tp-font").value = it.font || "Helvetica";
+    }
   }
+  /* numeric X / Y / W / H, in % — typed instead of dragged when a value has to
+     match the art exactly */
+  const NUMS = [["tp-x", "x"], ["tp-y", "y"], ["tp-w", "w"], ["tp-h", "h"]];
+  // `except` is the field being typed into: rewriting it mid-keystroke would
+  // turn "50" into "5.00" as soon as the "5" landed.
+  const syncNums = (except) => {
+    if (!sel) return;
+    NUMS.forEach(([id, k]) => { if (id !== except) $(id).value = (sel[k] * 100).toFixed(1); });
+  };
+  NUMS.forEach(([id, k]) => $(id).addEventListener("input", () => {
+    if (!sel) return;
+    const v = parseFloat($(id).value); if (!Number.isFinite(v)) return;
+    const f = v / 100;
+    if (k === "x") sel.x = Math.min(Math.max(0, f), 1 - sel.w);
+    else if (k === "y") sel.y = Math.min(Math.max(0, f), 1 - sel.h);
+    else if (k === "w") sel.w = Math.min(Math.max(0.02, f), 1 - sel.x);
+    else sel.h = Math.min(Math.max(0.02, f), 1 - sel.y);
+    render(); syncNums(id);        // render() keeps the box selected: sel === it
+  }));
+  // A value that had to be clamped (x 99% on a 35%-wide box) is corrected in
+  // the field the moment you leave it, so the numbers never lie about the box.
+  NUMS.forEach(([id]) => $(id).addEventListener("blur", () => syncNums()));
   $("tp-size").addEventListener("input", () => { if (sel) { sel.size = +$("tp-size").value || 10; render(); } });
   $("tp-color").addEventListener("input", () => { if (sel) { sel.color = $("tp-color").value; render(); } });
   $("tp-align").addEventListener("change", () => { if (sel) { sel.align = $("tp-align").value; render(); } });
   $("tp-bold").addEventListener("change", () => { if (sel) { sel.bold = $("tp-bold").checked; render(); } });
+  $("tp-font").addEventListener("change", () => { if (sel) { sel.font = $("tp-font").value; render(); } });
+  document.querySelectorAll("[data-preset-text]").forEach((b) => b.addEventListener("click", () => {
+    if (!sel || sel.kind !== "text") return;
+    Object.assign(sel, TEXT_PRESETS[b.dataset.presetText]);
+    select(sel); render();
+  }));
   const del = () => { if (!sel) return; items = items.filter((it) => it !== sel); select(null); render(); };
+  const dup = () => {
+    if (!sel) return;
+    const copy = { ...sel, id: nextId++, x: Math.min(1 - sel.w, sel.x + 0.02), y: Math.min(1 - sel.h, sel.y + 0.02) };
+    items.push(copy); render(); select(copy);
+  };
   $("tp-del").addEventListener("click", del);
-  document.addEventListener("keydown", (e) => { if ((e.key === "Backspace" || e.key === "Delete") && sel && !/^(input|textarea|select)$/i.test(e.target.tagName)) { e.preventDefault(); del(); } });
+  $("tp-dup").addEventListener("click", dup);
+  document.addEventListener("keydown", (e) => {
+    if (props.hidden || !sel) return;
+    // Duplicate is not a text-editing key, so it works even from the X/Y/W/H
+    // fields; ⌫ and the arrows must not, or typing a number would move a box.
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") { e.preventDefault(); return dup(); }
+    if (/^(input|textarea|select)$/i.test(e.target.tagName) || e.target.isContentEditable) return;
+    if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); return del(); }
+    const step = e.shiftKey ? 10 : 1;              // pixels on screen, not %
+    const r = layer.getBoundingClientRect();
+    const dx = { ArrowLeft: -step, ArrowRight: step }[e.key] || 0;
+    const dy = { ArrowUp: -step, ArrowDown: step }[e.key] || 0;
+    if (!dx && !dy) return;
+    e.preventDefault();
+    sel.x = Math.min(1 - sel.w, Math.max(0, sel.x + dx / r.width));
+    sel.y = Math.min(1 - sel.h, Math.max(0, sel.y + dy / r.height));
+    render(); select(sel);
+  });
+
+  /* ---- fonts: up to 3 uploaded files, offered to every text slot ---- */
+  function renderFontOptions() {
+    const cursel = $("tp-font").value;
+    $("tp-font").innerHTML = ['<option value="Helvetica">Helvetica</option>']
+      .concat(fonts.map((f) => `<option value="${esc(f.name)}">${esc(f.name)}</option>`)).join("");
+    $("tp-font").value = fonts.some((f) => f.name === cursel) || cursel === "Helvetica" ? cursel : "Helvetica";
+  }
+  function renderFonts() {
+    $("t-fonts").innerHTML = fonts.length
+      ? fonts.map((f) => `<div class="frow"><code>${esc(f.name)}</code><button type="button" class="btn sm ghost" data-font-del="${esc(f.name)}">✕</button></div>`).join("")
+      : `<span class="faint">Helvetica only — upload a .ttf/.otf to use the brand face.</span>`;
+    $("t-fonts").querySelectorAll("[data-font-del]").forEach((b) => b.addEventListener("click", () => {
+      const name = b.dataset.fontDel;
+      fonts = fonts.filter((f) => f.name !== name);
+      items.forEach((it) => { if (it.font === name) it.font = "Helvetica"; });
+      renderFonts(); renderFontOptions(); render();
+    }));
+    renderFontOptions();
+  }
+  $("t-font-file").addEventListener("change", () => {
+    for (const file of $("t-font-file").files || []) {
+      if (!/\.(ttf|otf)$/i.test(file.name)) { setStatus(`${file.name}: fonts must be .ttf or .otf.`); continue; }
+      if (file.size > 2 * 1024 * 1024) { setStatus(`${file.name} is over 2 MB.`); continue; }
+      if (fonts.length >= 3) { setStatus("Three fonts is the limit."); break; }
+      if (fonts.some((f) => f.name === file.name)) continue;
+      fonts.push({ name: file.name, file });
+    }
+    $("t-font-file").value = ""; renderFonts(); schedulePreview(0);
+  });
+
+  /* ---- snapping: other boxes' edges and centres, and the page's own ----
+     A designed page is a grid the designer drew by eye; ±6 px of magnetism is
+     what makes "line this up with that" a drag instead of arithmetic. */
+  const SNAP_PX = 6;
+  function snapEdges(it, edges, axis) {
+    // edges: [[value, offsetFromBoxOrigin], …] — every edge that may snap.
+    const r = layer.getBoundingClientRect();
+    const tol = SNAP_PX / (axis === "x" ? r.width : r.height);
+    const targets = [0, 0.5, 1];
+    for (const o of visible()) {
+      if (o === it) continue;
+      const p = axis === "x" ? o.x : o.y, s = axis === "x" ? o.w : o.h;
+      targets.push(p, p + s / 2, p + s);
+    }
+    let best = null;
+    for (const [value, off] of edges) {
+      for (const t of targets) {
+        const d = Math.abs(value - t);
+        if (d <= tol && (!best || d < best.d)) best = { d, at: t - off, line: t };
+      }
+    }
+    return best;
+  }
 
   /* ---- pointer: draw new slot on empty space, move / resize items ---- */
   let drag = null;
   layer.addEventListener("pointerdown", (e) => {
     if (!pages[cur]) return;
+    // The drag preventDefaults, so focus would stay wherever it was — in the
+    // style-name field right after "Make my own version" — and every keyboard
+    // shortcut below would silently do nothing on the box you just clicked.
+    const active = document.activeElement;
+    if (active && /^(input|textarea|select)$/i.test(active.tagName)) active.blur();
     const itemEl = e.target.closest(".titem");
     const r = layer.getBoundingClientRect();
     if (itemEl) {
@@ -838,9 +992,23 @@ function initTemplateDesigner() {
     if (!drag) return;
     const dx = (e.clientX - drag.sx) / drag.r.width, dy = (e.clientY - drag.sy) / drag.r.height;
     if (drag.mode === "move") {
-      drag.it.x = Math.min(1 - drag.it.w, Math.max(0, drag.ox + dx)); drag.it.y = Math.min(1 - drag.it.h, Math.max(0, drag.oy + dy)); render(); select(drag.it);
+      const it = drag.it, guides = [];
+      let x = Math.min(1 - it.w, Math.max(0, drag.ox + dx));
+      let y = Math.min(1 - it.h, Math.max(0, drag.oy + dy));
+      const sx = snapEdges(it, [[x, 0], [x + it.w / 2, it.w / 2], [x + it.w, it.w]], "x");
+      const sy = snapEdges(it, [[y, 0], [y + it.h / 2, it.h / 2], [y + it.h, it.h]], "y");
+      if (sx) { x = Math.min(1 - it.w, Math.max(0, sx.at)); guides.push(["v", sx.line]); }
+      if (sy) { y = Math.min(1 - it.h, Math.max(0, sy.at)); guides.push(["h", sy.line]); }
+      it.x = x; it.y = y; render(guides); select(it);
     } else if (drag.mode === "resize") {
-      drag.it.w = Math.min(1 - drag.it.x, Math.max(0.02, drag.ow + dx)); drag.it.h = Math.min(1 - drag.it.y, Math.max(0.02, drag.oh + dy)); render(); select(drag.it);
+      const it = drag.it, guides = [];
+      let w = Math.min(1 - it.x, Math.max(0.02, drag.ow + dx));
+      let h = Math.min(1 - it.y, Math.max(0.02, drag.oh + dy));
+      const sx = snapEdges(it, [[it.x + w, it.x]], "x");
+      const sy = snapEdges(it, [[it.y + h, it.y]], "y");
+      if (sx && sx.at >= 0.02) { w = Math.min(1 - it.x, sx.at); guides.push(["v", sx.line]); }
+      if (sy && sy.at >= 0.02) { h = Math.min(1 - it.y, sy.at); guides.push(["h", sy.line]); }
+      it.w = w; it.h = h; render(guides); select(it);
     } else if (drag.mode === "draw") {
       let ghost = layer.querySelector(".ghost");
       if (!ghost) { ghost = document.createElement("div"); ghost.className = "titem slot ghost"; layer.append(ghost); }
@@ -858,29 +1026,113 @@ function initTemplateDesigner() {
     drag = null;
   });
 
+  /* ---- the meta: ONE object, used by save, preview and the Canva guide ---- */
+  const box = (it) => ({ x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4) });
+  function buildMeta() {
+    const summary = items.find((it) => it.kind === "summary");
+    const meta = {
+      label: $("t-label").value.trim(), slug: editingSlug || "",
+      base: $("t-base").value, paper: $("t-paper").value, orientation: $("t-orient").value,
+      links_table: $("t-links").checked, outputs: ["pdf", "docx", "html"],
+      slots: items.filter((it) => it.kind === "slot").map(box),
+      logos: items.filter((it) => it.kind === "logo").map(box),
+      summary_box: summary ? box(summary) : null,
+      fonts: fonts.map((f) => f.name),
+      text: items.filter((it) => it.kind === "text").map((it) => Object.assign(
+        { field: it.field, size_pt: it.size, color: it.color, align: it.align, page: it.page, bold: !!it.bold }, box(it),
+        it.font && it.font !== "Helvetica" ? { font: it.font } : {})),
+    };
+    if (copyFrom) meta.copy_from = copyFrom;    // borrow the art we did not replace
+    return meta;
+  }
+  const attachFiles = (fd) => {
+    for (const k of PAGE_KINDS) if (pages[k] && pages[k].file) fd.append(k, pages[k].file, `${k}.png`);
+    for (const f of fonts) if (f.file) fd.append("fonts", f.file, f.name);
+  };
+
+  /* ---- live preview: ONE page, drawn by the server exactly as the PDF ---- */
+  const pv = $("t-pv"), pvImg = $("t-pv-img"), pvEmpty = $("t-pv-empty"), pvMsg = $("t-pv-msg");
+  let previewOn = false, pvTimer = null, pvSeq = 0;
+  function schedulePreview(delay) {
+    if (!previewOn) return;
+    clearTimeout(pvTimer);
+    pvTimer = setTimeout(runPreview, delay === undefined ? 800 : delay);
+  }
+  async function runPreview() {
+    if (!previewOn) return;
+    if (!items.some((it) => it.kind === "slot")) {
+      pvImg.hidden = true; pvEmpty.hidden = false;
+      pvEmpty.textContent = "Add a screenshot slot to preview the page.";
+      return;
+    }
+    const seq = ++pvSeq;
+    pv.classList.add("busy");
+    const fd = new FormData();
+    fd.append("csrf_token", CSRF()); fd.append("meta", JSON.stringify(buildMeta())); fd.append("page", cur);
+    attachFiles(fd);
+    try {
+      const res = await fetch("/api/styles/preview-page", { method: "POST", body: fd, headers: { "X-CSRF-Token": CSRF() } });
+      if (seq !== pvSeq) return;
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Preview failed (${res.status})`); }
+      const url = URL.createObjectURL(await res.blob());
+      if (pvImg.src.startsWith("blob:")) URL.revokeObjectURL(pvImg.src);
+      pvImg.src = url; pvImg.hidden = false; pvEmpty.hidden = true;
+      pvMsg.textContent = `${cur} page · sample data · one fixture screenshot`;
+      pvMsg.style.color = "";
+    } catch (err) {
+      if (seq !== pvSeq) return;
+      pvMsg.textContent = err.message; pvMsg.style.color = "var(--bad)";
+    } finally { if (seq === pvSeq) pv.classList.remove("busy"); }
+  }
+  $("t-preview-btn").addEventListener("click", () => {
+    previewOn = !previewOn;
+    $("t-preview-btn").setAttribute("aria-pressed", String(previewOn));
+    $("t-preview-btn").classList.toggle("primary", previewOn);
+    pv.hidden = !previewOn;
+    document.querySelector(".tstage").classList.toggle("split", previewOn);
+    if (previewOn) runPreview();
+  });
+
+  /* ---- the Canva guide: a transparent layer at the page's real pixel size ---- */
+  $("t-guide").addEventListener("click", async () => {
+    const meta = buildMeta();
+    if (!(meta.slots.length || meta.logos.length || meta.text.length))
+      return setStatus("Place some slots first — the guide is drawn from them. 'Place standard slots' is the quickest start.");
+    const btn = $("t-guide"); btn.disabled = true;
+    try {
+      const qs = `/api/styles/guide?page=${encodeURIComponent(cur)}&meta=${encodeURIComponent(JSON.stringify(meta))}`;
+      const res = qs.length < 6000
+        ? await fetch(qs)
+        : await fetch("/api/styles/guide", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF() },
+          body: JSON.stringify({ csrf_token: CSRF(), meta, page: cur }) });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Could not draw the guide (${res.status})`); }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      const [gw, gh] = guidePixels();
+      a.href = url; a.download = `slot-guide-${(meta.slug || meta.label || "style").replace(/[^a-z0-9-]+/gi, "-").toLowerCase()}-${cur}-${gw}x${gh}.png`;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setStatus(`Guide downloaded (${gw}×${gh}px). In Canva: new ${$("t-paper").value} design → upload it as a top layer → design underneath → delete the layer → download PNG.`);
+    } catch (err) { setStatus(err.message); }
+    finally { btn.disabled = false; }
+  });
+
   /* ---- save ---- */
   const saveBtn = $("t-save"), msg = $("t-msg");
   function setSaveable() {
-    const ok = !!pages.post && items.some((it) => it.kind === "slot") && $("t-label").value.trim();
+    const ok = (!!pages.post || !!copyFrom) && items.some((it) => it.kind === "slot") && $("t-label").value.trim();
     saveBtn.disabled = !ok;
   }
   $("t-label").addEventListener("input", setSaveable);
+  ["t-paper", "t-orient", "t-base", "t-links"].forEach((id) => $(id).addEventListener("change", () => { syncKitNote(); schedulePreview(0); }));
   saveBtn.addEventListener("click", async () => {
     msg.textContent = ""; saveBtn.disabled = true;
-    const label = $("t-label").value.trim();
-    const meta = {
-      label, slug: editingSlug || "", base: $("t-base").value, paper: $("t-paper").value, orientation: $("t-orient").value,
-      links_table: $("t-links").checked, outputs: ["pdf", "docx", "html"],
-      slots: items.filter((it) => it.kind === "slot").map((it) => ({ x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4) })),
-      logos: items.filter((it) => it.kind === "logo").map((it) => ({ x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4) })),
-      summary_box: (() => { const b = items.find((it) => it.kind === "summary"); return b ? { x: +b.x.toFixed(4), y: +b.y.toFixed(4), w: +b.w.toFixed(4), h: +b.h.toFixed(4) } : null; })(),
-      text: items.filter((it) => it.kind === "text").map((it) => ({ field: it.field, x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4), size_pt: it.size, color: it.color, align: it.align, page: it.page, bold: !!it.bold })),
-    };
+    const meta = buildMeta();
     for (const k of ["cover", "summary", "end"]) if (!pages[k]) meta[`remove_${k}`] = true;
     const fd = new FormData();
     fd.append("csrf_token", CSRF()); fd.append("meta", JSON.stringify(meta));
     fd.append("overwrite", ($("t-overwrite").checked || !!editingSlug) ? "1" : "");
-    for (const k of PAGE_KINDS) if (pages[k] && pages[k].file) fd.append(k, pages[k].file, `${k}.png`);
+    attachFiles(fd);
     try {
       const res = await fetch("/api/styles/template", { method: "POST", body: fd, headers: { "X-CSRF-Token": CSRF() } });
       const data = await res.json().catch(() => ({}));
@@ -891,36 +1143,50 @@ function initTemplateDesigner() {
     } catch (err) { msg.innerHTML = `<span class="alert alert-error tight">${esc(err.message)}</span>`; saveBtn.disabled = false; }
   });
 
-  /* ---- edit an existing template style ---- */
-  async function loadTemplate(slug) {
+  /* ---- edit an existing template style, or start a copy of one ----
+     `asCopy` is "Make my own version": same slots, logos, summary box and text,
+     the source's page art shown greyed as a placeholder, no name yet. The art
+     is BORROWED — `copy_from` in the meta tells the server to keep whichever
+     pages the designer did not replace, so a version that only changes the
+     wording still saves a complete style. */
+  async function loadTemplate(slug, asCopy) {
     try {
       const r = await api(`/api/styles/${encodeURIComponent(slug)}`);
       const p = r.raw, tpl = p.template; if (!tpl) return false;
-      editingSlug = slug;
-      $("t-label").value = p.label; $("t-base").value = p.extends || "twitter";
+      editingSlug = asCopy ? "" : slug;
+      copyFrom = asCopy ? slug : "";
+      $("t-label").value = asCopy ? "" : p.label; $("t-base").value = p.extends || "twitter";
       $("t-paper").value = String((p.page || {}).size || "a4").toLowerCase(); $("t-orient").value = (p.page || {}).orientation || "portrait";
       // Duplicating a SHIPPED template (e.g. combined-16x9): it has no `extends`, so keep its own engine
       if (!p.extends && p.capture && p.capture.engine) $("t-base").value = { combined: "combined-16x9", instagram: "instagram", facebook: "facebook", influencer: "influencer", x: "twitter" }[p.capture.engine] || "twitter";
       $("t-links").checked = (p.content || {}).links_table !== false;
       items = []; nextId = 1;
+      fonts = (tpl.fonts || []).map((name) => ({ name, file: null }));
       for (const k of PAGE_KINDS) {
         pages[k] = null;
         if ((tpl.pages || {})[k]) {
           const url = `/api/styles/${encodeURIComponent(slug)}/asset/${k}`;
-          await new Promise((res) => { const pr = new Image(); pr.onload = () => { pages[k] = { file: null, url, w: pr.naturalWidth, h: pr.naturalHeight }; res(); }; pr.onerror = res; pr.src = url; });
-          editingLoadedFromServer[k] = true;
+          await new Promise((res) => { const pr = new Image(); pr.onload = () => { pages[k] = { file: null, url, w: pr.naturalWidth, h: pr.naturalHeight, ghost: !!asCopy }; res(); }; pr.onerror = res; pr.src = url; });
         }
       }
       (tpl.slots || []).forEach((s) => items.push({ id: nextId++, kind: "slot", page: "post", ...s }));
       (tpl.logos || []).forEach((s) => items.push({ id: nextId++, kind: "logo", page: "post", ...s }));
       if (tpl.summary_box) items.push({ id: nextId++, kind: "summary", page: "summary", ...tpl.summary_box });
-      (tpl.text || []).forEach((t) => items.push({ id: nextId++, kind: "text", page: t.page || "post", field: t.field, x: t.x, y: t.y, w: t.w, h: t.h, size: t.size_pt || 10, color: t.color || "#111111", align: t.align || "left", bold: !!t.bold }));
-      showPage("post"); setStatus(`Editing ${p.label}. Existing page images are kept unless you upload new ones.`);
+      (tpl.text || []).forEach((t) => items.push({ id: nextId++, kind: "text", page: t.page || "post", field: t.field, x: t.x, y: t.y, w: t.w, h: t.h, size: t.size_pt || 10, color: t.color || "#111111", align: t.align || "left", bold: !!t.bold, font: t.font || "Helvetica" }));
+      $("t-banner").hidden = !asCopy;
+      $("t-banner-src").textContent = asCopy ? `Everything from “${p.label}” is here — slots, logo, summary box and text.` : "";
+      renderFonts(); syncKitNote(); showPage("post");
+      setStatus(asCopy ? `Copied the slots from ${p.label}. The greyed art is a placeholder — drop your own page PNG on each tab, name the style, Save.`
+        : `Editing ${p.label}. Existing page images are kept unless you upload new ones.`);
+      if (asCopy) $("t-label").focus();
       $("tdesigner").scrollIntoView({ behavior: "smooth" });
       return true;
     } catch (_) { return false; }
   }
-  document.querySelectorAll("[data-edit][data-tpl='1']").forEach((b) => b.addEventListener("click", () => loadTemplate(b.dataset.edit)));
+  document.querySelectorAll("[data-edit][data-tpl='1']").forEach((b) => b.addEventListener("click", () => loadTemplate(b.dataset.edit, false)));
+  document.querySelectorAll("[data-mine]").forEach((b) => b.addEventListener("click", () => loadTemplate(b.dataset.mine, true)));
 
-  showPage("post"); setSaveable();
+  renderFonts(); syncKitNote(); showPage("post"); setSaveable();
+  const h = location.hash;
+  if (h.startsWith("#mine=")) loadTemplate(decodeURIComponent(h.slice(6)), true);
 }

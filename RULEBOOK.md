@@ -648,6 +648,19 @@ before touching the engine.
     Like / Impressions / Views / Reach columns (`netlinks.metric_columns`),
     written through the canonical `input.xlsx` (`uploads.write_canonical_xlsx`
     keeps them). Nothing scrapes Insights numbers — they are not public.
+    **Its art and every slot position come from the Kashi deck** (Canva,
+    10 August 2026, 960x540 pt — the same page size the profile renders at, so
+    the deck's own point coordinates ARE the profile's). Page images are that
+    deck with the printed data cleared; slot positions were measured from it
+    (`pdftotext -bbox` for text baselines, colour bboxes for the pills, logo
+    and screenshot). Four things it deliberately does NOT reproduce, because a
+    template page is one image: the metric ROW LABELS are art, so a section
+    the deck labels "Post Reach" or "ReTweets" still reads "Video Views";
+    values print exactly as the sheet holds them (`18234`, not `18,234`);
+    the type is Helvetica, not the deck's Poppins (a style may ship fonts —
+    §18a — but a *shipped* style's font file would have to live in the repo);
+    and the summary table is `tpl_builder`'s, so its divider sits at 62% of
+    the box, not the deck's 50%.
 11. **Slide pages are landscape 16:9 / 4:3.** `PAGE_SIZES` stores them
     portrait-normalised; a template style for Canva slides is
     `size: "16:9", orientation: "landscape"`. The designer picks paper from

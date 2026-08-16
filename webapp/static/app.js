@@ -682,7 +682,7 @@ function initTemplateDesigner() {
   const pages = { post: null, cover: null, summary: null, end: null };
   let cur = "post", items = [], sel = null, editingSlug = "", copyFrom = "", fonts = [];
   const LABELS = { title: "Report title", date: "Date", page: "Page no.", pages: "Pages", index: "#", account_name: "Account", post_link: "Post URL", category: "Category", metrics: "Metrics",
-    handle: "Handle name", section: "Section", post_no: "Post 1", post_total: "Top 9 Posts", platform: "Platform", link: "LINK",
+    handle: "Handle name", section: "Section", post_no: "Post 1", post_total: "Top 9 Posts", post_total_n: "9 Posts", platform: "Platform", link: "LINK",
     "metric.like": "Like →", "metric.impressions": "Impressions →", "metric.views": "Views →", "metric.reach": "Reach →", "metric.comments": "Comments →", "metric.shares": "Shares →", "metric.followers": "Followers →" };
   const PAGE_KINDS = ["post", "cover", "summary", "end"];
   // Same numbers the server renders at: slides at 144 dpi (16:9 -> 1920x1080),

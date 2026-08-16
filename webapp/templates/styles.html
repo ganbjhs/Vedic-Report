@@ -86,7 +86,7 @@
       <div><span class="tag" id="t-perpage">no screenshot slot yet</span></div>
       <b>Text</b>
       <div class="chips">
-        {% for f, l in [('handle','Handle name'),('section','Section'),('date','Date'),('title','Report title'),('post_no','Post i'),('post_total','Top N Posts'),('platform','Platform name'),('page','Page no.'),('post_link','Post URL'),('link','LINK button text')] %}
+        {% for f, l in [('handle','Handle name'),('section','Section'),('date','Date'),('title','Report title'),('post_no','Post i'),('post_total','Top N Posts'),('post_total_n','N Posts'),('platform','Platform name'),('page','Page no.'),('post_link','Post URL'),('link','LINK button text')] %}
         <button type="button" class="tag" style="cursor:pointer" data-add-text="{{ f }}">{{ l }}</button>{% endfor %}
       </div>
       <b>Metric values <span class="faint" style="text-transform:none;letter-spacing:0">(from the sheet columns)</span></b>

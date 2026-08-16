@@ -87,11 +87,14 @@ _TEMPLATE_PAGES = {"post", "cover", "end", "summary"}
 # Text slots. `metric.<key>` prints that metric's VALUE (from the sheet columns
 # or a capture engine); `post_no` / `post_total` count within the post's section;
 # `link` prints the word LINK as a hyperlink (the button art is in the design).
+# `post_total_n` is `post_total` without the leading "Top" — for a design whose
+# art already says "Top" (the Kashi medallion), where printing it again would
+# read "Top / Top 9 Posts".
 _METRIC_KEYS = ("like", "impressions", "views", "reach", "comments", "shares",
                 "followers", "reactions")
 _TEXT_FIELDS = {"title", "date", "page", "pages", "index", "account_name",
                 "post_link", "category", "metrics", "section", "handle",
-                "post_no", "post_total", "link", "platform"} | {
+                "post_no", "post_total", "post_total_n", "link", "platform"} | {
                     f"metric.{k}" for k in _METRIC_KEYS}
 _TEXT_KEYS = {"field", "x", "y", "w", "h", "size_pt", "color", "align", "page",
               "bold", "font"}

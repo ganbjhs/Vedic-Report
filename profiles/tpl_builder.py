@@ -30,7 +30,8 @@ FIELD_LABELS = {
     "pages": "Pages", "index": "#", "account_name": "Account",
     "post_link": "Post URL", "category": "Category", "metrics": "Metrics",
     "handle": "Handle name", "section": "Section", "post_no": "Post 1",
-    "post_total": "Top 9 Posts", "platform": "Platform", "link": "LINK",
+    "post_total": "Top 9 Posts", "post_total_n": "9 Posts",
+    "platform": "Platform", "link": "LINK",
     **{f"metric.{k}": f"{k.title()} value" for k in
        ("like", "impressions", "views", "reach", "comments", "shares",
         "followers", "reactions")},
@@ -67,6 +68,9 @@ def _field_value(field, ctx):
     if field == "post_total":
         n = ctx.get("post_total", "")
         return f"Top {n} Post{'s' if n != 1 else ''}"
+    if field == "post_total_n":
+        n = ctx.get("post_total", "")
+        return f"{n} Post{'s' if n != 1 else ''}"
     v = ctx.get(field, "")
     return "" if v is None else str(v)
 

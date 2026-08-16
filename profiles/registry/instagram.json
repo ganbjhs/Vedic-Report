@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "slug": "instagram",
+  "label": "Instagram Report",
+  "platform": "instagram",
+  "description": "One public Instagram post per page (image, reel or IGTV link): the post as it appears logged-out, with the sign-in panel closed first. Same page geometry as the Twitter report.",
+  "capture": {"engine": "instagram", "device_scale_factor": 1, "viewport": {"width": 1280, "height": 2000}, "keep_engagement": true, "workers": null},
+  "image": {"max_in": [4.9, 7.0], "aspect": null, "fit": "fit", "background": "#FFFFFF", "radius_pt": 0, "border": null, "shadow": null, "watermark": null},
+  "page": {"size": "letter", "orientation": "portrait", "grid": [1, 1], "margins_in": [0.75, 0.75, 0.75, 0.75]},
+  "content": {"cover": false, "header": "{title}", "footer": null, "per_post_fields": ["account_name", "post_link"], "metrics": null, "links_table": true},
+  "outputs": ["pdf", "docx"]
+}

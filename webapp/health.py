@@ -55,13 +55,13 @@ def _x_health() -> dict:
     return {"state": OK, "text": "X login is valid.", "detail": when}
 
 
-def _fb_health() -> dict:
-    """Facebook captures public posts logged-out, so 'no session' is the normal,
-    healthy state — not a warning. A saved sessions/fb_state.json is reported
-    when present."""
-    f = config.SESSIONS_DIR / "fb_state.json"
+def _fb_health(name="fb_state.json", label="Facebook") -> dict:
+    """Facebook / Instagram capture public posts logged-out, so 'no session' is
+    the normal, healthy state — not a warning. A saved session file is
+    reported when present."""
+    f = config.SESSIONS_DIR / name
     if f.exists():
-        return {"state": OK, "text": "Facebook session saved.",
+        return {"state": OK, "text": f"{label} session saved.",
                 "detail": "Captures run signed in with it."}
     return {"state": OK, "text": "Public posts, no account needed.",
             "detail": ("Captures run logged-out. To capture with an account, "
@@ -87,6 +87,8 @@ def platform_health() -> list:
             health = _x_health()
         elif p.slug == "facebook":
             health = _fb_health()
+        elif p.slug == "instagram":
+            health = _fb_health("ig_state.json", "Instagram")
         else:                           # pragma: no cover - no such platform yet
             # A platform marked live with no health check is a bug in the table,
             # and saying so beats defaulting to green (rule 17).

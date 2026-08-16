@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "slug": "combined-16x9",
+  "label": "Combined report (16:9)",
+  "platform": "combined",
+  "description": "One report from X, Facebook and Instagram links together, in sections, on landscape 16:9 pages: cover, summary table of sections, then one page per post with handle, section, date, platform logo, Post i / Top N, metric pills from the sheet (Like, Impressions, Views, Reach) and a LINK button. Duplicate it, drop your own Canva page art in, keep the slots.",
+  "capture": {
+    "engine": "combined",
+    "device_scale_factor": 1,
+    "viewport": {"width": 1280, "height": 2000},
+    "keep_engagement": true,
+    "workers": null
+  },
+  "image": {"max_in": [3.5, 5.0], "aspect": null, "fit": "fit", "background": "#FFFFFF",
+            "radius_pt": 6, "border": null, "shadow": null, "watermark": null},
+  "page": {"size": "16:9", "orientation": "landscape", "grid": [1, 1], "margins_in": [0.4, 0.4, 0.4, 0.4]},
+  "content": {"cover": false, "header": null, "footer": null, "per_post_fields": [], "metrics": null, "links_table": true},
+  "template": {
+    "pages": {"post": "post.png", "cover": "cover.png", "summary": "summary.png"},
+    "slots": [{"x": 0.695, "y": 0.31, "w": 0.255, "h": 0.66}],
+    "logos": [{"x": 0.69, "y": 0.145, "w": 0.075, "h": 0.135}],
+    "summary_box": {"x": 0.355, "y": 0.455, "w": 0.625, "h": 0.52},
+    "text": [
+      {"field": "section",      "x": 0.08, "y": 0.135, "w": 0.32, "h": 0.04, "size_pt": 11, "color": "#3d3d3d", "align": "center", "page": "post"},
+      {"field": "handle",       "x": 0.06, "y": 0.175, "w": 0.36, "h": 0.06, "size_pt": 22, "color": "#e8571c", "align": "center", "page": "post", "bold": true},
+      {"field": "date",         "x": 0.10, "y": 0.255, "w": 0.28, "h": 0.04, "size_pt": 11, "color": "#e8571c", "align": "center", "page": "post"},
+      {"field": "post_total",   "x": 0.80, "y": 0.165, "w": 0.16, "h": 0.04, "size_pt": 12, "color": "#333333", "align": "left", "page": "post"},
+      {"field": "post_no",      "x": 0.80, "y": 0.195, "w": 0.16, "h": 0.08, "size_pt": 30, "color": "#111111", "align": "left", "page": "post", "bold": true},
+      {"field": "metric.like",        "x": 0.555, "y": 0.482, "w": 0.11, "h": 0.04, "size_pt": 18, "color": "#ffffff", "align": "center", "page": "post", "bold": true},
+      {"field": "metric.impressions", "x": 0.555, "y": 0.562, "w": 0.11, "h": 0.04, "size_pt": 18, "color": "#ffffff", "align": "center", "page": "post", "bold": true},
+      {"field": "metric.views",       "x": 0.555, "y": 0.642, "w": 0.11, "h": 0.04, "size_pt": 18, "color": "#ffffff", "align": "center", "page": "post", "bold": true},
+      {"field": "link",               "x": 0.555, "y": 0.722, "w": 0.11, "h": 0.04, "size_pt": 16, "color": "#ffffff", "align": "center", "page": "post", "bold": true},
+      {"field": "post_total",   "x": 0.18, "y": 0.68, "w": 0.14, "h": 0.05, "size_pt": 14, "color": "#ffffff", "align": "center", "page": "post", "bold": true},
+      {"field": "title",        "x": 0.08, "y": 0.50, "w": 0.48, "h": 0.10, "size_pt": 40, "color": "#e8571c", "align": "center", "page": "cover", "bold": true},
+      {"field": "date",         "x": 0.20, "y": 0.68, "w": 0.40, "h": 0.06, "size_pt": 22, "color": "#1c7c2c", "align": "center", "page": "cover", "bold": true},
+      {"field": "date",         "x": 0.08, "y": 0.44, "w": 0.24, "h": 0.04, "size_pt": 12, "color": "#e8571c", "align": "center", "page": "summary"}
+    ]
+  },
+  "outputs": ["pdf", "html", "docx"]
+}

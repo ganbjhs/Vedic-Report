@@ -46,18 +46,22 @@
   <div class="tstep">
     <label class="field"><span>Style name</span><input id="t-label" type="text" maxlength="60" placeholder="e.g. Acme monthly"></label>
     <label class="field"><span>Captures with</span><select id="t-base">
+      <option value="combined-16x9">Combined — X + Facebook + Instagram, sections &amp; metrics from the sheet</option>
       <option value="twitter">X / Twitter report (engagement cropped)</option>
       <option value="influencer">Influencer (X, with metrics)</option>
-      <option value="facebook">Facebook</option></select></label>
-    <label class="field"><span>Paper</span><select id="t-paper"><option value="a4">A4</option><option value="letter">Letter</option></select></label>
-    <label class="field"><span>Orientation</span><select id="t-orient"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
+      <option value="facebook">Facebook</option>
+      <option value="instagram">Instagram</option></select></label>
+    <label class="field"><span>Paper <span class="faint">(auto from image)</span></span><select id="t-paper"><option value="16:9">16:9 slide</option><option value="4:3">4:3 slide</option><option value="a4">A4</option><option value="letter">Letter</option></select></label>
+    <label class="field"><span>Orientation</span><select id="t-orient"><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select></label>
     <label class="check" style="align-self:end"><input id="t-links" type="checkbox" checked><span>Links page at the end</span></label>
   </div>
 
   <div class="tpages" role="tablist">
     <button type="button" class="tab on" data-tpage="post" role="tab">Post page <span class="tag" id="t-has-post">required</span></button>
     <button type="button" class="tab" data-tpage="cover" role="tab">Cover <span class="tag" id="t-has-cover">optional</span></button>
+    <button type="button" class="tab" data-tpage="summary" role="tab">Summary <span class="tag" id="t-has-summary">optional</span></button>
     <button type="button" class="tab" data-tpage="end" role="tab">End page <span class="tag" id="t-has-end">optional</span></button>
+    <button type="button" class="btn sm" id="t-preset" title="Put the Combined-report slots on this page: screenshot, logo, handle, section, date, Post i / Top N, metric pills, LINK">Place standard slots</button>
     <span class="spacer"></span>
     <label class="btn sm">Upload page image <input type="file" id="t-file" accept="image/png,image/jpeg" hidden></label>
     <button type="button" class="btn sm ghost" id="t-remove" hidden>Remove this page</button>
@@ -66,11 +70,18 @@
   <div class="tedit">
     <div class="ttools">
       <b>Add to page</b>
-      <button type="button" class="btn sm" data-add="slot">▭ Screenshot slot</button>
-      <div class="hint">Drag on the page to draw a slot, or click to add one. Several slots = several posts per page, in reading order.</div>
+      <div class="row" style="gap:6px"><button type="button" class="btn sm" data-add="slot">▭ Screenshot</button>
+      <button type="button" class="btn sm" data-add="logo">◉ Platform logo</button>
+      <button type="button" class="btn sm" data-add="summary" title="Where the section → count table goes (Summary page)">▤ Summary table</button></div>
+      <div class="hint">Drag on the page to draw a screenshot slot. Several slots = several posts per page. The logo swaps to FB / IG / X per post.</div>
       <b>Text</b>
       <div class="chips">
-        {% for f, l in [('title','Report title'),('date','Date'),('page','Page no.'),('account_name','Account'),('post_link','Post link'),('category','Category'),('metrics','Metrics')] %}
+        {% for f, l in [('handle','Handle name'),('section','Section'),('date','Date'),('title','Report title'),('post_no','Post i'),('post_total','Top N Posts'),('platform','Platform name'),('page','Page no.'),('post_link','Post URL'),('link','LINK button text')] %}
+        <button type="button" class="tag" style="cursor:pointer" data-add-text="{{ f }}">{{ l }}</button>{% endfor %}
+      </div>
+      <b>Metric values <span class="faint" style="text-transform:none;letter-spacing:0">(from the sheet columns)</span></b>
+      <div class="chips">
+        {% for f, l in [('metric.like','Like'),('metric.impressions','Impressions'),('metric.views','Views'),('metric.reach','Reach'),('metric.comments','Comments'),('metric.shares','Shares'),('metric.followers','Followers')] %}
         <button type="button" class="tag" style="cursor:pointer" data-add-text="{{ f }}">{{ l }}</button>{% endfor %}
       </div>
       <div id="t-props" hidden>

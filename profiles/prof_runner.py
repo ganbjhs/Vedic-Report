@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = str(ROOT / "src")
 INF = str(ROOT / "influencer")
 FB = str(ROOT / "facebook")
+IG = str(ROOT / "instagram")
 HERE = str(Path(__file__).resolve().parent)
 
 sys.path.insert(0, SRC)
@@ -107,21 +108,21 @@ def x_storage_state():
     return {"cookies": d.get("cookies", []), "origins": d.get("origins", [])}
 
 
-def fb_storage_state():
-    """Facebook needs NO account for public posts. A saved login is used only
-    if someone put one at sessions/fb_state.json (same shape as x_state.json);
-    its absence is normal, not a warning."""
-    f = ROOT / "sessions" / "fb_state.json"
+def fb_storage_state(name="fb_state.json", label="Facebook"):
+    """Facebook / Instagram need NO account for public posts. A saved login is
+    used only if someone put one at sessions/<name> (same shape as
+    x_state.json); its absence is normal, not a warning."""
+    f = ROOT / "sessions" / name
     if not f.exists():
-        print("[runner] no Facebook session — capturing public posts logged-out",
+        print(f"[runner] no {label} session — capturing public posts logged-out",
               flush=True)
         return None
     try:
         d = json.loads(f.read_text())
     except Exception:
-        print("[runner] fb_state.json unreadable — running logged-out", flush=True)
+        print(f"[runner] {name} unreadable — running logged-out", flush=True)
         return None
-    print("[runner] loaded Facebook session", flush=True)
+    print(f"[runner] loaded {label} session", flush=True)
     return {"cookies": d.get("cookies", []), "origins": d.get("origins", [])}
 
 
@@ -136,7 +137,10 @@ def build_tasks(rows, platform="x") -> list:
         tasks.append({
             "idx": i, "capture_url": capture_url,
             "post_link": (row.get("post_link") or "").strip() or capture_url,
-            "account": account, "platform": platform,
+            "account": account,
+            # per-row platform for a combined report; the profile's otherwise
+            "platform": row.get("platform") if platform == "combined" else platform,
+            "sheet_metrics": row.get("sheet_metrics") or None,
             "category": row.get("category", "Uncategorized"),
             "shot": str(SHOTS / f"{i:02d}_{safe}.png"),
         })
@@ -208,7 +212,15 @@ def main() -> None:
         print("[runner] nothing to capture", flush=True)
         return
 
-    state = fb_storage_state() if engine == "facebook" else x_storage_state()
+    if engine == "facebook":
+        state = fb_storage_state()
+    elif engine == "instagram":
+        state = fb_storage_state("ig_state.json", "Instagram")
+    else:
+        # X (and combined, whose X links need it). Facebook / Instagram public
+        # posts run logged-out inside the same context; extra cookies for
+        # x.com do not reach the other domains.
+        state = x_storage_state()
     workers = max(1, min(workers, len(tasks)))
     chunks = [[] for _ in range(workers)]
     for n, t in enumerate(tasks):
@@ -218,7 +230,7 @@ def main() -> None:
 
     def run(chunk_list):
         return prof_worker.run_chunk(chunk_list, headless, state, ctx_kwargs,
-                                     SRC, INF, engine, keep, FB)
+                                     SRC, INF, engine, keep, FB, IG)
 
     collected = []
     if len(chunks) == 1:
@@ -226,7 +238,7 @@ def main() -> None:
     else:
         with ProcessPoolExecutor(max_workers=len(chunks)) as ex:
             futures = [ex.submit(prof_worker.run_chunk, c, headless, state,
-                                 ctx_kwargs, SRC, INF, engine, keep, FB)
+                                 ctx_kwargs, SRC, INF, engine, keep, FB, IG)
                        for c in chunks]
             for fut in futures:
                 collected.extend(fut.result())

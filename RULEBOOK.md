@@ -554,7 +554,18 @@ the engine.
 9. **Users are data, not config.** Roles come from the `users` table via
    `auth.role_of`; `.env` is bootstrap only. Anything a role unlocks is
    guarded server-side (`require_admin` / `require_designer`).
-10. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
+10. **Combined = per-row platform + sheet metrics.** `engine: "combined"`
+    means `prof_worker` picks the engine from each row's platform; sections
+    come from the sheet's Section column; metrics come ONLY from the sheet's
+    Like / Impressions / Views / Reach columns (`netlinks.metric_columns`),
+    written through the canonical `input.xlsx` (`uploads.write_canonical_xlsx`
+    keeps them). Nothing scrapes Insights numbers — they are not public.
+11. **Slide pages are landscape 16:9 / 4:3.** `PAGE_SIZES` stores them
+    portrait-normalised; a template style for Canva slides is
+    `size: "16:9", orientation: "landscape"`. The designer picks paper from
+    the uploaded PNG's aspect so a slide is never squashed onto A4 again
+    (that is exactly what `test2.pdf` was).
+12. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
    file to hand to the next redesign; update it in the same commit as any
    structural change (new folder, new route family, new contract).
 

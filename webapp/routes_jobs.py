@@ -182,10 +182,11 @@ async def preview(request: Request,
     """
     auth.verify_csrf(request, csrf_token)
     want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
-    if not report_types.is_live(platform) or report_types.platform(platform).combines:
+    if not report_types.is_live(platform):
         return JSONResponse({"ok": False, "detail": f"{platform!r} is not a "
                              "platform this server can capture yet."}, status_code=400)
-    ours = {"x": "X/Twitter", "facebook": "Facebook"}.get(platform, platform)
+    ours = {"x": "X/Twitter", "facebook": "Facebook", "instagram": "Instagram",
+            "combined": "X / Facebook / Instagram"}.get(platform, platform)
 
     try:
         _TABS_SEEN.clear()
@@ -239,7 +240,10 @@ async def preview(request: Request,
         "dropped_count": len(report["dropped"]),
         "dropped": report["dropped"][:50],
         "rows": [{"n": i, "account": r.get("account_name", ""),
-                  "link": r.get("link", "")}
+                  "link": r.get("link", ""), "platform": r.get("platform", ""),
+                  "section": ("" if r.get("category") in (None, "Uncategorized")
+                              else r.get("category")),
+                  "metrics": r.get("sheet_metrics") or {}}
                  for i, r in enumerate(shown, start=1)],
     }
 

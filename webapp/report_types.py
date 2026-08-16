@@ -82,11 +82,14 @@ PLATFORMS = (
     # Live: facebook/fb_capture.py, run through the profile engine. Public
     # posts need no account; a saved sessions/fb_state.json is used if present.
     Platform("facebook", "Facebook", live=True),
-    Platform("instagram", "Instagram", badge="soon", note=_SOON),
-    Platform("combined", "Combined", badge="soon", combines=True,
-             note="Needs at least two live capture engines. One mixed link "
-                  "list, colour-coded by platform, grouped by platform in the "
-                  "output."),
+    # Live: instagram/ig_capture.py — public posts, logged-out (the sign-in
+    # panel is closed); sessions/ig_state.json is used if present.
+    Platform("instagram", "Instagram", live=True),
+    # Live: one mixed link list (X + Facebook + Instagram), sections from the
+    # sheet, metrics from the sheet's Like / Impressions / Views / Reach
+    # columns. Styles for it are profiles with capture.engine = "combined".
+    Platform("combined", "Combined", live=True, combines=True,
+             note="One report from X, Facebook and Instagram links together."),
 )
 
 DEFAULT_PLATFORM = "x"
@@ -290,9 +293,9 @@ def check_runnable(platform_slug: str, type_slug: str) -> str:
     if p is None:
         return (f"Unknown platform {platform_slug!r}. Known: "
                 f"{', '.join(platform_slugs())}")
-    if p.combines:
+    if p.combines and len(live_platforms()) < 2:
         return (f"{p.label} reports need at least two capture engines and "
-                "there is one. This is not available yet.")
+                f"there is {len(live_platforms())}.")
     if not p.live:
         return f"{p.label} reports are not available yet — {p.note}"
 

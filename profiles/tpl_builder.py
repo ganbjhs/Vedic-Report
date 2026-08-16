@@ -30,13 +30,78 @@ def _text_items(profile, page_kind):
             yield t
 
 
+_LOGOS = Path(__file__).resolve().parent / "assets" / "logos"
+_PLATFORM_LABEL = {"x": "X", "facebook": "Facebook", "instagram": "Instagram"}
+
+
 def _field_value(field, ctx):
-    v = ctx.get(field, "")
+    if field.startswith("metric."):
+        return str((ctx.get("metrics_dict") or {}).get(field[7:], "") or "")
     if field == "metrics":
         m = ctx.get("metrics_dict") or {}
-        v = " · ".join(f"{k.title()}: {m.get(k, '—')}" for k in
-                       ("followers", "reactions", "comments", "reach", "shares") if k in m) or "—"
+        return " · ".join(f"{k.title()}: {v}" for k, v in m.items() if v and not k.startswith("_")) or ""
+    if field == "link":
+        return "LINK" if ctx.get("post_link") else ""
+    if field == "handle":
+        return str(ctx.get("account_name") or "")
+    if field == "section":
+        return "" if ctx.get("category") in (None, "", "Uncategorized") else str(ctx["category"])
+    if field == "platform":
+        return _PLATFORM_LABEL.get(ctx.get("platform") or "", "")
+    if field == "post_no":
+        return f"Post {ctx.get('post_no', '')}"
+    if field == "post_total":
+        n = ctx.get("post_total", "")
+        return f"Top {n} Post{'s' if n != 1 else ''}"
+    v = ctx.get(field, "")
     return "" if v is None else str(v)
+
+
+def _metrics_of(r):
+    """Sheet columns first (typed by the team from Insights), then whatever a
+    capture engine read (influencer). Keys: like, impressions, views, reach…"""
+    m = {}
+    cap = r.get("metrics") or {}
+    for k, v in cap.items():
+        if not k.startswith("_") and v not in (None, "", "—"):
+            m[k] = v
+    if "reactions" in m and "like" not in m:
+        m["like"] = m["reactions"]
+    for k, v in (r.get("sheet_metrics") or {}).items():
+        if v not in (None, ""):
+            m[k] = v
+    return m
+
+
+def _sections(results):
+    """[(section, count)] in first-seen order, and per-result (post_no, total)."""
+    order, counts = [], {}
+    for r in results:
+        sec = r.get("category") or "Uncategorized"
+        if sec not in counts:
+            order.append(sec)
+            counts[sec] = 0
+        counts[sec] += 1
+    seen = {}
+    per = []
+    for r in results:
+        sec = r.get("category") or "Uncategorized"
+        seen[sec] = seen.get(sec, 0) + 1
+        per.append((seen[sec], counts[sec]))
+    return [(sec, counts[sec]) for sec in order], per
+
+
+def _post_ctx(base_ctx, r, page_no, post_no, post_total):
+    return {**base_ctx, "page": page_no, "index": post_no, "post_no": post_no,
+            "post_total": post_total, "account_name": r.get("account_name", ""),
+            "post_link": (r.get("post_link") or r.get("url") or ""),
+            "category": r.get("category", ""), "platform": r.get("platform", ""),
+            "metrics_dict": _metrics_of(r)}
+
+
+def _logo_path(platform):
+    p = _LOGOS / f"{platform}.png"
+    return str(p) if p.exists() else None
 
 
 def _pages(results, places):
@@ -96,10 +161,12 @@ def build_pdf(results, images, places, profile, title, out):
             c.drawRightString(x + w, y, value)
         else:
             c.drawString(x, y, value)
-        if t["field"] == "post_link" and ctx.get("post_link"):
+        if t["field"] in ("post_link", "link") and ctx.get("post_link"):
             c.linkURL(ctx["post_link"], (x, y - 2, x + w, y + size), relative=0)
 
     base_ctx = {"title": title, "date": date, "pages": n_pages}
+    sections, per_post = _sections(results)
+    tpl = profile["template"]
 
     if _bg(profile, "cover"):
         paint_bg("cover")
@@ -107,6 +174,34 @@ def build_pdf(results, images, places, profile, title, out):
             draw_text(t, {**base_ctx, "page": 0})
         c.showPage()
 
+    if _bg(profile, "summary") or tpl.get("summary_box"):
+        paint_bg("summary")
+        for t in _text_items(profile, "summary"):
+            draw_text(t, {**base_ctx, "page": 0})
+        box = tpl.get("summary_box") or {"x": 0.36, "y": 0.45, "w": 0.6, "h": 0.5}
+        bx, by, bw, bh = box["x"] * W, box["y"] * H, box["w"] * W, box["h"] * H
+        rows = sections + [("Total Items Tracked", len(results))]
+        rh = min(bh / max(1, len(rows)), 0.42 * inch)
+        fs = max(8, min(16, rh * 0.5))
+        y_top = H - by
+        for i, (name, n) in enumerate(rows):
+            yy = y_top - (i + 1) * rh
+            last = i == len(rows) - 1
+            c.setFillColor(colors.HexColor("#FBEFE0") if i % 2 == 0 else colors.white)
+            c.rect(bx, yy, bw, rh, stroke=0, fill=1)
+            c.setStrokeColor(colors.HexColor("#8B5E34"))
+            c.setLineWidth(0.6)
+            c.rect(bx, yy, bw, rh, stroke=1, fill=0)
+            c.line(bx + bw * 0.62, yy, bx + bw * 0.62, yy + rh)
+            c.setFillColor(colors.HexColor("#7A3E12"))
+            c.setFont("Helvetica-Bold", fs)
+            c.drawString(bx + 8, yy + rh * 0.32, str(name)[:60])
+            c.setFont("Helvetica-Bold" if last else "Helvetica", fs)
+            c.setFillColor(colors.HexColor("#111111"))
+            c.drawRightString(bx + bw - 10, yy + rh * 0.32, str(n))
+        c.showPage()
+
+    idx = 0
     for page_no, (pidx, items) in enumerate(pages, start=1):
         paint_bg("post")
         for r, img, pl in items:
@@ -117,10 +212,15 @@ def build_pdf(results, images, places, profile, title, out):
         # per-post text slots take the FIRST post on the page's fields (single-
         # slot templates, the common case); page-level fields work everywhere.
         r0 = items[0][0]
-        ctx = {**base_ctx, "page": page_no, "index": r0.get("index", ""),
-               "account_name": r0.get("account_name", ""),
-               "post_link": (r0.get("post_link") or r0.get("url") or ""),
-               "category": r0.get("category", ""), "metrics_dict": r0.get("metrics")}
+        post_no, post_total = per_post[idx]
+        idx += len(items)
+        ctx = _post_ctx(base_ctx, r0, page_no, post_no, post_total)
+        for lg in tpl.get("logos") or []:
+            logo = _logo_path(r0.get("platform") or "")
+            if logo:
+                c.drawImage(logo, lg["x"] * W, H - (lg["y"] + lg["h"]) * H,
+                            width=lg["w"] * W, height=lg["h"] * H,
+                            preserveAspectRatio=True, anchor="c", mask="auto")
         for t in _text_items(profile, "post"):
             draw_text(t, ctx)
         c.showPage()
@@ -188,22 +288,39 @@ def build_html(results, images, places, profile, title, out):
                  f"font-size:{t.get('size_pt', 10)}pt;color:{t.get('color') or '#111'};"
                  f"text-align:{t.get('align', 'left')};font-weight:{'700' if t.get('bold') else '400'}")
         inner = html.escape(v)
-        if t["field"] == "post_link" and ctx.get("post_link"):
+        if t["field"] in ("post_link", "link") and ctx.get("post_link"):
             inner = f'<a href="{html.escape(ctx["post_link"], quote=True)}" style="color:inherit">{inner}</a>'
         return f'<div class="t" style="{style}">{inner}</div>'
 
     base_ctx = {"title": title, "date": date, "pages": n_pages}
+    sections, per_post = _sections(results)
+    tpl = profile["template"]
     if _bg(profile, "cover"):
         parts.append(f'<div class="pg" style="{bg_style("cover")}">' +
                      "".join(text_html(t, {**base_ctx, "page": 0}) for t in _text_items(profile, "cover")) + "</div>")
+    if _bg(profile, "summary") or tpl.get("summary_box"):
+        box = tpl.get("summary_box") or {"x": 0.36, "y": 0.45, "w": 0.6, "h": 0.5}
+        rows = sections + [("Total Items Tracked", len(results))]
+        table = ('<table style="width:100%;border-collapse:collapse;font-size:12pt">' +
+                 "".join(f'<tr style="background:{"#FBEFE0" if i % 2 == 0 else "#fff"}"><td style="border:1px solid #8B5E34;padding:4px 8px;color:#7A3E12;font-weight:700">{html.escape(str(n))}</td>'
+                         f'<td style="border:1px solid #8B5E34;padding:4px 8px;text-align:right;{"font-weight:700" if i == len(rows)-1 else ""}">{c}</td></tr>'
+                         for i, (n, c) in enumerate(rows)) + "</table>")
+        parts.append(f'<div class="pg" style="{bg_style("summary")}">' +
+                     "".join(text_html(t, {**base_ctx, "page": 0}) for t in _text_items(profile, "summary")) +
+                     f'<div style="position:absolute;left:{box["x"]*100:.2f}%;top:{box["y"]*100:.2f}%;width:{box["w"]*100:.2f}%">{table}</div></div>')
+    idx = 0
     for page_no, (pidx, items) in enumerate(pages, start=1):
         parts.append(f'<div class="pg" style="{bg_style("post")}">')
         for r, img, pl in items:
             parts.append(f'<img class="shot" src="{_data_uri(img)}" alt="" style="left:{pl.x_in}in;top:{pl.y_in}in;width:{pl.w_in}in;height:{pl.h_in}in">')
         r0 = items[0][0]
-        ctx = {**base_ctx, "page": page_no, "account_name": r0.get("account_name", ""),
-               "post_link": (r0.get("post_link") or r0.get("url") or ""),
-               "category": r0.get("category", ""), "metrics_dict": r0.get("metrics")}
+        post_no, post_total = per_post[idx]
+        idx += len(items)
+        ctx = _post_ctx(base_ctx, r0, page_no, post_no, post_total)
+        for lg in tpl.get("logos") or []:
+            logo = _logo_path(r0.get("platform") or "")
+            if logo:
+                parts.append(f'<img class="shot" src="{_data_uri(logo)}" alt="" style="left:{lg["x"]*100:.2f}%;top:{lg["y"]*100:.2f}%;width:{lg["w"]*100:.2f}%;height:{lg["h"]*100:.2f}%">')
         parts.append("".join(text_html(t, ctx) for t in _text_items(profile, "post")))
         parts.append("</div>")
     if profile["content"].get("links_table"):
@@ -241,9 +358,19 @@ def build_docx(results, images, places, profile, title, out):
             p.add_run().add_picture(bg, width=Inches(usable_w),
                                     height=Inches(usable_w * ph_in / pw_in * height_in))
 
+    sections, per_post = _sections(results)
     if _bg(profile, "cover"):
         add_bg("cover", 1.0)
         doc.add_page_break()
+    if len(sections) > 1 or (profile["template"].get("summary_box")):
+        doc.add_heading("Summary", level=1)
+        t = doc.add_table(rows=0, cols=2)
+        t.style = "Table Grid"
+        for name, n in sections + [("Total Items Tracked", len(results))]:
+            row = t.add_row().cells
+            row[0].text, row[1].text = str(name), str(n)
+        doc.add_page_break()
+    idx = 0
     for pidx, items in pages:
         add_bg("post", 0.42)          # the designed page as a header strip
         for r, img, pl in items:
@@ -251,9 +378,18 @@ def build_docx(results, images, places, profile, title, out):
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             w = min(pl.w_in * 1.15, usable_w)
             p.add_run().add_picture(img, width=Inches(w))
+            post_no, post_total = per_post[idx]
+            idx += 1
+            m = _metrics_of(r)
             cap = doc.add_paragraph()
-            run = cap.add_run((r.get("account_name") or "") + "  " +
-                              (r.get("post_link") or r.get("url") or ""))
+            head = cap.add_run(f"{r.get('account_name') or ''}  ·  {_PLATFORM_LABEL.get(r.get('platform') or '', '')}  ·  Post {post_no} of {post_total}")
+            head.font.size = Pt(9); head.bold = True
+            if m:
+                mp = doc.add_paragraph()
+                mr = mp.add_run("   ".join(f"{k.title()}: {v}" for k, v in m.items()))
+                mr.font.size = Pt(8)
+            lp = doc.add_paragraph()
+            run = lp.add_run(r.get("post_link") or r.get("url") or "")
             run.font.size = Pt(8)
             run.font.color.rgb = RGBColor(0x1D, 0x4E, 0xD8)
         doc.add_page_break()

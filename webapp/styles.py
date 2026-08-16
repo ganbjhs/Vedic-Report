@@ -273,7 +273,7 @@ def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
 
     existing = json.loads(dest.read_text()) if dest.exists() else {}
     pages = dict(((existing.get("template") or {}).get("pages") or {})) if overwrite else {}
-    for kind in ("post", "cover", "end"):
+    for kind in ("post", "cover", "summary", "end"):
         data = files.get(kind)
         if data:
             pages[kind] = _store_page(slug, kind, data)
@@ -284,6 +284,8 @@ def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
 
     slots = meta.get("slots") or []
     text = meta.get("text") or []
+    logos = meta.get("logos") or []
+    summary_box = meta.get("summary_box") or None
     outputs = [o for o in (meta.get("outputs") or ["pdf"]) if o in registry.OUTPUTS] or ["pdf"]
     paper = str(meta.get("paper") or "a4").lower()
     if paper not in registry.PAGE_SIZES:
@@ -301,7 +303,7 @@ def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
         "schema": 1, "slug": slug, "label": label, "extends": base,
         "description": str(meta.get("description") or f"Designed page template on {paper.upper()}."),
         "capture": {"keep_engagement": bool(meta.get("keep_engagement", base_p["capture"].get("keep_engagement")))}
-                   if base_p["capture"]["engine"] == "x" else {},
+                   if base_p["capture"]["engine"] in ("x", "combined") else {},
         "image": {"max_in": [round(max_w, 3), round(max_h, 3)], "aspect": None, "fit": "fit",
                   "background": "#FFFFFF", "radius_pt": float(meta.get("radius_pt") or 0),
                   "border": None, "shadow": None},
@@ -310,7 +312,8 @@ def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
         "content": {"cover": False, "header": None, "footer": None,
                     "per_post_fields": [], "metrics": None,
                     "links_table": bool(meta.get("links_table", True))},
-        "template": {"pages": pages, "slots": slots, "text": text},
+        "template": {"pages": pages, "slots": slots, "text": text, "logos": logos,
+                     **({"summary_box": summary_box} if summary_box else {})},
         "outputs": outputs,
     }
     resolved = resolve(p)                # registry validates slots/text/pages

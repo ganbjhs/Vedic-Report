@@ -40,6 +40,20 @@ The web app's dashboard (`webapp/`, no build step — one CSS file, one JS file)
   `sessions/fb_state.json` and it is used automatically. Try any link first with
   `python scripts/probe_logged_out.py <url>`.
 
+* **Instagram** — fourth engine (`instagram/ig_capture.py`), public posts
+  logged-out: the sign-in panel is closed, then the post's `<article>` is
+  framed. `sessions/ig_state.json` is used if you save one.
+* **Combined report** — the way the team actually reports: one sheet
+  (`Section | Handle | Link | Like | Post Impression | Video Views | Reach…`)
+  with X, Facebook and Instagram links mixed, in sections. The right engine
+  runs per link, sections are kept, and the **metrics print from the sheet's
+  columns** (Insights numbers are not public, so nothing is scraped). The
+  shipped style **Combined report (16:9)** produces cover → summary table of
+  sections → one landscape page per post (handle, section, date, platform
+  logo, *Post i / Top N posts*, metric pills, LINK button, screenshot) → links.
+  Designers duplicate it, drop their own Canva art (16:9 PNG, art only) and
+  keep the slots — or press *Place standard slots* on any page image.
+
 Why X still uses an account when Facebook does not: X shows a single post
 logged-out, but not reliably the *conversation* the Twitter report is defined
 by (a reply shot together with its parent), hides sensitive/age-gated media,

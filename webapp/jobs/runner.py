@@ -37,7 +37,7 @@ from .. import config, report_types, x_login
 from . import store
 
 # Code copied into each job's working directory.
-_CODE_ITEMS = ("run.py", "src", "influencer", "profiles", "facebook")
+_CODE_ITEMS = ("run.py", "src", "influencer", "profiles", "facebook", "instagram")
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store", "reports",
                                  "sessions")
 

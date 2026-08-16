@@ -18,22 +18,33 @@ _MISSING_METRICS = {"followers": "—", "reactions": "—", "comments": "—",
 
 
 def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
-              engine, keep_engagement=False, fb_path=None):
-    """Capture one chunk of links with `engine` ('x' | 'influencer' | 'facebook')."""
-    for p in (src_path, inf_path, fb_path):
+              engine, keep_engagement=False, fb_path=None, ig_path=None):
+    """Capture one chunk of links with `engine`
+    ('x' | 'influencer' | 'facebook' | 'instagram' | 'combined').
+
+    'combined' picks the engine PER TASK from t["platform"] — the X capture for
+    X links, fb_capture for Facebook, ig_capture for Instagram — so one report
+    can hold all three. Every engine is imported directly and read-only."""
+    for p in (src_path, inf_path, fb_path, ig_path):
         if p and p not in sys.path:
             sys.path.insert(0, p)
     from playwright.sync_api import sync_playwright
 
     influencer = engine == "influencer"
-    facebook = engine == "facebook"
+    combined = engine == "combined"
+    engines = {}
     if influencer:
         import inf_capture                      # read-only
         followers_cache = {}
-    elif facebook:
+    if engine in ("facebook", "combined"):
         import fb_capture                       # facebook/, its own engine
-    else:
+        engines["facebook"] = lambda page, url, shot: fb_capture.capture(page, url, shot, keep_engagement)
+    if engine in ("instagram", "combined"):
+        import ig_capture                       # instagram/, its own engine
+        engines["instagram"] = lambda page, url, shot: ig_capture.capture(page, url, shot, keep_engagement)
+    if engine in ("x", "combined"):
         from capture import x_capture           # read-only
+        engines["x"] = lambda page, url, shot: x_capture.capture(page, url, shot, keep_engagement)
 
     results = []
     with sync_playwright() as p:
@@ -45,24 +56,25 @@ def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
         page = ctx.new_page()
         for t in chunk:
             shot = Path(t["shot"])
+            plat = t.get("platform") or engine
+            if plat not in engines and not influencer:
+                plat = next(iter(engines), "x")
             try:
                 if influencer:
                     res = inf_capture.capture(page, t["capture_url"], shot)
-                elif facebook:
-                    res = fb_capture.capture(page, t["capture_url"], shot,
-                                             keep_engagement)
                 else:
-                    res = x_capture.capture(page, t["capture_url"], shot,
-                                            keep_engagement)
+                    res = engines[plat](page, t["capture_url"], shot)
             except Exception as e:     # network/timeout — flag it, keep going
                 res = {"url": t["capture_url"], "status": f"error: {e}",
                        "screenshot": None, "handle": ""}
                 if influencer:
                     res["metrics"] = dict(_MISSING_METRICS)
-            res["platform"] = "facebook" if facebook else "x"
+            res["platform"] = "x" if influencer else plat
             res.update({"idx": t["idx"], "category": t["category"],
                         "account_name": t["account"],
                         "post_link": t["post_link"]})
+            if t.get("sheet_metrics"):
+                res["sheet_metrics"] = dict(t["sheet_metrics"])
             if influencer:
                 # Follower count needs a profile visit, so it is cached per
                 # handle for the life of this process — which is why the

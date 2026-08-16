@@ -1,4 +1,4 @@
-# Report Maker — Blueprint (v2.1, August 2026)
+# Report Maker — Blueprint (v2.2, August 2026)
 
 One file that describes the whole system precisely enough to rebuild it — or
 to hand to a new session and say "redesign this without breaking it". Read
@@ -40,6 +40,8 @@ into JSON, and a FastAPI web app with a role-aware dashboard — is built
 │   src/capture/x_capture.py   X, engagement cropped/kept  [FROZEN]     │
 │   influencer/inf_capture.py  X, engagement kept + metrics [FROZEN]    │
 │   facebook/fb_capture.py     Facebook public post, logged-out         │
+│   instagram/ig_capture.py    Instagram public post, logged-out        │
+│   engine "combined"          per-link choice of the three (prof_worker)│
 ├───────────────────────────────────────────────────────────────────────┤
 │ builders (results.json + PNGs → documents)                            │
 │   src/report_builder.py [FROZEN]  influencer/inf_report_builder.py [FROZEN]│
@@ -78,13 +80,18 @@ influencer/                the Influencer pipeline (parallel to src/)      FROZE
 facebook/                  the Facebook engine (rule 18 folder)
   fb_capture.py            capture(page, url, shot, keep_engagement) → result dict
   README.md
+instagram/                 the Instagram engine (rule 18 folder), logged-out
+  ig_capture.py
 
 profiles/                  the profile engine — presentation as data
   registry.py              load/merge/validate profile JSON; ENGINES; user dir
   registry/*.json          shipped profiles: twitter, influencer (parity oracles),
                            client-deck, contact-sheet, twitter-hi-res, facebook
-  netlinks.py              which links belong to which platform; platform-neutral
-                           row reader (reuses input_loader helpers read-only)
+  netlinks.py              which links belong to which platform ('combined' = any);
+                           platform-neutral row reader (+ Section, + sheet metric
+                           columns Like/Impressions/Views/Reach/…)
+  assets/logos/            platform marks drawn by PIL, used by template logo slots
+  registry/combined-16x9.json + assets/combined-16x9/   the shipped Combined preset
   layout.py                page geometry → placements
   shapes.py                pure-PIL image ops (fit/pad/round/border/shadow)
   progress.py              the stdout vocabulary the web runner parses

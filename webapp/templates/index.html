@@ -31,7 +31,7 @@
     <button type="button" data-platform="{{ p.slug }}" class="{{ 'soon' if not p.live else '' }}"
             {% if not p.live %}aria-disabled="true" title="{{ p.note }}"{% endif %}
             role="radio" aria-checked="{{ 'true' if p.slug == 'x' else 'false' }}">
-      <span class="pl {{ p.slug }}"></span> {{ 'X / Twitter' if p.slug == 'x' else p.label }}
+      <span class="pl {{ p.slug }}"></span> {{ 'X / Twitter' if p.slug == 'x' else ('Combined (X + FB + IG)' if p.slug == 'combined' else p.label) }}
       {% if p.badge %}<span class="badge">{{ p.badge }}</span>{% endif %}
     </button>
     {% endfor %}

@@ -283,9 +283,25 @@ def write_canonical_xlsx(rows: list, dest: Path) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "Links"
-    ws.append(["Account", "Link"])
+    # A combined report keeps its sections and the sheet's metric columns; the
+    # X-only reports keep the two-column shape (their builders print the
+    # category above every screenshot, which reads as noise — see below).
+    keys = []
     for r in rows:
-        ws.append([r.get("account_name", ""), r.get("link", "")])
+        for k in (r.get("sheet_metrics") or {}):
+            if k not in keys:
+                keys.append(k)
+    with_sections = any((r.get("platform") not in (None, "x")) and
+                        (r.get("category") not in (None, "", "Uncategorized")) for r in rows)
+    header = ["Account", "Link"] + (["Section"] if with_sections else []) + [k.title() for k in keys]
+    ws.append(header)
+    for r in rows:
+        row = [r.get("account_name", ""), r.get("link", "")]
+        if with_sections:
+            row.append(r.get("category") or "")
+        m = r.get("sheet_metrics") or {}
+        row += [m.get(k, "") for k in keys]
+        ws.append(row)
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 70
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -447,7 +463,9 @@ def analyse(grid: list, dedupe: bool = False, platform: str = "x") -> dict:
     import netlinks                     # profiles/netlinks.py (on sys.path)
     rows = netlinks.rows_from_grid(grid, platform)
     is_ours = netlinks.MATCHERS.get(platform, input_loader.is_x_url)
-    ours = {"x": "an x.com / twitter.com", "facebook": "a facebook.com"}.get(platform, f"a {platform}")
+    ours = {"x": "an x.com / twitter.com", "facebook": "a facebook.com",
+            "instagram": "an instagram.com",
+            "combined": "an X / Facebook / Instagram"}.get(platform, f"a {platform}")
 
     kept = set()
     for r in rows:

@@ -30,6 +30,7 @@ COPY src/ ./src/
 COPY influencer/ ./influencer/
 COPY profiles/ ./profiles/
 COPY facebook/ ./facebook/
+COPY instagram/ ./instagram/
 COPY webapp/ ./webapp/
 
 # Runtime state. docker-compose bind-mounts host folders over these, so the X

@@ -238,7 +238,8 @@ function initSubmitForm() {
     let n = 0;
     for (const r of data.rows.slice(0, 200)) {
       n += 1;
-      rows.push(`<tr><td>${n}</td><td>${esc(r.account || "—")}</td><td class="lnk"><span class="pp"></span><a href="${esc(r.link)}" target="_blank" rel="noopener" title="${esc(r.link)}">${esc(shortLink(r.link))}</a></td><td></td></tr>`);
+      const m = r.metrics && Object.keys(r.metrics).length ? Object.entries(r.metrics).map(([k, v]) => `${k} ${v}`).join(" · ") : "";
+      rows.push(`<tr><td>${n}</td><td>${esc(r.account || "—")}${r.section ? `<br><span class="faint" style="font-size:10px">${esc(r.section)}</span>` : ""}</td><td class="lnk"><span class="pp ${esc(r.platform || "x")}"></span><a href="${esc(r.link)}" target="_blank" rel="noopener" title="${esc(r.link)}">${esc(shortLink(r.link))}</a></td><td>${m ? `<span class="tag" title="metrics from the sheet">${esc(m)}</span>` : ""}</td></tr>`);
     }
     if (!data.dedupe_applied) {
       (data.duplicates || []).forEach((d) => d.positions.slice(1).forEach((p) =>
@@ -673,14 +674,17 @@ function initTemplateDesigner() {
   const canvas = $("tcanvas"); if (!canvas) return;
   const img = $("t-img"), layer = $("tlayer"), empty = $("t-empty"), status = $("t-status");
   const props = $("t-props"), fileIn = $("t-file"), removeBtn = $("t-remove");
-  const pages = { post: null, cover: null, end: null };
-  let cur = "post", items = [], sel = null, editingSlug = "", editingLoadedFromServer = { post: false, cover: false, end: false };
-  const LABELS = { title: "Report title", date: "Date", page: "Page no.", pages: "Pages", index: "#", account_name: "Account", post_link: "Post link", category: "Category", metrics: "Metrics" };
+  const pages = { post: null, cover: null, summary: null, end: null };
+  let cur = "post", items = [], sel = null, editingSlug = "", editingLoadedFromServer = { post: false, cover: false, summary: false, end: false };
+  const LABELS = { title: "Report title", date: "Date", page: "Page no.", pages: "Pages", index: "#", account_name: "Account", post_link: "Post URL", category: "Category", metrics: "Metrics",
+    handle: "Handle name", section: "Section", post_no: "Post 1", post_total: "Top 9 Posts", platform: "Platform", link: "LINK",
+    "metric.like": "Like →", "metric.impressions": "Impressions →", "metric.views": "Views →", "metric.reach": "Reach →", "metric.comments": "Comments →", "metric.shares": "Shares →", "metric.followers": "Followers →" };
+  const PAGE_KINDS = ["post", "cover", "summary", "end"];
 
   const setStatus = (t) => { status.textContent = t; };
   const pageTag = (k) => $(`t-has-${k}`);
   const refreshTabs = () => {
-    for (const k of ["post", "cover", "end"]) {
+    for (const k of PAGE_KINDS) {
       const t = pageTag(k); if (!t) continue;
       t.textContent = pages[k] ? "✓ image" : (k === "post" ? "required" : "optional");
       t.className = "tag" + (pages[k] ? " new" : "");
@@ -693,8 +697,8 @@ function initTemplateDesigner() {
     const p = pages[k];
     img.hidden = !p; empty.hidden = !!p;
     if (p) img.src = p.url;
-    empty.innerHTML = k === "post" ? "Drop a PNG here<br><small>A4 / Letter page exported from Canva</small>"
-      : `No ${k} page yet — upload one to add it<br><small>Optional. Cover shows first, End page last.</small>`;
+    empty.innerHTML = k === "post" ? "Drop a PNG here<br><small>16:9 slide, A4 or Letter page exported from Canva — the art only, no numbers or names</small>"
+      : `No ${k} page yet — upload one to add it<br><small>Optional. Cover first, Summary (section counts) second, End page last.</small>`;
     select(null); render(); refreshTabs();
   };
   document.querySelectorAll("[data-tpage]").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.tpage)));
@@ -703,7 +707,15 @@ function initTemplateDesigner() {
     if (!file || !/^image\/(png|jpeg)$/.test(file.type)) return setStatus("PNG or JPEG only.");
     const url = URL.createObjectURL(file);
     const probe = new Image();
-    probe.onload = () => { pages[k] = { file, url, w: probe.naturalWidth, h: probe.naturalHeight }; editingLoadedFromServer[k] = false; showPage(k); setStatus(`${k} page: ${probe.naturalWidth}×${probe.naturalHeight}px. Now add a screenshot slot.`); };
+    probe.onload = () => {
+      pages[k] = { file, url, w: probe.naturalWidth, h: probe.naturalHeight }; editingLoadedFromServer[k] = false;
+      if (k === "post") {                       // paper follows the art
+        const r = probe.naturalWidth / probe.naturalHeight, land = r > 1, a = land ? r : 1 / r;
+        const paper = Math.abs(a - 16 / 9) < 0.06 ? "16:9" : Math.abs(a - 4 / 3) < 0.06 ? "4:3" : Math.abs(a - 297 / 210) < 0.05 ? "a4" : "letter";
+        $("t-paper").value = paper; $("t-orient").value = land ? "landscape" : "portrait";
+      }
+      showPage(k); setStatus(`${k} page: ${probe.naturalWidth}×${probe.naturalHeight}px${k === "post" ? ` → ${$("t-paper").value} ${$("t-orient").value}. Now add a screenshot slot (or "Place standard slots").` : "."}`);
+    };
     probe.src = url;
   };
   fileIn.addEventListener("change", () => { loadFile(fileIn.files[0]); fileIn.value = ""; });
@@ -713,7 +725,7 @@ function initTemplateDesigner() {
   removeBtn.addEventListener("click", () => { pages[cur] = null; items = items.filter((it) => it.page !== cur); showPage(cur); });
 
   /* ---- items ---- */
-  const visible = () => items.filter((it) => it.kind === "slot" ? cur === "post" : (it.page === cur || it.page === "all"));
+  const visible = () => items.filter((it) => (it.kind === "slot" || it.kind === "logo") ? cur === "post" : it.kind === "summary" ? cur === "summary" : (it.page === cur || it.page === "all"));
   const el = (it) => layer.querySelector(`[data-id="${it.id}"]`);
   let nextId = 1;
   function add(kind, field, box) {
@@ -732,6 +744,36 @@ function initTemplateDesigner() {
     if (cur !== "post") showPage("post");
     add("slot", null, { x: 0.1, y: 0.15, w: 0.8, h: 0.6 });
   });
+  document.querySelector("[data-add='logo']").addEventListener("click", () => {
+    if (!pages.post) return setStatus("Upload the post page first.");
+    if (cur !== "post") showPage("post");
+    add("logo", null, { x: 0.69, y: 0.14, w: 0.075, h: 0.13 });
+  });
+  document.querySelector("[data-add='summary']").addEventListener("click", () => {
+    if (!pages.summary && !pages.post) return setStatus("Upload a page first.");
+    if (cur !== "summary") showPage("summary");
+    if (items.some((it) => it.kind === "summary")) return setStatus("There is already a summary table box.");
+    add("summary", null, { x: 0.36, y: 0.45, w: 0.6, h: 0.5 });
+  });
+  // The Kashi-style layout in one click; nudge afterwards.
+  $("t-preset").addEventListener("click", () => {
+    if (!pages.post) return setStatus("Upload the post page first.");
+    showPage("post"); items = items.filter((it) => it.page !== "post" && it.kind !== "slot" && it.kind !== "logo");
+    const T = (field, x, y, w, h, size, color, align, bold) => items.push({ id: nextId++, kind: "text", page: "post", field, x, y, w, h, size, color, align, bold });
+    items.push({ id: nextId++, kind: "slot", page: "post", x: 0.695, y: 0.31, w: 0.255, h: 0.66 });
+    items.push({ id: nextId++, kind: "logo", page: "post", x: 0.69, y: 0.145, w: 0.075, h: 0.135 });
+    T("section", 0.08, 0.135, 0.32, 0.04, 11, "#3d3d3d", "center", false);
+    T("handle", 0.06, 0.175, 0.36, 0.06, 22, "#e8571c", "center", true);
+    T("date", 0.10, 0.255, 0.28, 0.04, 11, "#e8571c", "center", false);
+    T("post_total", 0.80, 0.165, 0.16, 0.04, 12, "#333333", "left", false);
+    T("post_no", 0.80, 0.195, 0.16, 0.08, 30, "#111111", "left", true);
+    T("metric.like", 0.555, 0.482, 0.11, 0.04, 18, "#ffffff", "center", true);
+    T("metric.impressions", 0.555, 0.562, 0.11, 0.04, 18, "#ffffff", "center", true);
+    T("metric.views", 0.555, 0.642, 0.11, 0.04, 18, "#ffffff", "center", true);
+    T("link", 0.555, 0.722, 0.11, 0.04, 16, "#ffffff", "center", true);
+    T("post_total", 0.18, 0.68, 0.14, 0.05, 14, "#ffffff", "center", true);
+    render(); setStatus("Standard slots placed. Drag any box to match your art; ⌫ deletes the selected one.");
+  });
   document.querySelectorAll("[data-add-text]").forEach((b) => b.addEventListener("click", () => {
     if (!pages[cur]) return setStatus("Upload this page's image first.");
     add("text", b.dataset.addText, { x: 0.08, y: 0.05, w: 0.6, h: 0.04 });
@@ -747,6 +789,10 @@ function initTemplateDesigner() {
       if (it.kind === "slot") {
         const n = items.filter((s) => s.kind === "slot").indexOf(it) + 1;
         d.innerHTML = `<span class="lbl">Screenshot ${n}</span>`;
+      } else if (it.kind === "logo") {
+        d.innerHTML = `<span class="lbl">Logo</span>`;
+      } else if (it.kind === "summary") {
+        d.innerHTML = `<span class="lbl">Summary table (sections → counts)</span>`;
       } else {
         d.innerHTML = `<span class="lbl" style="font-weight:${it.bold ? 700 : 400};text-align:${it.align};color:${it.color}">${esc(LABELS[it.field] || it.field)}</span>`;
       }
@@ -826,13 +872,15 @@ function initTemplateDesigner() {
       label, slug: editingSlug || "", base: $("t-base").value, paper: $("t-paper").value, orientation: $("t-orient").value,
       links_table: $("t-links").checked, outputs: ["pdf", "docx", "html"],
       slots: items.filter((it) => it.kind === "slot").map((it) => ({ x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4) })),
+      logos: items.filter((it) => it.kind === "logo").map((it) => ({ x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4) })),
+      summary_box: (() => { const b = items.find((it) => it.kind === "summary"); return b ? { x: +b.x.toFixed(4), y: +b.y.toFixed(4), w: +b.w.toFixed(4), h: +b.h.toFixed(4) } : null; })(),
       text: items.filter((it) => it.kind === "text").map((it) => ({ field: it.field, x: +it.x.toFixed(4), y: +it.y.toFixed(4), w: +it.w.toFixed(4), h: +it.h.toFixed(4), size_pt: it.size, color: it.color, align: it.align, page: it.page, bold: !!it.bold })),
     };
-    for (const k of ["cover", "end"]) if (!pages[k]) meta[`remove_${k}`] = true;
+    for (const k of ["cover", "summary", "end"]) if (!pages[k]) meta[`remove_${k}`] = true;
     const fd = new FormData();
     fd.append("csrf_token", CSRF()); fd.append("meta", JSON.stringify(meta));
     fd.append("overwrite", ($("t-overwrite").checked || !!editingSlug) ? "1" : "");
-    for (const k of ["post", "cover", "end"]) if (pages[k] && pages[k].file) fd.append(k, pages[k].file, `${k}.png`);
+    for (const k of PAGE_KINDS) if (pages[k] && pages[k].file) fd.append(k, pages[k].file, `${k}.png`);
     try {
       const res = await fetch("/api/styles/template", { method: "POST", body: fd, headers: { "X-CSRF-Token": CSRF() } });
       const data = await res.json().catch(() => ({}));
@@ -851,9 +899,11 @@ function initTemplateDesigner() {
       editingSlug = slug;
       $("t-label").value = p.label; $("t-base").value = p.extends || "twitter";
       $("t-paper").value = String((p.page || {}).size || "a4").toLowerCase(); $("t-orient").value = (p.page || {}).orientation || "portrait";
+      // Duplicating a SHIPPED template (e.g. combined-16x9): it has no `extends`, so keep its own engine
+      if (!p.extends && p.capture && p.capture.engine) $("t-base").value = { combined: "combined-16x9", instagram: "instagram", facebook: "facebook", influencer: "influencer", x: "twitter" }[p.capture.engine] || "twitter";
       $("t-links").checked = (p.content || {}).links_table !== false;
       items = []; nextId = 1;
-      for (const k of ["post", "cover", "end"]) {
+      for (const k of PAGE_KINDS) {
         pages[k] = null;
         if ((tpl.pages || {})[k]) {
           const url = `/api/styles/${encodeURIComponent(slug)}/asset/${k}`;
@@ -862,6 +912,8 @@ function initTemplateDesigner() {
         }
       }
       (tpl.slots || []).forEach((s) => items.push({ id: nextId++, kind: "slot", page: "post", ...s }));
+      (tpl.logos || []).forEach((s) => items.push({ id: nextId++, kind: "logo", page: "post", ...s }));
+      if (tpl.summary_box) items.push({ id: nextId++, kind: "summary", page: "summary", ...tpl.summary_box });
       (tpl.text || []).forEach((t) => items.push({ id: nextId++, kind: "text", page: t.page || "post", field: t.field, x: t.x, y: t.y, w: t.w, h: t.h, size: t.size_pt || 10, color: t.color || "#111111", align: t.align || "left", bold: !!t.bold }));
       showPage("post"); setStatus(`Editing ${p.label}. Existing page images are kept unless you upload new ones.`);
       $("tdesigner").scrollIntoView({ behavior: "smooth" });

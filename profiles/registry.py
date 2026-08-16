@@ -38,6 +38,11 @@ ENGINES = {
     "x": {"metrics": False, "platform": "x"},              # src/capture/x_capture.py
     "influencer": {"metrics": True, "platform": "x"},      # influencer/inf_capture.py
     "facebook": {"metrics": False, "platform": "facebook"},  # facebook/fb_capture.py
+    "instagram": {"metrics": False, "platform": "instagram"},  # instagram/ig_capture.py
+    # One report, links from any live network: the worker picks the engine per
+    # link from the row's platform. Metrics come from the SHEET (Like /
+    # Impressions / Views / Reach columns), never scraped.
+    "combined": {"metrics": False, "platform": "combined"},
 }
 
 # Which network a profile's posts come from. NOT the same axis as `engine`:
@@ -47,11 +52,14 @@ ENGINES = {
 # owns how the pill looks and whether it is live. This list is deliberately
 # permissive of not-yet-live platforms so a profile can be written and validated
 # before its engine exists; the web layer refuses to *run* it.
-PLATFORMS = ("x", "facebook", "instagram")
+PLATFORMS = ("x", "facebook", "instagram", "combined")
 DEFAULT_PLATFORM = "x"
 
 # Page sizes in inches, portrait.
-PAGE_SIZES = {"letter": (8.5, 11.0), "a4": (8.2677, 11.6929)}
+PAGE_SIZES = {"letter": (8.5, 11.0), "a4": (8.2677, 11.6929),
+              # presentation pages (Canva "Presentation 16:9" / "4:3") — stored
+              # portrait like the others; use orientation "landscape" for slides
+              "16:9": (7.5, 13.3333), "4:3": (7.5, 10.0)}
 
 OUTPUTS = ("pdf", "docx", "html")         # xlsx is a global export, not a profile output
 FITS = ("fit", "pad", "crop-top")
@@ -74,10 +82,17 @@ _TOP = {"schema", "slug", "label", "description", "extends", "platform",
 # the background is painted, screenshots are fitted (never cropped) into the
 # image slots in reading order, and text slots print report fields. When
 # `template` is present it replaces the grid: posts per page = image slots.
-_TEMPLATE_KEYS = {"pages", "slots", "text"}
-_TEMPLATE_PAGES = {"post", "cover", "end"}
+_TEMPLATE_KEYS = {"pages", "slots", "text", "logos", "summary_box"}
+_TEMPLATE_PAGES = {"post", "cover", "end", "summary"}
+# Text slots. `metric.<key>` prints that metric's VALUE (from the sheet columns
+# or a capture engine); `post_no` / `post_total` count within the post's section;
+# `link` prints the word LINK as a hyperlink (the button art is in the design).
+_METRIC_KEYS = ("like", "impressions", "views", "reach", "comments", "shares",
+                "followers", "reactions")
 _TEXT_FIELDS = {"title", "date", "page", "pages", "index", "account_name",
-                "post_link", "category", "metrics"}
+                "post_link", "category", "metrics", "section", "handle",
+                "post_no", "post_total", "link", "platform"} | {
+                    f"metric.{k}" for k in _METRIC_KEYS}
 _TEXT_KEYS = {"field", "x", "y", "w", "h", "size_pt", "color", "align", "page",
               "bold"}
 _SLOT_KEYS = {"x", "y", "w", "h"}
@@ -446,6 +461,21 @@ def _validate_template(p: dict, slug: str) -> None:
             _num(sl.get(k), f"template.slots[{i}].{k}", slug, 0.02, 1)
         if sl["x"] + sl["w"] > 1.001 or sl["y"] + sl["h"] > 1.001:
             raise ProfileError(f"{slug}: template.slots[{i}] runs off the page")
+    for i, lg in enumerate(tpl.get("logos") or []):
+        if not isinstance(lg, dict) or set(lg) - _SLOT_KEYS:
+            raise ProfileError(f"{slug}: template.logos[{i}] must have only x, y, w, h")
+        for k in ("x", "y"):
+            _num(lg.get(k), f"template.logos[{i}].{k}", slug, 0, 1)
+        for k in ("w", "h"):
+            _num(lg.get(k), f"template.logos[{i}].{k}", slug, 0.01, 1)
+    sb = tpl.get("summary_box")
+    if sb is not None:
+        if not isinstance(sb, dict) or set(sb) - _SLOT_KEYS:
+            raise ProfileError(f"{slug}: template.summary_box must have only x, y, w, h")
+        for k in ("x", "y"):
+            _num(sb.get(k), f"template.summary_box.{k}", slug, 0, 1)
+        for k in ("w", "h"):
+            _num(sb.get(k), f"template.summary_box.{k}", slug, 0.05, 1)
     for i, t in enumerate(tpl.get("text") or []):
         if not isinstance(t, dict) or set(t) - _TEXT_KEYS:
             raise ProfileError(f"{slug}: template.text[{i}] has unknown keys")

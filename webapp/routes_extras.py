@@ -168,6 +168,7 @@ async def save_template_style(request: Request,
                               meta: str = Form(...),
                               post: UploadFile = File(None),
                               cover: UploadFile = File(None),
+                              summary: UploadFile = File(None),
                               end: UploadFile = File(None),
                               overwrite: str = Form(""),
                               csrf_token: str = Form(...),
@@ -181,7 +182,7 @@ async def save_template_style(request: Request,
     except ValueError:
         raise HTTPException(status_code=400, detail="meta must be a JSON object.")
     files = {}
-    for kind, up in (("post", post), ("cover", cover), ("end", end)):
+    for kind, up in (("post", post), ("cover", cover), ("summary", summary), ("end", end)):
         if up is not None and getattr(up, "filename", ""):
             files[kind] = await up.read()
     try:
@@ -194,10 +195,17 @@ async def save_template_style(request: Request,
 @router.get("/styles/{slug}/asset/{kind}")
 async def style_asset(slug: str, kind: str, user: str = Depends(auth.require_user_api)):
     """The designed page image of a template style (for the editor + gallery)."""
-    if kind not in ("post", "cover", "end") or not styles._SLUG.match(slug or ""):
+    if kind not in ("post", "cover", "summary", "end") or not styles._SLUG.match(slug or ""):
         raise HTTPException(status_code=404, detail="No such asset")
     p = styles.asset_dir(slug) / f"{kind}.png"
-    if not p.is_file():
+    if not p.is_file():                       # shipped template styles keep theirs in the repo
+        try:
+            import registry
+            alt = registry.asset_path(registry.load(slug), kind)
+            if alt and alt.is_file():
+                return FileResponse(alt, media_type="image/png", headers={"Cache-Control": "no-store"})
+        except Exception:
+            pass
         raise HTTPException(status_code=404, detail="No such asset")
     return FileResponse(p, media_type="image/png", headers={"Cache-Control": "no-store"})
 

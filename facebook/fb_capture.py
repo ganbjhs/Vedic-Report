@@ -20,12 +20,17 @@ What a logged-out visitor gets from Facebook, and what this does about it:
   * "This content isn't available right now" — `status="not_found"`.
 
 Framing: Facebook's permalink page renders the post as `div[role="article"]`
-with the comment thread as further `role="article"` nodes below and INSIDE it
-(each labelled "Comment by …"). The frame therefore starts at the post's top
-and ends at its actions row (Like · Comment · Share): above it when
-`keep_engagement` is False, below it when True — the same one boundary the X
-report is defined by (rule 6.2). If the actions row cannot be found the whole
-article is taken, and `frame_ok=False` says so.
+with the comment thread as further `role="article"` nodes below and INSIDE it.
+The frame starts at the post's top and ends just above the Like · Comment ·
+Share BUTTONS, which keeps the counts row ("644 · 45 comments · 11 shares")
+and drops the controls; with `keep_engagement` False it ends above the counts
+row too — the same one boundary the X report is defined by (rule 6.2). If that
+row cannot be found the frame falls back to the top of the comment thread, and
+then to the whole article with `frame_ok=False`.
+
+Nothing here matches on rendered text. Facebook serves the page in the
+viewer's language — this post came back in Hindi on an `en-IN` context — so
+every landmark is found by structure instead; see `_JS_TRIM_POST`.
 
 Result dict matches the X engine's shape so `prof_runner` needs no branch:
     {status, url, handle, screenshot, text, overlay, frame_ok, parent_lost}
@@ -78,6 +83,84 @@ _JS_DISMISS = r"""
     el.style.overflow = 'auto'; el.style.position = 'static'; el.style.height = 'auto';
   }
   return removed;
+}
+"""
+
+# Measure the post's own rows, THEN take everything below them off the page.
+#
+# Nothing here matches on rendered text, and that is the whole point: Facebook
+# serves the page in the viewer's language (this post came back in Hindi on an
+# `en-IN` context), so "Like" / "Most relevant" / "View more comments" never
+# match and the old text rules silently did nothing. Every landmark below is
+# structural instead:
+#
+#   * the ACTIONS row = 2-3 sibling `div[role="button"]` of similar size on one
+#     line, each a quarter to a half of the article's width (Like · Comment ·
+#     Share). Its top is the frame's bottom edge.
+#   * the METRICS row = the last full-width row that ends above the actions row
+#     ("644 · 45 comments · 11 shares"). Its top is the bottom edge when
+#     `keep_engagement` is False.
+#   * the COMMENTS block = the highest ancestor of the first nested
+#     `div[role="article"]` that still starts below the actions row. Hiding that
+#     ONE node removes the sort control, every comment, the "see hidden replies"
+#     links, the lazy-loading skeletons and the composer together — they are all
+#     inside it, which is why hiding comment articles one by one left the
+#     skeletons and the reply links behind.
+#
+# Returns the measurements as well as what was hidden; the caller frames from
+# them.
+_JS_TRIM_POST = r"""
+(root) => {
+  const hidden = [];
+  const hide = (el, why) => { if (el && el.style && el.style.display !== 'none') { el.style.display = 'none'; hidden.push(why); } };
+  const R = el => el.getBoundingClientRect();
+  const aw = R(root).width, atop = R(root).y;
+  const near = y => y > atop + 40;                 // never mistake the header for a row
+
+  // --- the Like · Comment · Share button row (structure, not language) ------
+  const wide = [...root.querySelectorAll('div[role="button"], span[role="button"]')]
+    .map(b => ({el: b, r: R(b)}))
+    .filter(o => o.r.width >= aw * 0.2 && o.r.width <= aw * 0.55
+                 && o.r.height >= 18 && o.r.height <= 64 && near(o.r.y));
+  let actionsTop = null, actionsBottom = null;
+  for (const o of wide) {
+    const row = wide.filter(p => Math.abs(p.r.y - o.r.y) <= 6);
+    if (row.length >= 2) {
+      const top = Math.min(...row.map(p => p.r.y));
+      if (actionsTop === null || top < actionsTop) {
+        actionsTop = top;
+        actionsBottom = Math.max(...row.map(p => p.r.bottom));
+      }
+    }
+  }
+
+  // --- the reactions / comments / shares counts row -------------------------
+  let countsTop = null;
+  if (actionsTop !== null) {
+    [...root.querySelectorAll('div')].forEach(d => {
+      const r = R(d);
+      if (r.width < aw * 0.85 || r.height < 8 || r.height > 48) return;
+      if (!near(r.y) || r.bottom > actionsTop + 2) return;
+      if (countsTop === null || r.y > countsTop) countsTop = r.y;
+    });
+  }
+
+  // --- the comment thread, as one node --------------------------------------
+  const first = [...root.querySelectorAll('div[role="article"]')]
+    .filter(a => a !== root && R(a).height > 0)[0];
+  let commentsTop = first ? R(first).y : null;
+  if (first) {
+    let block = first, e = first.parentElement;
+    const floor = actionsBottom === null ? R(first).y : actionsBottom;
+    while (e && e !== root && R(e).y >= floor - 2) { block = e; e = e.parentElement; }
+    hide(block, 'comments_block');
+  }
+  // belt and braces: anything comment-shaped the block did not contain
+  root.querySelectorAll('div[role="article"]').forEach(a => { if (a !== root) hide(a, 'comment'); });
+  root.querySelectorAll('form, [role="textbox"], [contenteditable="true"]').forEach(e => {
+    hide(e.closest('form') || e, 'composer');
+  });
+  return {hidden, actionsTop, actionsBottom, countsTop, commentsTop};
 }
 """
 
@@ -155,15 +238,18 @@ def _wait_media(page, article, budget_ms=6000) -> None:
 
 
 def _find_post(page):
-    """The post's own article: the first visible role=article that is not a
-    comment and is tall enough to be a post."""
+    """The post's own article: the first visible role=article that is not
+    nested inside another one and is tall enough to be a post.
+
+    Nesting, not the aria-label, is what separates the post from its comments —
+    a comment's label reads "Sanjay Awasthi का … पर कमेंट" in Hindi and
+    "Comment by …" in English, and only the second one starts with "comment"."""
     arts = page.locator(_ARTICLE)
     n = min(arts.count(), 12)
     for i in range(n):
         a = arts.nth(i)
         try:
-            label = (a.get_attribute("aria-label") or "").lower()
-            if label.startswith("comment"):
+            if a.evaluate("el => !!el.parentElement.closest('div[role=\"article\"]')"):
                 continue
             box = a.bounding_box()
             if box and box["height"] >= 120 and box["width"] >= 300:
@@ -181,33 +267,15 @@ def _find_post(page):
     return None
 
 
-def _actions_bar_box(article):
-    """Bounding box of the Like · Comment · Share row inside the post, or None.
-    Comments below the post carry their own Like buttons, so only a button in
-    the first ~2/3 of the article that spans most of its width counts."""
+def trim_post(page, article) -> dict:
+    """Hide the comment thread and report where the post's own rows are.
+    Returns {hidden, actionsTop, actionsBottom, countsTop, commentsTop}."""
+    empty = {"hidden": [], "actionsTop": None, "actionsBottom": None,
+             "countsTop": None, "commentsTop": None}
     try:
-        abox = article.bounding_box()
-        btn = article.locator('[role="button"][aria-label="Like"], [aria-label="Like"]')
-        for i in range(min(btn.count(), 4)):
-            b = btn.nth(i)
-            box = b.bounding_box()
-            if not box or not abox:
-                continue
-            # climb to the row that spans the article width
-            row = b.evaluate("""el => {
-              let e = el, best = null;
-              for (let k = 0; k < 8 && e; k++, e = e.parentElement) {
-                const r = e.getBoundingClientRect();
-                if (r.height < 80 && r.width > 0) best = {x:r.x, y:r.y, width:r.width, height:r.height, w:r.width};
-                if (r.width >= %d * 0.85 && r.height < 80) return {x:r.x, y:r.y, width:r.width, height:r.height};
-              }
-              return best;
-            }""" % int(abox["width"]))
-            if row and row["width"] >= abox["width"] * 0.7:
-                return row
+        return article.evaluate(_JS_TRIM_POST) or empty
     except Exception:
-        pass
-    return None
+        return empty
 
 
 def _handle_from(page, article, url) -> str:
@@ -267,26 +335,49 @@ def capture(page, url: str, shot_path, keep_engagement: bool = True) -> dict:
     _expand_see_more(page, article)
     _wait_media(page, article)
     dismiss(page)                                   # media settling can bring a sheet back
+    # Measure the rows and hide the comment thread in one pass. The rows are
+    # measured BEFORE anything is hidden, so the offsets below are the ones the
+    # post actually has; everything the trim removes sits under them.
+    info = trim_post(page, article)
     page.wait_for_timeout(300)
+    res["trimmed"] = info["hidden"]
 
     box = article.bounding_box()
     if not box:
         res["status"] = "not_found"
         return res
     # scroll so the article's top is at the top of the viewport
+    dy = 0.0
     if box["y"] < 0 or box["y"] > 40:
-        page.evaluate("dy => window.scrollBy(0, dy)", box["y"] - 8)
+        dy = box["y"] - 8
+        page.evaluate("d => window.scrollBy(0, d)", dy)
         page.wait_for_timeout(250)
-        box = article.bounding_box() or box
+        new_box = article.bounding_box()
+        dy = box["y"] - new_box["y"] if new_box else dy   # what the page really moved
+        box = new_box or box
 
-    bar = _actions_bar_box(article)
     clip = {"x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"]}
-    if bar:
-        bottom = bar["y"] + bar["height"] + 4 if keep_engagement else bar["y"] - 4
-        if bottom > clip["y"] + 60:
-            clip["height"] = bottom - clip["y"]
+    # the measurements were taken before that scroll; move them with the page
+    edge = {k: (None if info[k] is None else info[k] - dy)
+            for k in ("actionsTop", "actionsBottom", "countsTop", "commentsTop")}
+
+    if edge["actionsTop"] is not None:
+        # keep_engagement -> stop just above the Like · Comment · Share BUTTONS,
+        # which keeps the counts row ("644 · 45 comments · 11 shares") and drops
+        # the controls; otherwise stop above the counts row as well.
+        bottom = edge["actionsTop"] - 2
+        if not keep_engagement and edge["countsTop"] is not None:
+            bottom = edge["countsTop"] - 2
+        res["cut"] = "metrics_row" if keep_engagement else "above_metrics"
+    elif edge["commentsTop"] is not None:
+        bottom = edge["commentsTop"] - 4          # no button row: end at the thread
+        res["cut"] = "before_comments"
     else:
-        res["frame_ok"] = False                     # whole article, comments and all
+        bottom = clip["y"] + clip["height"]
+        res["cut"] = "article_end"
+        res["frame_ok"] = bool(info["hidden"])    # trimmed -> trustworthy; nothing found -> flag it
+    if bottom > clip["y"] + 60:
+        clip["height"] = bottom - clip["y"]
     clip["height"] = max(60, min(clip["height"], 6000))
 
     shot_path.parent.mkdir(parents=True, exist_ok=True)

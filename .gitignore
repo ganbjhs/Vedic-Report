@@ -10,6 +10,9 @@ reports/*.docx
 reports/**/*.docx
 reports/*.pdf
 
+# scripts/capture_probe.py output — one PNG per probed link, evidence only
+reports/probe/
+
 # Web app secrets — app logins + session signing key; NEVER commit this
 .env
 

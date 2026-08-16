@@ -505,15 +505,58 @@ Three facts to keep straight:
   as rule 19, re-implemented for Facebook's layers. `sessions/fb_state.json`
   is honoured if present and never required; `health.py` reports "no account
   needed" as OK, not as a warning.
-* **The frame ends at the actions row.** Like · Comment · Share is the one
-  boundary (rule 6.2 again): above it when `keep_engagement` is false, below it
-  when true. Comments are `role="article"` nodes *inside* the post's article,
-  so cutting at that row is also what keeps them out. If the row is not found
-  the whole article ships with `frame_ok=False`.
+* **The frame is header + content + metrics, nothing else.** Facebook and
+  Instagram both put the comment thread and the "Write a comment" box INSIDE
+  the post's own container, and on Instagram desktop beside the media — so a
+  vertical cut cannot exclude them. Both engines therefore HIDE them first
+  (`_JS_TRIM_POST`: nested comment articles / list items after the caption,
+  forms, "View more comments" controls) and only then choose the frame: at the
+  Like · Comment · Share row on Facebook (above it when `keep_engagement` is
+  false), the trimmed article on Instagram. The result dict says what was
+  hidden (`trimmed`) and where the cut was made (`cut`); `frame_ok=False`
+  means neither a row nor a comment boundary was found and the article was
+  taken whole — look at that one. `scripts/capture_probe.py <url>` shows all
+  of this for a single link, which is how these rules get tuned.
 
-Selectors are Facebook's Aug 2026 desktop DOM. When it breaks, run
-`scripts/probe_logged_out.py` on the link and look (rule 3) before touching
-the engine.
+**Verified against the live pages on 2026-08-16** (2 Facebook posts, 2
+Instagram posts, `scripts/capture_probe.py --headed`). Both engines shipped
+selectors that matched *nothing* and reported `status="ok"`, `frame_ok=True`
+either way — rule 3 again. What actually works:
+
+* **Facebook renders in the VIEWER'S language, not the context's.** An
+  `en-IN` context got a Hindi page, so `aria-label="Like"` found no actions
+  row, the frame fell through to `article_end`, and the shot shipped with the
+  sort control, the "see hidden replies" links and the comment skeletons in
+  it. **Never match a Facebook landmark on rendered text or an English
+  `aria-label`.** The actions row is 2-3 sibling `div[role="button"]` of
+  similar size on one line, each 22-55% of the article's width; the counts row
+  is the last full-width row ending above it. Cutting just above the buttons
+  keeps the metrics and drops every control.
+* **Hide the Facebook comment thread as ONE node**, not as N comment
+  articles: the highest ancestor of the first nested `div[role="article"]`
+  that still starts below the actions row. Hiding the articles individually
+  leaves their wrappers — sort control, "see hidden replies", lazy-load
+  skeletons — visibly behind.
+* The Facebook post's own article is the one **not nested inside another
+  article**. `aria-label` starts with "Comment" only in English; in Hindi a
+  comment reads "… पर कमेंट".
+* **A logged-out Instagram permalink has no `<article>`, `<ul>`, `<header>`
+  or `<form>` at all** — the card is anonymous `<div>`s. Every old selector
+  missed, the engine fell back to `<main>`, and the shot was the whole page:
+  nav with Log in / Sign up, the comment thread, and the "More posts from …"
+  grid. Find the card from the media outwards — the first ancestor ≥1.25x the
+  media's width and no taller — tag it, clip to it.
+* Instagram's right column holds **one `overflow-y:auto` box whose children
+  are `[caption, "load more", comments]`**; keep child 0, hide the rest. Match
+  the caption against **every** username link in the card, not the first: a
+  collab post lists the collaborators ahead of the owner, and matching only
+  the first link hid the real caption and shipped a post with no text.
+* The logged-out "Log in to like or comment" row is the small ancestor of
+  `a[href*="/accounts/login"]` — structural, so it survives translation.
+
+Selectors are Facebook's and Instagram's Aug 2026 desktop DOM. When it breaks,
+run `scripts/capture_probe.py <url> --headed` on the link and look (rule 3)
+before touching the engine.
 
 ---
 

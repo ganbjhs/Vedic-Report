@@ -3,13 +3,16 @@
 
     python profiles/run_profile.py links.xlsx --profile client-deck
     python profiles/run_profile.py links.xlsx --profile contact-sheet --workers 4
+    python profiles/run_profile.py links.xlsx --profile combined-16x9 --outputs pdf
     python profiles/run_profile.py - --profile client-deck        # paste on stdin
 
 Deliberately mirrors the CLI surface of the frozen `run.py` — same `--title`,
 `--date`, `--no-date`, `--workers`, `--headed` with the same meanings, the same
 `"<title> <date>"` header rule and the same `"<Title>_<date>"` output stem — so
 `webapp/jobs/runner.py::build_command` drives every report type through one
-shape. `--profile <slug>` is the only addition.
+shape. `--profile <slug>` is the only addition, plus `--outputs pdf,pptx` — a
+FILTER over the documents the style already declares, never a way to ask for
+one it does not build.
 
 `run.py` and everything under `src/` are untouched.
 """
@@ -56,6 +59,7 @@ def main():
     argv = sys.argv[:]
     bare = _take_switch(argv, "--no-date")
     slug = _take_flag(argv, "--profile") or "twitter"
+    outputs = _take_flag(argv, "--outputs") or ""
 
     # Validate BEFORE a browser starts. A bad profile should cost nothing —
     # and it must fail with a readable line, not a traceback, because the web
@@ -80,7 +84,7 @@ def main():
     prof_runner.main()
 
     # 2) build the documents this profile asks for
-    sys.argv = ["prof_builder", header, stem, slug]
+    sys.argv = ["prof_builder", header, stem, slug, outputs]
     prof_builder.main()
     return 0
 

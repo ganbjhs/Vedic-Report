@@ -46,6 +46,11 @@ def _public_preset(p: dict) -> dict:
         "report_label": rt.label if rt else p["report_type"],
         "keep_engagement": bool(p.get("keep_engagement")),
         "workers": int(p.get("workers") or 0),
+        # Resolved against the style, so a preset saved before 2.4.0 (or one
+        # whose style has since changed which documents it builds) loads as the
+        # formats that really exist rather than as nothing ticked.
+        "outputs": list(report_types.clean_outputs(p["report_type"],
+                                                   p.get("outputs") or ())),
         "dedupe": bool(p.get("dedupe", 1)),
         "sheet_url": p.get("sheet_url") or "",
         "report_name": p.get("report_name") or "",
@@ -80,6 +85,11 @@ async def create_preset(request: Request,
     if sheet_url and not sheet_url.startswith("https://docs.google.com/"):
         raise HTTPException(status_code=400,
                             detail="Only a Google Sheets link can be saved.")
+    asked = [str(o).strip().lower() for o in (data.get("outputs") or [])
+             if str(o).strip()]
+    why_not = report_types.check_outputs(report_type, asked)
+    if why_not:                       # same gate as the job API, same message
+        raise HTTPException(status_code=400, detail=why_not)
     if len(store.presets_for(user, limit=100)) >= 50:
         raise HTTPException(status_code=400,
                             detail="You have 50 presets — delete one first.")
@@ -88,7 +98,8 @@ async def create_preset(request: Request,
         keep_engagement=bool(data.get("keep_engagement")) and rt.allows_keep_engagement,
         workers=max(0, min(workers, config.MAX_WORKERS)) if rt.allows_worker_choice else 0,
         dedupe=bool(data.get("dedupe", True)), sheet_url=sheet_url,
-        report_name=str(data.get("report_name") or "").strip())
+        report_name=str(data.get("report_name") or "").strip(),
+        outputs=report_types.clean_outputs(report_type, asked))
     return JSONResponse({"ok": True, "id": pid,
                          "presets": [_public_preset(p) for p in store.presets_for(user)]},
                         status_code=201)

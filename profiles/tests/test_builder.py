@@ -351,7 +351,7 @@ else:
         _Image.new("RGB", (1920, 1080), "#FFFFFF").save(
             reg / "assets" / "fontstyle" / "post.png")
         p = json.loads(json.dumps(_tpl))
-        p.update(slug="fontstyle", label="Font style", outputs=["pdf", "html"])
+        p.update(slug="fontstyle", label="Font style", outputs=["pdf", "pptx"])
         p["template"]["pages"] = {"post": "post.png"}
         p["template"]["fonts"] = ["Brand.ttf"]
         p["template"]["text"] = [dict(p["template"]["text"][1], font="Brand.ttf")]
@@ -368,8 +368,19 @@ else:
             raw = made["pdf"].read_bytes()
             check("the font file is embedded in the PDF",
                   b"/FontFile2" in raw and b"/TrueType" in raw, True)
-            check("the HTML inlines it as @font-face",
-                  "@font-face" in made["html"].read_text(errors="ignore"), True)
+            # A .pptx cannot carry the file, so what it must get right is the
+            # NAME: the family read out of the TTF, not the filename, or the
+            # deck would be substituted on the designer's own machine.
+            check("a style with an uploaded font builds a PPTX", "pptx" in made)
+            family = tpl_builder.face_names(registry.load("fontstyle")).get("Brand.ttf")
+            check("the family name comes from the font file",
+                  bool(family) and family != "Brand.ttf", True)
+            import zipfile as _zip
+            with _zip.ZipFile(made["pptx"]) as z:
+                slides = "".join(z.read(n).decode("utf-8") for n in z.namelist()
+                                 if n.startswith("ppt/slides/slide"))
+            check("a slide asks for that family by name",
+                  f'typeface="{family}"' in slides, True)
         finally:
             registry.set_user_dir(None)
 

@@ -82,7 +82,7 @@ def resolve_source(argv) -> str:
     so `--date X links.xlsx` makes X the source path — a trap worth not
     reproducing (see docs/profile-engine.md and RULEBOOK §7 notes).
     """
-    value_flags = {"--workers", "--profile", "--title", "--date"}
+    value_flags = {"--workers", "--profile", "--title", "--date", "--outputs"}
     skip = set()
     for i, a in enumerate(argv):
         if a in value_flags:

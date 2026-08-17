@@ -527,6 +527,49 @@ that silently became Helvetica is the same class of bug as rule 20's guard. A
 font file that goes missing at build time falls back to Helvetica **and says so
 on stdout** (rule 17).
 
+### A template style's outputs are PDF + PPTX (v2.4) — and DOCX is gone
+
+`registry.TEMPLATE_OUTPUTS`. Both are exact renderings of the same page; the
+difference is what you can do next with them.
+
+* **PDF** — reportlab draws the art, the fitted screenshots and the text slots.
+  It EMBEDS an uploaded font file, so the real face always shows.
+* **PPTX** — `tpl_builder.build_pptx`, one slide per page: the page art added
+  **first** (so it is at the back), then every slot as a native object — the
+  screenshot as a picture, each text slot as a text box, the LINK slot as a run
+  carrying a real hyperlink, the summary as a **real table**. Everything can be
+  moved and edited in PowerPoint, Keynote or Google Slides.
+* **DOCX is not offered for template styles.** It was always labelled
+  "approximate" because Word cannot reliably layer a picture over a full-page
+  background; PPTX does exactly that, so the approximation was retired rather
+  than kept beside a faithful one. Numeric styles keep PDF + DOCX — they have
+  no page art to lose, so their DOCX is faithful and a deck would add nothing.
+
+Three things the two documents share ON PURPOSE, because a value that differed
+between them would be worse than either being slightly off:
+
+* the **trim**. `_trim` measures with reportlab in the font the PDF prints in,
+  for both, so a handle cut to "Kashi Ke Wa…" is cut the same on the slide.
+* the **summary geometry** (`_summary_rows`, `_summary_metrics`,
+  `_SUMMARY_*`), so the table's rows, colours and 62% divider are one rule.
+* the **fit**. `_fit_box` reproduces reportlab's `preserveAspectRatio` +
+  `anchor="c"` with `layout.fit`, so a logo lands in the same rectangle.
+
+And two honest limits, both printed on stdout rather than left to be found in
+a deck (rule 17): a .pptx **names** a typeface and cannot carry one — the family
+is read out of the TTF, not guessed from the filename, and a machine without it
+installed will substitute; and Helvetica has no file on most machines, so the
+slide asks for **Arial** (metrically identical, which is why the PDF's geometry
+survives) instead of pretending otherwise. Non-Latin text needs no swap in the
+deck — the characters are stored as text and the renderer shapes them, which is
+where the WinAnsi problem of rule 14 comes from in the PDF.
+
+**No trailing links page** on a template style (2.4.0). Every post already
+carries its own LINK, so the sheet-style list of every URL at the end was a
+leftover from the numeric styles repeating 16 hyperlinks nobody clicked, on a
+page that was not part of the design. `content.links_table` is stored `False`
+by the designer and draws nothing here; the numeric builders still honour it.
+
 ---
 
 ## 18b. The Facebook engine is a profile engine, and starts logged-out
@@ -637,8 +680,8 @@ before touching the engine.
 8. **Template styles are still profiles.** A Canva page becomes
    `template: {pages, slots, text}` on an ordinary profile; the registry
    validates it, `layout.placements` fits (never crops) into slots, and the
-   engine that captures is chosen by `extends`. DOCX for these is labelled
-   approximate — never promise pixel parity in Word.
+   engine that captures is chosen by `extends`. Their outputs are PDF + PPTX
+   (§18a) — no DOCX, and no HTML anywhere since 2.4.0.
 9. **Users are data, not config.** Roles come from the `users` table via
    `auth.role_of`; `.env` is bootstrap only. Anything a role unlocks is
    guarded server-side (`require_admin` / `require_designer`).
@@ -682,6 +725,19 @@ before touching the engine.
    structural change (new folder, new route family, new contract).
 14. **Sectioned sheets** (section names in column A, header's first cell = the
     first section) are recognised automatically; no special mode.
+15. **Formats belong to the STYLE, and the choice is a filter over them.**
+    There is no server-wide "output format" setting: a global one would either
+    promise a deck for a style with no page art or hide a format a style really
+    builds. The New report form draws one tick box per `rt.outputs` entry, all
+    ticked; `report_types.check_outputs` is the gate behind them (a disabled
+    box is a hint — rule 2 of this section, again), and `clean_outputs` treats
+    "nothing asked" as "everything the style builds", which is what every job
+    and preset saved before 2.4.0 meant.
+    Where the filter is APPLIED differs, deliberately:
+    a profile type is told (`run_profile.py --outputs pdf,pptx`), and the two
+    built-ins are not — their entrypoints are frozen (rule 1), so their
+    builders still write both files and `publish(..., wanted)` keeps only the
+    ones asked for. A format choice is not worth an edit to `run.py`.
 
 ---
 

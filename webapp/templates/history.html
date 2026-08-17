@@ -24,13 +24,14 @@
   {% if jobs %}
   <div style="overflow:auto">
   <table class="tbl" id="hist">
-    <thead><tr><th>Report</th><th>Style</th><th>Status</th><th class="num">Posts</th><th>When</th><th>Took</th><th>Downloads</th></tr></thead>
+    <thead><tr><th>Report</th><th>Style</th><th>Outputs</th><th>Status</th><th class="num">Posts</th><th>When</th><th>Took</th><th>Downloads</th></tr></thead>
     <tbody>
     {% for j in jobs %}
     <tr data-id="{{ j.id }}" data-status="{{ j.status }}" data-type="{{ j.report_label }}"
         data-text="{{ (j.title ~ ' ' ~ j.report_label ~ ' ' ~ j.upload_name) | lower }}">
       <td class="name"><a href="/jobs/{{ j.id }}">{{ j.title }}</a><br><span class="small faint">{{ j.upload_name }}</span></td>
       <td>{{ j.report_label }}</td>
+      <td class="small faint">{% for o in j.outputs %}<span class="tag">{{ o | upper }}</span>{% endfor %}</td>
       <td><span class="st {{ j.status }}">{{ j.status }}</span>{% if j.status == 'running' %}<span class="small faint"> {{ j.done }}/{{ j.total }}</span>{% endif %}</td>
       <td class="num">{{ j.done if j.status == 'done' else j.link_count }}{% if j.skipped %} <span class="small faint" title="left out">−{{ j.skipped | length }}</span>{% endif %}</td>
       <td class="small" title="{{ j.created_at }}"><span data-ago="{{ j.created_at }}"></span></td>

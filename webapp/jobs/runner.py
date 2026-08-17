@@ -147,7 +147,8 @@ def _copy_user_profiles(job_id: str, app: Path) -> None:
 # Command
 # --------------------------------------------------------------------------- #
 def build_command(report_type: str, title: str, date: str,
-                  keep_engagement: bool = False, workers: int = 0) -> list:
+                  keep_engagement: bool = False, workers: int = 0,
+                  outputs=None) -> list:
     """The exact CLI invocation, identical in shape to what you run by hand.
 
     `--no-date` is what makes the document header read exactly what the user
@@ -172,6 +173,12 @@ def build_command(report_type: str, title: str, date: str,
     MAX_WORKERS here as well as at the API boundary, because this function is
     also reachable from a stored job record, and one browser too many is an OOM
     kill, not an error message.
+
+    `outputs` is the user's tick boxes, and it reaches the pipeline for PROFILE
+    types only. The two built-ins run frozen entrypoints that take no such flag
+    (rule 1), so for them the choice is applied in `publish()` — their builders
+    still write both files and only the wanted ones are kept and offered. That
+    asymmetry is deliberate: a format choice is not worth an edit to `run.py`.
     """
     rt = report_types.get(report_type)
     if rt is None:
@@ -195,6 +202,9 @@ def build_command(report_type: str, title: str, date: str,
            "--workers", str(workers)]
     if keep_engagement and rt.allows_keep_engagement:
         cmd.append("--keep-engagement")
+    wanted = report_types.clean_outputs(report_type, outputs)
+    if not rt.builtin and set(wanted) != set(rt.outputs):
+        cmd += ["--outputs", ",".join(wanted)]
     return cmd
 
 
@@ -411,14 +421,28 @@ def _skipped_from_results(results: list) -> list:
     return skipped
 
 
-def publish(job_id: str, app: Path, stem: str) -> dict:
-    """Move the pipeline's output into out/ under the user's chosen name."""
+# Documents a job can publish. `xlsx` is the global data export, not a report
+# format, so it is never filtered by the user's format choice.
+_REPORT_EXTS = ("pdf", "docx", "pptx")
+
+
+def publish(job_id: str, app: Path, stem: str, wanted=None) -> dict:
+    """Move the pipeline's output into out/ under the user's chosen name.
+
+    `wanted` — the formats the user ticked. For a profile type the pipeline was
+    already told, so nothing else is there to skip; for the two built-ins it is
+    the whole mechanism: their frozen builders always write PDF and DOCX, and
+    an unticked format is simply not published, not offered and not downloadable.
+    """
     out = out_dir(job_id)
     out.mkdir(parents=True, exist_ok=True)
     reports = app / "reports"
     artifacts = {}
+    keep = {str(w).lower() for w in (wanted or ())}
 
-    for ext in ("pdf", "docx", "html", "xlsx"):
+    for ext in (*_REPORT_EXTS, "xlsx"):
+        if keep and ext in _REPORT_EXTS and ext not in keep:
+            continue
         produced = sorted(reports.glob(f"*.{ext}"),
                           key=lambda p: p.stat().st_mtime, reverse=True)
         if produced:
@@ -483,8 +507,10 @@ def run_job(job_id: str, on_line=None) -> dict:
     stem = job["name"]
     date = datetime.date.today().strftime("%d-%m-%y")
     keep_engagement = bool(job.get("keep_engagement"))
+    outputs = report_types.clean_outputs(job["report_type"],
+                                         job.get("outputs") or ())
     cmd = build_command(job["report_type"], job["title"], date, keep_engagement,
-                        int(job.get("workers") or 0))
+                        int(job.get("workers") or 0), outputs)
 
     store.update(job_id, status="running", started_at=time.time(),
                  phase="Checking the X login", error="")
@@ -492,6 +518,10 @@ def run_job(job_id: str, on_line=None) -> dict:
     prog.note(f"Job started — {job['report_type']} report, "
               f"{job.get('link_count', 0)} link(s).")
     rt = report_types.get(job["report_type"])
+    if rt is not None and set(outputs) != set(rt.outputs):
+        prog.note(f"Building {', '.join(o.upper() for o in outputs)} only — "
+                  f"{rt.label} can also produce "
+                  f"{', '.join(o.upper() for o in rt.outputs if o not in outputs)}.")
     chosen = int(job.get("workers") or 0)
     if chosen and rt is not None and rt.allows_worker_choice:
         capped = min(chosen, config.MAX_WORKERS)
@@ -577,13 +607,13 @@ def run_job(job_id: str, on_line=None) -> dict:
 
     results = _read_results(app)
     skipped = _skipped_from_results(results)
-    artifacts = publish(job_id, app, stem)
+    artifacts = publish(job_id, app, stem, outputs)
     captured = len(results) - len(skipped)
 
     # Success means a DOCUMENT was produced. A failed link still leaves an
     # evidence screenshot behind, so screenshots.zip alone is not success —
     # without this the "every link was unavailable" case would report "done".
-    has_document = bool(artifacts.get("pdf") or artifacts.get("docx"))
+    has_document = any(artifacts.get(ext) for ext in _REPORT_EXTS)
 
     for s in skipped:
         prog.note(f"Not in the report: {s['account'] or s['link']} — {s['reason']}",

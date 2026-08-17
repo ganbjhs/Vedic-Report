@@ -1,4 +1,4 @@
-"""Build a profile's documents from results.json — PDF, DOCX and/or HTML.
+"""Build a profile's documents from results.json — PDF and/or DOCX.
 
 Geometry comes from `layout.py`, shape from `shapes.py`; this module only draws.
 That split is what makes the whole layout testable with no browser and no
@@ -9,10 +9,8 @@ and NOT modified. The two existing report types keep their own builders and
 entrypoints (docs/profile-engine.md §10 decision 3); this one serves additional
 profiles.
 
-Usage: python profiles/prof_builder.py "<header>" "<stem>" "<profile-slug>"
+Usage: python profiles/prof_builder.py "<header>" "<stem>" "<profile-slug>" [pdf,docx]
 """
-import base64
-import html
 import json
 import sys
 import tempfile
@@ -289,91 +287,44 @@ def build_docx(results, images, places, profile, title, out):
     doc.save(str(out))
 
 
-# --------------------------------------------------------------------------- #
-# HTML — one self-contained file, images inlined
-# --------------------------------------------------------------------------- #
-def build_html(results, images, places, profile, title, out):
-    content = profile["content"]
-    cols = profile["page"]["grid"][0]
-    parts = [
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
-        f"<title>{html.escape(title)}</title>",
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
-        "<style>",
-        ":root{--ink:#0f172a;--muted:#64748b;--accent:#1d9bf0;--bg:#f6f8fa;",
-        "--surface:#fff;--border:#e2e8f0}",
-        "@media(prefers-color-scheme:dark){:root{--ink:#e6edf7;--muted:#93a3bb;",
-        "--bg:#0b1220;--surface:#121a2a;--border:#24314a}}",
-        "*{box-sizing:border-box}body{margin:0;background:var(--bg);",
-        "color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,",
-        "'Segoe UI',Roboto,sans-serif}",
-        ".wrap{max-width:1100px;margin:0 auto;padding:32px 20px 64px}",
-        "h1{font-size:1.6rem;margin:0 0 24px;text-align:center}",
-        f".grid{{display:grid;gap:24px;grid-template-columns:repeat({cols},minmax(0,1fr))}}",
-        "@media(max-width:720px){.grid{grid-template-columns:1fr}}",
-        ".post{background:var(--surface);border:1px solid var(--border);",
-        "border-radius:12px;padding:14px;overflow:hidden}",
-        ".post img{width:100%;height:auto;display:block;border-radius:8px}",
-        ".meta{font-size:.82rem;color:var(--muted);margin-top:8px;",
-        "overflow-wrap:anywhere}",
-        ".meta a{color:var(--accent)}",
-        ".metrics{display:grid;grid-template-columns:max-content 1fr;",
-        "gap:2px 12px;font-size:.82rem;margin-top:8px}",
-        ".metrics dt{color:var(--muted)}.metrics dd{margin:0}",
-        "table{width:100%;border-collapse:collapse;margin-top:32px;",
-        "font-size:.85rem}td,th{border:1px solid var(--border);padding:6px 9px;",
-        "text-align:left;overflow-wrap:anywhere}th{color:var(--accent)}",
-        "</style></head><body><main class=\"wrap\">",
-        f"<h1>{html.escape(title)}</h1><div class=\"grid\">",
-    ]
-    for r, img in zip(results, images):
-        data = base64.b64encode(Path(img).read_bytes()).decode("ascii")
-        parts.append("<article class=\"post\">")
-        parts.append(f'<img alt="Post by {html.escape(r.get("account_name") or "")}" '
-                     f'src="data:image/jpeg;base64,{data}">')
-        for field in content.get("per_post_fields") or []:
-            value = shown_link(r) if field == "post_link" else (r.get(field) or "")
-            if not value:
-                continue
-            if field == "post_link":
-                esc = html.escape(value, quote=True)
-                parts.append(f'<p class="meta"><a href="{esc}">{html.escape(value)}</a></p>')
-            else:
-                parts.append(f'<p class="meta">{html.escape(str(value))}</p>')
-        if content.get("metrics"):
-            parts.append("<dl class=\"metrics\">")
-            for label, key in content["metrics"]:
-                val = (r.get("metrics") or {}).get(key, "—")
-                parts.append(f"<dt>{html.escape(label)}</dt>"
-                             f"<dd>{html.escape(str(val))}</dd>")
-            parts.append("</dl>")
-        parts.append("</article>")
-    parts.append("</div>")
-
-    if content.get("links_table"):
-        parts.append("<table><thead><tr><th>Link</th></tr></thead><tbody>")
-        for r in results:
-            link = shown_link(r)
-            if link:
-                esc = html.escape(link, quote=True)
-                parts.append(f'<tr><td><a href="{esc}">{html.escape(link)}</a></td></tr>')
-        parts.append("</tbody></table>")
-
-    parts.append("</main></body></html>")
-    Path(out).write_text("".join(parts), encoding="utf-8")
-
-
-BUILDERS = {"pdf": build_pdf, "docx": build_docx, "html": build_html}
+BUILDERS = {"pdf": build_pdf, "docx": build_docx}
 
 
 def _mb(path):
     return round(Path(path).stat().st_size / 1_048_576, 1)
 
 
+def wanted_outputs(profile, asked: str = "") -> list:
+    """The profile's outputs, narrowed to the ones this run asked for.
+
+    The style still owns WHICH documents exist — a request is a filter over
+    that list and never an addition to it, so a hand-crafted job cannot ask a
+    numeric style for a deck. An empty or fully-unrecognised request means
+    "everything the style declares", which is what every caller before 2.4.0
+    meant by passing nothing.
+    """
+    declared = list(profile["outputs"])
+    want = [w for w in (a.strip().lower() for a in (asked or "").split(","))
+            if w]
+    if not want:
+        return declared
+    kept = [k for k in declared if k in want]
+    unknown = [w for w in want if w not in declared]
+    if unknown:
+        print(f"[report] ignoring requested output(s) {unknown} — "
+              f"{profile['slug']} builds {declared}", flush=True)
+    if not kept:
+        print("[report] none of the requested outputs belong to this style — "
+              f"building {declared}", flush=True)
+        return declared
+    return kept
+
+
 def main():
     title = sys.argv[1] if len(sys.argv) > 1 else "Report"
     stem = sys.argv[2] if len(sys.argv) > 2 else "Report"
     slug = sys.argv[3] if len(sys.argv) > 3 else "twitter"
+    asked = sys.argv[4] if len(sys.argv) > 4 else ""
     profile = registry.load(slug)
 
     all_results = json.loads((OUT / "results.json").read_text())
@@ -391,12 +342,23 @@ def main():
         if profile.get("template"):
             import tpl_builder                     # designed-page styles
             builders = tpl_builder.BUILDERS
-        for kind in profile["outputs"]:
+        for kind in wanted_outputs(profile, asked):
             builder = builders.get(kind)
             if not builder:
                 continue
             dest = OUT / f"{stem}.{kind}"
-            builder(results, images, places, profile, title, dest)
+            try:
+                builder(results, images, places, profile, title, dest)
+            except ImportError as e:
+                # PPTX needs python-pptx, which lives in the WEB layer's
+                # requirements (requirements.txt is frozen). A bare CLI install
+                # must still get its PDF, and must be told why it got only that
+                # rather than watching the whole build die (rule 17).
+                print(f"[report] cannot build .{kind}: {e} — install it with "
+                      "`pip install -r requirements-web.txt`. The other "
+                      "outputs were still written.", flush=True)
+                dest.unlink(missing_ok=True)
+                continue
             progress.wrote(dest, _mb(dest))
     extra = f"  ({skipped} skipped)" if skipped else ""
     print(f"[report] {len(results)} post(s) in {slug}{extra}", flush=True)

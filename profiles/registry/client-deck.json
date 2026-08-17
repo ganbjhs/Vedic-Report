@@ -31,5 +31,5 @@
     "links_table": true
   },
 
-  "outputs": ["pdf", "docx", "html"]
+  "outputs": ["pdf", "docx"]
 }

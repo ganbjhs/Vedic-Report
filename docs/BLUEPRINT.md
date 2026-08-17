@@ -10,7 +10,8 @@ rulebook says *what will bite you*.
 ## 0. In one paragraph
 
 Give it post links (X/Twitter or Facebook); it screenshots every post in a real
-browser and lays the screenshots into a PDF + DOCX (+ HTML for some styles).
+browser and lays the screenshots into documents — PDF + DOCX for the numeric
+styles, PDF + an editable PPTX deck for the designed-page (template) ones.
 Two capture pipelines are **frozen** and production-proven (`run.py`+`src/`
 for the Twitter report, `influencer/` for the Influencer report). Everything
 else — a third engine for Facebook, a *profile engine* that turns page layout
@@ -45,7 +46,7 @@ into JSON, and a FastAPI web app with a role-aware dashboard — is built
 ├───────────────────────────────────────────────────────────────────────┤
 │ builders (results.json + PNGs → documents)                            │
 │   src/report_builder.py [FROZEN]  influencer/inf_report_builder.py [FROZEN]│
-│   profiles/prof_builder.py  (PDF/DOCX/HTML from a profile JSON)       │
+│   profiles/prof_builder.py  (PDF/DOCX from a profile JSON)            │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -104,7 +105,8 @@ profiles/                  the profile engine — presentation as data
   progress.py              the stdout vocabulary the web runner parses
   prof_runner.py           workers/retry/quality/results.json (own CTX_KWARGS)
   prof_worker.py           imports the engine DIRECTLY (x | influencer | facebook)
-  prof_builder.py          PDF/DOCX/HTML from profile + results.json
+  prof_builder.py          PDF/DOCX from profile + results.json; --outputs
+                           narrows that to what the job asked for
   tpl_builder.py           the same for TEMPLATE styles (designed PNG pages + slots);
                            swaps in a Unicode face per string when Helvetica
                            cannot draw it (captured Hindi Page names — rule 14)
@@ -160,8 +162,10 @@ sessions/ (secret, gitignored) x_state.json, optional fb_state.json
    capability table (never from a slug test), starts the subprocess in the job
    dir, parses its stdout with the `_RE_*` regexes (the *contract* in
    `profiles/progress.py`), counts PNGs for the live bar, watchdog timeout.
-4. **Publish** newest `reports/*.{pdf,docx,html,xlsx}` + `screenshots.zip` →
-   `out/`; skipped links get a plain-English reason from `_STATUS_REASON`.
+4. **Publish** newest `reports/*.{pdf,docx,pptx,xlsx}` + `screenshots.zip` →
+   `out/`, filtered to the formats the job asked for (`publish(..., wanted)` —
+   for the two built-ins that filter IS the choice, since their entrypoints are
+   frozen); skipped links get a plain-English reason from `_STATUS_REASON`.
 5. **Deliver** `/jobs/<id>` polls `GET /api/jobs/<id>` (or NDJSON stream in
    inline mode); downloads are owner-checked and path-checked.
 
@@ -175,6 +179,7 @@ sessions/ (secret, gitignored) x_state.json, optional fb_state.json
 | stdout lines `[runner] N X link(s) loaded`, `[verify] a/b …`, `[report] wrote …`, … | `profiles/progress.py` ↔ `webapp/jobs/runner.py` | the progress bar goes blank silently (test_progress_contract asserts it) |
 | `reports/results.json` + `reports/screenshots/*.png` in the job's app dir | all runners | publish() finds nothing |
 | Profile schema v1 (`registry._ALLOWED`, `_TOP`); unknown key = error | registry.py | designer + presets store slugs |
+| Outputs are per style: template → `pdf, pptx`; numeric + built-ins → `pdf, docx` (`registry.TEMPLATE_OUTPUTS` / `NUMERIC_OUTPUTS`, `ReportType.outputs`) | registry.validate, report_types | the form offers a format the job cannot produce |
 | `ReportType(slug,label,argv,worker_pool,allows_worker_choice,allows_keep_engagement,platform,custom,…)` | report_types.py | form controls, build_command |
 | Platform ↔ engine: `ENGINES[engine]["platform"] == profile.platform` | registry.validate | wrong link filter for a style |
 | Canonical upload = `Account | Link` sheet | uploads.write_canonical_xlsx | frozen loader reads exactly those headers |
@@ -193,7 +198,8 @@ a front-end store. Tokens live at the top of `app.css` (light + dark).
 
 New report = Platform pills → compact style rows (Sample opens a modal with
 the readable page) → Links (file / paste / sheet tabs + preview table) →
-capability-driven options → sticky action bar (name · summary · Save preset ·
+capability-driven options (Outputs tick boxes, crop, capture speed) → sticky
+action bar (name · summary · Save preset ·
 Generate). Design reference: `docs/dashboard-mockup.html`.
 
 Roles (`auth.role_of`): **admin** (everything, incl. Users & roles and style
@@ -212,7 +218,12 @@ cover/summary/end), uploads them at /styles, drags screenshot slots and text slo
 normal profile with a `template` section (`registry._validate_template`);
 assets in `data/profiles/assets/<slug>/` (page PNGs + `fonts/`), copied into the
 job dir with the profile. `layout.placements` fits screenshots into slots (never
-crops); `tpl_builder` paints background + slots. PDF/HTML exact; DOCX approximate.
+crops); `tpl_builder` paints background + slots. **Outputs: PDF + PPTX**, both
+exact — the PPTX is one slide per page with the art as a background picture and
+every slot a native, editable object (picture / text box with a real hyperlink /
+a real table for the summary). DOCX is not offered for these: Word cannot layer
+a picture over a full-page background, and PPTX replaces it as the editable
+format. There is no trailing links page (every post carries its own LINK).
 
 **The design kit (v2.3)** turns that from "place boxes blind" into a loop:
 
@@ -222,7 +233,7 @@ crops); `tpl_builder` paints background + slots. PDF/HTML exact; DOCX approximat
 | Canva slot guide | `GET/POST /api/styles/guide` → `tpl_preview.guide_png` | transparent PNG at the page's pixel size (16:9 → 1920×1080), every slot a labelled outline |
 | Live preview | `POST /api/styles/preview-page` → `tpl_preview.page_png` | ONE page with sample data + a fixture screenshot, auto-refreshed 800 ms after a change |
 | Editor ergonomics | `app.js initTemplateDesigner` | arrow-nudge, ⌘D duplicate, snapping with guide lines, numeric X/Y/W/H %, text presets, live slot numbering |
-| Template fonts | `template.fonts` + `text.font` | ≤3 × ≤2 MB .ttf/.otf per style in `assets/<slug>/fonts/`; `pdfmetrics.registerFont` in the PDF, base64 `@font-face` in the HTML |
+| Template fonts | `template.fonts` + `text.font` | ≤3 × ≤2 MB .ttf/.otf per style in `assets/<slug>/fonts/`; `pdfmetrics.registerFont` embeds the file in the PDF, the PPTX can only NAME the family (read from the file, announced on stdout) |
 
 All of it goes through `styles._template_profile` → `registry.resolve`, so the
 guide, the preview and the save agree by construction. `tpl_preview` is a

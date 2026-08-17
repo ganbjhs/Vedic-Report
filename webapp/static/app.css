@@ -224,6 +224,10 @@ textarea { resize:vertical; min-height:120px; font-family:ui-monospace,SFMono-Re
 @media (prefers-reduced-motion:reduce) { .skel, .spinner { animation:none; } }
 .options { display:grid; grid-template-columns:1fr 1fr; gap:12px 20px; margin-top:12px; }
 @media (max-width:800px) { .options { grid-template-columns:1fr; } }
+/* Outputs — one tick box per format the selected style really builds. */
+.outrow { display:flex; flex-wrap:wrap; gap:8px 18px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface); }
+.outrow .check { align-items:center; }
+.outrow .check input { margin:0; }
 .toggle { display:flex; gap:10px; align-items:flex-start; padding:12px; border:1px solid var(--border); border-radius:var(--r); cursor:pointer; background:var(--surface); }
 .toggle input { margin-top:3px; }
 .toggle b { display:block; font-size:13px; }

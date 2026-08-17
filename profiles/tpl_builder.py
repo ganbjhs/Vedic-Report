@@ -7,16 +7,25 @@ screenshots are fitted (never cropped) into the slots in reading order, and
 text slots print report fields. Nothing here reads a screenshot's pixels
 beyond scaling — the capture is untouched, this is presentation only.
 
-Fidelity by output:
-  * PDF  — exact: background image, screenshots and text at their slots.
-  * HTML — exact: absolutely-positioned layers, everything inlined.
-  * DOCX — approximate BY DESIGN: Word cannot reliably layer a picture over a
-           full-page background, so each page is the designed image followed by
-           its screenshots and captions. It is labelled as such in the file.
+Fidelity by output (both exact — see registry.OUTPUTS for why these two):
+  * PDF  — background image, screenshots and text drawn at their slots.
+  * PPTX — the same page as NATIVE OBJECTS: one slide per page, the page art a
+           full-bleed picture at the back, then every slot as a picture, a text
+           box or a table that can be moved and edited in PowerPoint, Keynote
+           or Google Slides. Nothing is flattened into the background.
+
+Two honest limits of the PPTX, both announced on stdout rather than left to be
+discovered in a deck (RULEBOOK rule 17):
+
+  * a slide references a typeface by NAME; there is no font file inside a
+    .pptx. A style's uploaded font renders as itself on a machine that has it
+    installed and is substituted on one that does not — where the PDF, which
+    embeds the file, always shows the real face.
+  * Helvetica has no file on most machines either; PowerPoint substitutes
+    Arial, which is metrically identical, so the slide is named for Arial
+    directly instead of pretending.
 """
-import base64
 import datetime
-import html
 import re
 from pathlib import Path
 
@@ -107,6 +116,42 @@ def _sections(results):
         seen[sec] = seen.get(sec, 0) + 1
         per.append((seen[sec], counts[sec]))
     return [(sec, counts[sec]) for sec in order], per
+
+
+def _summary_rows(results):
+    """The summary table, exactly as both outputs print it."""
+    sections, _ = _sections(results)
+    return sections + [("Total Items Tracked", len(results))]
+
+
+# The summary box the PDF falls back to when a style does not place one. Shared
+# so the deck cannot end up with the table somewhere the PDF does not have it.
+_DEFAULT_SUMMARY_BOX = {"x": 0.36, "y": 0.45, "w": 0.6, "h": 0.5}
+_SUMMARY_INK = "#7A3E12"
+_SUMMARY_RULE = "#8B5E34"
+_SUMMARY_BAND = "#FBEFE0"
+_SUMMARY_DIVIDER = 0.62         # the label / value split, as a fraction of width
+
+
+def _summary_metrics(box, n_rows, page_h_pt):
+    """(row height, font size) in points — one rule, two renderers."""
+    bh = box["h"] * page_h_pt
+    rh = min(bh / max(1, n_rows), 0.42 * 72.0)
+    return rh, max(8, min(16, rh * 0.5))
+
+
+def _trim(value, font, size, max_w_pt):
+    """`value` shortened with an ellipsis until it fits `max_w_pt`.
+
+    Measured with reportlab's metrics for BOTH outputs, so a handle that the
+    PDF prints as "Kashi Ke Wa…" reads the same on the slide. A slide could
+    reflow instead, but then the two documents would disagree about the value,
+    which is the one thing they must not do.
+    """
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    while len(value) > 1 and stringWidth(value, font, size) > max_w_pt:
+        value = value[:-2] + "…"
+    return value
 
 
 def _post_ctx(base_ctx, r, page_no, post_no, post_total):
@@ -306,8 +351,7 @@ def build_pdf(results, images, places, profile, title, out):
         c.setFillColor(colors.HexColor(t.get("color") or "#111111"))
         x, y, w = t["x"] * W, H - t["y"] * H - size, t["w"] * W
         # trim to the slot width — measured in the font it will print in
-        while len(value) > 1 and c.stringWidth(value, font, size) > w:
-            value = value[:-2] + "…"
+        value = _trim(value, font, size, w)
         if t.get("align") == "center":
             c.drawCentredString(x + w / 2, y, value)
         elif t.get("align") == "right":
@@ -331,22 +375,21 @@ def build_pdf(results, images, places, profile, title, out):
         paint_bg("summary")
         for t in _text_items(profile, "summary"):
             draw_text(t, {**base_ctx, "page": 0})
-        box = tpl.get("summary_box") or {"x": 0.36, "y": 0.45, "w": 0.6, "h": 0.5}
-        bx, by, bw, bh = box["x"] * W, box["y"] * H, box["w"] * W, box["h"] * H
-        rows = sections + [("Total Items Tracked", len(results))]
-        rh = min(bh / max(1, len(rows)), 0.42 * inch)
-        fs = max(8, min(16, rh * 0.5))
+        box = tpl.get("summary_box") or _DEFAULT_SUMMARY_BOX
+        bx, by, bw = box["x"] * W, box["y"] * H, box["w"] * W
+        rows = _summary_rows(results)
+        rh, fs = _summary_metrics(box, len(rows), H)
         y_top = H - by
         for i, (name, n) in enumerate(rows):
             yy = y_top - (i + 1) * rh
             last = i == len(rows) - 1
-            c.setFillColor(colors.HexColor("#FBEFE0") if i % 2 == 0 else colors.white)
+            c.setFillColor(colors.HexColor(_SUMMARY_BAND) if i % 2 == 0 else colors.white)
             c.rect(bx, yy, bw, rh, stroke=0, fill=1)
-            c.setStrokeColor(colors.HexColor("#8B5E34"))
+            c.setStrokeColor(colors.HexColor(_SUMMARY_RULE))
             c.setLineWidth(0.6)
             c.rect(bx, yy, bw, rh, stroke=1, fill=0)
-            c.line(bx + bw * 0.62, yy, bx + bw * 0.62, yy + rh)
-            c.setFillColor(colors.HexColor("#7A3E12"))
+            c.line(bx + bw * _SUMMARY_DIVIDER, yy, bx + bw * _SUMMARY_DIVIDER, yy + rh)
+            c.setFillColor(colors.HexColor(_SUMMARY_INK))
             label = str(name)[:60]
             c.setFont(_drawable(label, "Helvetica-Bold"), fs)
             c.drawString(bx + 8, yy + rh * 0.32, label)
@@ -379,118 +422,235 @@ def build_pdf(results, images, places, profile, title, out):
             draw_text(t, ctx)
         c.showPage()
 
-    if _bg(profile, "end") or profile["content"].get("links_table"):
-        if _bg(profile, "end"):
-            paint_bg("end")
-            for t in _text_items(profile, "end"):
-                draw_text(t, {**base_ctx, "page": n_pages})
-        if profile["content"].get("links_table"):
-            y = H * 0.82
-            c.setFont("Helvetica-Bold", 14)
-            c.setFillColor(colors.HexColor("#0F172A"))
-            c.drawString(0.75 * inch, y, "Links")
-            y -= 18
-            c.setFont("Helvetica", 8)
-            c.setFillColor(colors.HexColor("#1D4ED8"))
-            for r in results:
-                link = (r.get("post_link") or r.get("url") or "").strip()
-                if not link:
-                    continue
-                if y < 0.75 * inch:
-                    c.showPage()
-                    y = H - 0.75 * inch
-                    c.setFont("Helvetica", 8)
-                    c.setFillColor(colors.HexColor("#1D4ED8"))
-                c.drawString(0.75 * inch, y, link[:150])
-                c.linkURL(link, (0.75 * inch, y - 2, W - 0.75 * inch, y + 8), relative=0)
-                y -= 12
+    # NO trailing links page. A designed report used to end with a sheet-style
+    # list of every URL, which was a leftover from the numeric styles: here each
+    # post already carries its own LINK, so the list repeated 16 hyperlinks
+    # nobody clicked on a page that did not belong to the design. The style's
+    # own closing art still prints; `content.links_table` no longer draws
+    # anything for a template style (2.4.0).
+    if _bg(profile, "end"):
+        paint_bg("end")
+        for t in _text_items(profile, "end"):
+            draw_text(t, {**base_ctx, "page": n_pages})
         c.showPage()
     c.save()
 
 
 # --------------------------------------------------------------------------- #
-# HTML — one file, everything inlined, pages absolutely positioned
+# PPTX — the same page, as objects you can still move
 # --------------------------------------------------------------------------- #
-def _data_uri(path):
-    p = Path(path)
-    mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
-    return f"data:{mime};base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+# A slide names a typeface; it does not carry one. Helvetica has no file on most
+# machines, and PowerPoint substitutes Arial for it — metrically the same face,
+# which is why the PDF's Helvetica geometry survives the trip. Naming Arial
+# outright beats naming a font we know will be swapped.
+_PPTX_DEFAULT_FACE = "Arial"
+# Arial's ascent in ems. The PDF puts a text slot's BASELINE one em below the
+# slot's y; a top-anchored text box at single line spacing puts it one ascent
+# below the frame top. Nudging the frame down by the difference makes the two
+# documents agree on where the text sits, rather than by a visible hair.
+_ASCENT_EM = 0.905
 
 
-def _font_faces(profile) -> str:
-    """@font-face rules with the file inlined, so the single HTML page still
-    renders in its own typeface on a machine that has never seen it."""
-    css = []
+def _rgb(value, default="111111"):
+    """'#7A3E12' -> RGBColor. Never raises: a colour the slide cannot parse is
+    reported and printed in the default ink rather than taking the deck down."""
+    from pptx.dml.color import RGBColor
+    raw = str(value or "").lstrip("#").strip()
+    if len(raw) == 6:
+        try:
+            return RGBColor.from_string(raw.upper())
+        except ValueError:
+            pass
+    if raw:
+        print(f"[tpl] pptx: {value!r} is not a #RRGGBB colour — using "
+              f"#{default}", flush=True)
+    return RGBColor.from_string(default)
+
+
+def face_names(profile) -> dict:
+    """{font filename: the family name a slide must ask for}.
+
+    Read from the font FILE, not from its filename: "Brand-Regular.ttf" is
+    called "Brand" inside, and a slide asking for "Brand-Regular" would be
+    substituted on the designer's own machine.
+    """
+    from PIL import ImageFont
+    out = {}
     for name in (profile.get("template") or {}).get("fonts") or []:
         path = registry.font_path(profile, name)
         if not path:
+            print(f"[tpl] pptx: font {name!r} is not in this style's assets — "
+                  f"that text uses {_PPTX_DEFAULT_FACE}", flush=True)
             continue
-        fmt = "opentype" if str(path).lower().endswith(".otf") else "truetype"
-        blob = base64.b64encode(Path(path).read_bytes()).decode("ascii")
-        css.append(f"@font-face{{font-family:'{_font_key(name)}';"
-                   f"src:url(data:font/{fmt};base64,{blob}) format('{fmt}')}}")
-    return "".join(css)
+        try:
+            family = ImageFont.truetype(str(path), 20).getname()[0]
+        except Exception as e:
+            print(f"[tpl] pptx: could not read the family name of {name!r}: "
+                  f"{e} — that text uses {_PPTX_DEFAULT_FACE}", flush=True)
+            continue
+        out[name] = family
+        print(f"[tpl] pptx: {name!r} is referenced by family name {family!r} — "
+              "a machine without it installed will substitute (the PDF embeds "
+              "the file itself)", flush=True)
+    return out
 
 
-def _html_font(t) -> str:
-    name = t.get("font")
-    if not name or name == registry.DEFAULT_FONT:
-        return ""
-    return f"font-family:'{_font_key(name)}',Helvetica,Arial,sans-serif;"
+def _fit_box(img, x_pt, y_pt, w_pt, h_pt):
+    """The rectangle reportlab's `preserveAspectRatio` + `anchor='c'` would
+    actually paint: fitted inside the box, centred both ways. Same `fit()` the
+    placements come from, so the slide lands the picture where the PDF does."""
+    import layout
+    from PIL import Image
+    try:
+        with Image.open(img) as im:
+            iw, ih = im.size
+    except Exception as e:
+        print(f"[tpl] pptx: could not measure {img}: {e} — filling the box",
+              flush=True)
+        return x_pt, y_pt, w_pt, h_pt
+    fw, fh = layout.fit(iw, ih, w_pt, h_pt)
+    return x_pt + (w_pt - fw) / 2, y_pt + (h_pt - fh) / 2, fw, fh
 
 
-def build_html(results, images, places, profile, title, out):
+def _cell_style(cell, fill_hex, line_hex, width_pt=0.6):
+    """Solid fill + a rule on all four sides. python-pptx has no border API, so
+    the `a:ln*` elements are written directly — they go at the FRONT of tcPr,
+    which is where the schema wants them (before the fill)."""
+    from pptx.oxml import parse_xml
+    from pptx.oxml.ns import qn
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = _rgb(fill_hex)
+    tcPr = cell._tc.get_or_add_tcPr()
+    emu = int(width_pt * 12700)
+    line = _rgb(line_hex)
+    for tag in ("a:lnB", "a:lnT", "a:lnR", "a:lnL"):      # reverse: each goes first
+        for old in tcPr.findall(qn(tag)):
+            tcPr.remove(old)
+        tcPr.insert(0, parse_xml(
+            f'<{tag} xmlns:a="http://schemas.openxmlformats.org/drawingml/'
+            f'2006/main" w="{emu}" cap="flat" cmpd="sng" algn="ctr">'
+            f'<a:solidFill><a:srgbClr val="{line}"/></a:solidFill>'
+            f'<a:prstDash val="solid"/></{tag}>'))
+
+
+def build_pptx(results, images, places, profile, title, out):
+    from pptx import Presentation
+    from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
+    from pptx.util import Pt
+
+    aligns = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER,
+              "right": PP_ALIGN.RIGHT}
+
     pw_in, ph_in = registry.page_inches(profile["page"])
+    W, H = pw_in * 72.0, ph_in * 72.0            # points, exactly like the PDF
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Pt(W), Pt(H)
+    blank = prs.slide_layouts[6]                 # the empty layout
+
     date = datetime.date.today().strftime("%d-%m-%Y")
     pages = _pages(results, (images, places))
     n_pages = len(pages)
-    parts = [f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{html.escape(title)}</title>',
-             '<style>' + _font_faces(profile) +
-             'body{margin:0;background:#e5e7eb;font-family:Helvetica,Arial,sans-serif}'
-             f'.pg{{position:relative;width:{pw_in}in;height:{ph_in}in;margin:16px auto;background:#fff;'
-             'box-shadow:0 2px 12px rgba(0,0,0,.15);overflow:hidden;page-break-after:always;background-size:100% 100%}'
-             '.pg img.shot{position:absolute;object-fit:contain}'
-             '.pg .t{position:absolute;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.1}'
-             '@media print{body{background:#fff}.pg{margin:0;box-shadow:none}}</style></head><body>']
+    fonts = register_fonts(profile)              # reportlab, for measuring only
+    faces = face_names(profile)
+    tpl = profile["template"]
 
-    def bg_style(kind):
+    def new_slide(kind):
+        """A slide with its page art already at the back — the background is the
+        first shape on it, so everything added afterwards sits on top of it."""
+        slide = prs.slides.add_slide(blank)
         bg = _bg(profile, kind) or _bg(profile, "post")
-        return f"background-image:url('{_data_uri(bg)}')" if bg else ""
+        if bg:
+            slide.shapes.add_picture(bg, 0, 0, width=Pt(W), height=Pt(H))
+        return slide
 
-    def text_html(t, ctx):
-        v = _field_value(t["field"], ctx)
-        if not v:
-            return ""
-        style = (f"left:{t['x']*100:.3f}%;top:{t['y']*100:.3f}%;width:{t['w']*100:.3f}%;"
-                 f"font-size:{t.get('size_pt', 10)}pt;color:{t.get('color') or '#111'};"
-                 f"text-align:{t.get('align', 'left')};font-weight:{'700' if t.get('bold') else '400'};"
-                 + _html_font(t))
-        inner = html.escape(v)
+    def add_picture(slide, img, x_pt, y_pt, w_pt, h_pt):
+        x, y, w, h = _fit_box(img, x_pt, y_pt, w_pt, h_pt)
+        return slide.shapes.add_picture(img, Pt(x), Pt(y), Pt(w), Pt(h))
+
+    def draw_text(slide, t, ctx):
+        value = _field_value(t["field"], ctx)
+        if not value:
+            return
+        size = float(t.get("size_pt", 10))
+        # Measured in the font the PDF would print it in, so both documents
+        # trim the same value to the same characters. The SLIDE keeps the text
+        # as text, so a non-Latin string needs no font swap here — PowerPoint
+        # falls back per glyph where reportlab's WinAnsi Helvetica cannot.
+        value = _trim(value, _drawable(value, _pdf_font(t, fonts)), size,
+                      t["w"] * W)
+        box = slide.shapes.add_textbox(Pt(t["x"] * W),
+                                       Pt(t["y"] * H + (1 - _ASCENT_EM) * size),
+                                       Pt(t["w"] * W), Pt(size * 1.5))
+        tf = box.text_frame
+        tf.word_wrap = False
+        tf.auto_size = MSO_AUTO_SIZE.NONE
+        tf.vertical_anchor = MSO_ANCHOR.TOP
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        para = tf.paragraphs[0]
+        para.alignment = aligns.get(t.get("align") or "left", PP_ALIGN.LEFT)
+        para.line_spacing = 1.0
+        run = para.add_run()
+        run.text = value
+        run.font.name = faces.get(t.get("font") or "") or _PPTX_DEFAULT_FACE
+        run.font.size = Pt(size)
+        run.font.bold = bool(t.get("bold"))
+        run.font.color.rgb = _rgb(t.get("color"))
         if t["field"] in ("post_link", "link") and ctx.get("post_link"):
-            inner = f'<a href="{html.escape(ctx["post_link"], quote=True)}" style="color:inherit">{inner}</a>'
-        return f'<div class="t" style="{style}">{inner}</div>'
+            # A real hyperlink on the run, not a picture of one: the LINK button
+            # is clickable in PowerPoint and survives an upload to Slides.
+            run.hyperlink.address = ctx["post_link"]
+        return box
 
     base_ctx = {"title": title, "date": date, "pages": n_pages}
-    sections, per_post = _sections(results)
-    tpl = profile["template"]
+
     if _bg(profile, "cover"):
-        parts.append(f'<div class="pg" style="{bg_style("cover")}">' +
-                     "".join(text_html(t, {**base_ctx, "page": 0}) for t in _text_items(profile, "cover")) + "</div>")
+        slide = new_slide("cover")
+        for t in _text_items(profile, "cover"):
+            draw_text(slide, t, {**base_ctx, "page": 0})
+
     if _bg(profile, "summary") or tpl.get("summary_box"):
-        box = tpl.get("summary_box") or {"x": 0.36, "y": 0.45, "w": 0.6, "h": 0.5}
-        rows = sections + [("Total Items Tracked", len(results))]
-        table = ('<table style="width:100%;border-collapse:collapse;font-size:12pt">' +
-                 "".join(f'<tr style="background:{"#FBEFE0" if i % 2 == 0 else "#fff"}"><td style="border:1px solid #8B5E34;padding:4px 8px;color:#7A3E12;font-weight:700">{html.escape(str(n))}</td>'
-                         f'<td style="border:1px solid #8B5E34;padding:4px 8px;text-align:right;{"font-weight:700" if i == len(rows)-1 else ""}">{c}</td></tr>'
-                         for i, (n, c) in enumerate(rows)) + "</table>")
-        parts.append(f'<div class="pg" style="{bg_style("summary")}">' +
-                     "".join(text_html(t, {**base_ctx, "page": 0}) for t in _text_items(profile, "summary")) +
-                     f'<div style="position:absolute;left:{box["x"]*100:.2f}%;top:{box["y"]*100:.2f}%;width:{box["w"]*100:.2f}%">{table}</div></div>')
+        slide = new_slide("summary")
+        for t in _text_items(profile, "summary"):
+            draw_text(slide, t, {**base_ctx, "page": 0})
+        box = tpl.get("summary_box") or _DEFAULT_SUMMARY_BOX
+        rows = _summary_rows(results)
+        rh, fs = _summary_metrics(box, len(rows), H)
+        bx, by, bw = box["x"] * W, box["y"] * H, box["w"] * W
+        table = slide.shapes.add_table(len(rows), 2, Pt(bx), Pt(by), Pt(bw),
+                                       Pt(rh * len(rows))).table
+        # A real table, editable row by row — and its own look, not the theme's
+        # banded default, which would repaint the PDF's colours blue.
+        table.first_row = table.horz_banding = False
+        table.columns[0].width = Pt(bw * _SUMMARY_DIVIDER)
+        table.columns[1].width = Pt(bw * (1 - _SUMMARY_DIVIDER))
+        for i, (name, n) in enumerate(rows):
+            last = i == len(rows) - 1
+            table.rows[i].height = Pt(rh)
+            cells = ((str(name)[:60], PP_ALIGN.LEFT, _SUMMARY_INK, True),
+                     (str(n), PP_ALIGN.RIGHT, "#111111", last))
+            for j, (value, align, ink, bold) in enumerate(cells):
+                cell = table.cell(i, j)
+                _cell_style(cell, _SUMMARY_BAND if i % 2 == 0 else "#FFFFFF",
+                            _SUMMARY_RULE)
+                cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                cell.margin_left = cell.margin_right = Pt(8)
+                cell.margin_top = cell.margin_bottom = 0
+                para = cell.text_frame.paragraphs[0]
+                para.alignment = align
+                run = para.add_run()
+                run.text = value
+                run.font.size = Pt(fs)
+                run.font.bold = bold
+                run.font.name = _PPTX_DEFAULT_FACE
+                run.font.color.rgb = _rgb(ink)
+
+    _sec, per_post = _sections(results)
     idx = 0
-    for page_no, (pidx, items) in enumerate(pages, start=1):
-        parts.append(f'<div class="pg" style="{bg_style("post")}">')
+    for page_no, (_pidx, items) in enumerate(pages, start=1):
+        slide = new_slide("post")
         for r, img, pl in items:
-            parts.append(f'<img class="shot" src="{_data_uri(img)}" alt="" style="left:{pl.x_in}in;top:{pl.y_in}in;width:{pl.w_in}in;height:{pl.h_in}in">')
+            add_picture(slide, img, pl.x_in * 72.0, pl.y_in * 72.0,
+                        pl.w_in * 72.0, pl.h_in * 72.0)
         r0 = items[0][0]
         post_no, post_total = per_post[idx]
         idx += len(items)
@@ -498,91 +658,19 @@ def build_html(results, images, places, profile, title, out):
         for lg in tpl.get("logos") or []:
             logo = _logo_path(r0.get("platform") or "")
             if logo:
-                parts.append(f'<img class="shot" src="{_data_uri(logo)}" alt="" style="left:{lg["x"]*100:.2f}%;top:{lg["y"]*100:.2f}%;width:{lg["w"]*100:.2f}%;height:{lg["h"]*100:.2f}%">')
-        parts.append("".join(text_html(t, ctx) for t in _text_items(profile, "post")))
-        parts.append("</div>")
-    if profile["content"].get("links_table"):
-        parts.append(f'<div class="pg" style="{bg_style("end") if _bg(profile, "end") else ""}"><div style="position:absolute;left:0.75in;top:1in;right:0.75in;font-size:8pt">'
-                     '<h2 style="margin:0 0 8px;font-size:14pt">Links</h2>' +
-                     "".join(f'<div><a href="{html.escape(l, quote=True)}">{html.escape(l)}</a></div>'
-                             for l in ((r.get("post_link") or r.get("url") or "") for r in results) if l) +
-                     "</div></div>")
-    parts.append("</body></html>")
-    Path(out).write_text("".join(parts), encoding="utf-8")
+                add_picture(slide, logo, lg["x"] * W, lg["y"] * H,
+                            lg["w"] * W, lg["h"] * H)
+        for t in _text_items(profile, "post"):
+            draw_text(slide, t, ctx)
+
+    # Same ending as the PDF: the style's closing art if it has one, and no
+    # trailing links list (2.4.0 — every post carries its own LINK).
+    if _bg(profile, "end"):
+        slide = new_slide("end")
+        for t in _text_items(profile, "end"):
+            draw_text(slide, t, {**base_ctx, "page": n_pages})
+
+    prs.save(str(out))
 
 
-# --------------------------------------------------------------------------- #
-# DOCX — approximate (see module docstring)
-# --------------------------------------------------------------------------- #
-def build_docx(results, images, places, profile, title, out):
-    from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.shared import Inches, Pt, RGBColor
-
-    pw_in, ph_in = registry.page_inches(profile["page"])
-    doc = Document()
-    sec = doc.sections[0]
-    sec.page_width, sec.page_height = Inches(pw_in), Inches(ph_in)
-    m = 0.5
-    sec.top_margin = sec.bottom_margin = sec.left_margin = sec.right_margin = Inches(m)
-    usable_w = pw_in - 2 * m
-    pages = _pages(results, (images, places))
-
-    def add_bg(kind, height_in):
-        bg = _bg(profile, kind) or _bg(profile, "post")
-        if bg:
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p.add_run().add_picture(bg, width=Inches(usable_w),
-                                    height=Inches(usable_w * ph_in / pw_in * height_in))
-
-    sections, per_post = _sections(results)
-    if _bg(profile, "cover"):
-        add_bg("cover", 1.0)
-        doc.add_page_break()
-    if len(sections) > 1 or (profile["template"].get("summary_box")):
-        doc.add_heading("Summary", level=1)
-        t = doc.add_table(rows=0, cols=2)
-        t.style = "Table Grid"
-        for name, n in sections + [("Total Items Tracked", len(results))]:
-            row = t.add_row().cells
-            row[0].text, row[1].text = str(name), str(n)
-        doc.add_page_break()
-    idx = 0
-    for pidx, items in pages:
-        add_bg("post", 0.42)          # the designed page as a header strip
-        for r, img, pl in items:
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            w = min(pl.w_in * 1.15, usable_w)
-            p.add_run().add_picture(img, width=Inches(w))
-            post_no, post_total = per_post[idx]
-            idx += 1
-            m = _metrics_of(r)
-            cap = doc.add_paragraph()
-            head = cap.add_run(f"{r.get('account_name') or ''}  ·  {_PLATFORM_LABEL.get(r.get('platform') or '', '')}  ·  Post {post_no} of {post_total}")
-            head.font.size = Pt(9); head.bold = True
-            if m:
-                mp = doc.add_paragraph()
-                mr = mp.add_run("   ".join(f"{k.title()}: {v}" for k, v in m.items()))
-                mr.font.size = Pt(8)
-            lp = doc.add_paragraph()
-            run = lp.add_run(r.get("post_link") or r.get("url") or "")
-            run.font.size = Pt(8)
-            run.font.color.rgb = RGBColor(0x1D, 0x4E, 0xD8)
-        doc.add_page_break()
-    if profile["content"].get("links_table"):
-        doc.add_heading("Links", level=1)
-        for r in results:
-            link = (r.get("post_link") or r.get("url") or "")
-            if link:
-                doc.add_paragraph(link)
-    note = doc.add_paragraph()
-    nr = note.add_run("This Word version is an approximation of the designed template — "
-                      "the PDF is the faithful rendering.")
-    nr.font.size = Pt(7)
-    nr.font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
-    doc.save(str(out))
-
-
-BUILDERS = {"pdf": build_pdf, "docx": build_docx, "html": build_html}
+BUILDERS = {"pdf": build_pdf, "pptx": build_pptx}

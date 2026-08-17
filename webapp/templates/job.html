@@ -8,6 +8,7 @@
   <div class="crumbs"><a href="/history">History</a> › {{ job.report_label }}</div>
   <h1 id="job-title">{{ job.title }}</h1>
   <p class="sub" style="margin-bottom:0">{{ job.report_label }} · {{ job.link_count }} link(s) · from {{ job.upload_name }}
+    {% if job.outputs %} · {{ job.outputs | map('upper') | join(' + ') }}{% endif %}
     {% if job.keep_engagement %} · engagement line kept{% endif %}{% if job.workers %} · {{ job.workers }} browser(s){% endif %}</p>
 </div>
 
@@ -25,7 +26,7 @@
   <div class="downloads" id="downloads" hidden>
     <a class="btn primary" id="dl-pdf" hidden>Download PDF</a>
     <a class="btn" id="dl-docx" hidden>Download DOCX</a>
-    <a class="btn" id="dl-html" hidden>HTML</a>
+    <a class="btn" id="dl-pptx" hidden>Download PPTX</a>
     <a class="btn" id="dl-xlsx" hidden>XLSX</a>
     <a class="btn" id="dl-zip" hidden>Screenshots (.zip)</a>
     <a class="btn ghost" href="/?type={{ job.report_type }}">Make another →</a>

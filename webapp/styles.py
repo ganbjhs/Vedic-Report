@@ -308,7 +308,11 @@ def _template_profile(meta: dict, slug: str, label: str, pages: dict,
     text = meta.get("text") or []
     logos = meta.get("logos") or []
     summary_box = meta.get("summary_box") or None
-    outputs = [o for o in (meta.get("outputs") or ["pdf"]) if o in registry.OUTPUTS] or ["pdf"]
+    # A designed page renders as an exact PDF and an editable PPTX, and that is
+    # not a choice the designer makes — see registry.OUTPUTS. Taken from the
+    # registry rather than from `meta`, so an older client still holding
+    # ["pdf","docx","html"] cannot save a style that builds one document.
+    outputs = list(registry.TEMPLATE_OUTPUTS)
     paper = str(meta.get("paper") or "a4").lower()
     if paper not in registry.PAGE_SIZES:
         raise StyleError(f"Page size must be one of {', '.join(sorted(registry.PAGE_SIZES))}.")
@@ -336,9 +340,13 @@ def _template_profile(meta: dict, slug: str, label: str, pages: dict,
                   "border": None, "shadow": None},
         "page": {"size": paper, "orientation": orient, "grid": [1, 1],
                  "margins_in": [0.5, 0.5, 0.5, 0.5]},
+        # A template style has no trailing links page (2.4.0): every post
+        # carries its own LINK, and the sheet-style list at the end was a
+        # leftover from the numeric styles. Stored as False rather than left to
+        # the designer, so the profile cannot claim a page nothing draws.
         "content": {"cover": False, "header": None, "footer": None,
                     "per_post_fields": [], "metrics": None,
-                    "links_table": bool(meta.get("links_table", True))},
+                    "links_table": False},
         "template": tpl,
         "outputs": outputs,
     }
@@ -376,7 +384,7 @@ def _copy_assets_from(src_slug: str, slug: str, pages: dict, fonts: list) -> Non
 def save_template(meta: dict, files: dict, overwrite: bool = False) -> dict:
     """`meta`: label, slug, base (engine profile), paper, orientation, slots,
     text, logos, summary_box, fonts (names to keep), copy_from, outputs,
-    links_table, description. `files`: {"post"|"cover"|"summary"|"end": bytes}
+    description. `files`: {"post"|"cover"|"summary"|"end": bytes}
     plus `files["fonts"]` = [(filename, bytes), …]. Returns the resolved profile."""
     label = str(meta.get("label") or "").strip()
     slug = str(meta.get("slug") or slugify(label)).strip()
@@ -520,7 +528,10 @@ def designer_options() -> dict:
     return {
         "page_sizes": sorted(registry.PAGE_SIZES),
         "fits": list(registry.FITS),
-        "outputs": list(registry.OUTPUTS),
+        # The numeric designer's tick boxes. A template style's outputs are not
+        # a choice (PDF + PPTX), so they are not offered there.
+        "outputs": list(registry.NUMERIC_OUTPUTS),
+        "template_outputs": list(registry.TEMPLATE_OUTPUTS),
         "engines": {k: v for k, v in registry.ENGINES.items()},
         "bases": [{"slug": s, "label": registry.load(s)["label"],
                    "engine": registry.load(s)["capture"]["engine"]}

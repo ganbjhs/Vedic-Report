@@ -61,7 +61,21 @@ PAGE_SIZES = {"letter": (8.5, 11.0), "a4": (8.2677, 11.6929),
               # portrait like the others; use orientation "landscape" for slides
               "16:9": (7.5, 13.3333), "4:3": (7.5, 10.0)}
 
-OUTPUTS = ("pdf", "docx", "html")         # xlsx is a global export, not a profile output
+# Documents a profile may ask for. xlsx is a global data export, not a profile
+# output. HTML was removed in 2.4.0 — nothing offers or generates .html.
+#
+# The set depends on the KIND of style, and the two lists are not a preference:
+#
+#   * a TEMPLATE style (designed pages) renders exactly in PDF and exactly in
+#     PPTX, where every element is still an editable object. Word cannot layer
+#     a picture over a full-page background reliably, so its DOCX was always
+#     labelled "approximate" — PPTX replaces it as the editable format and the
+#     approximation is gone.
+#   * a NUMERIC style has no page art to lose, so DOCX is a faithful editable
+#     rendering of it and PPTX would have nothing to add.
+OUTPUTS = ("pdf", "docx", "pptx")
+TEMPLATE_OUTPUTS = ("pdf", "pptx")
+NUMERIC_OUTPUTS = ("pdf", "docx")
 FITS = ("fit", "pad", "crop-top")
 
 # Every key any section may contain. Anything else raises.
@@ -192,6 +206,7 @@ def load(slug: str, registry_dir: Path = None, _seen=None) -> dict:
         base.pop("extends", None)
         raw = _merge(base, {k: v for k, v in raw.items() if k != "extends"})
         raw["slug"] = _read(slug, registry_dir)["slug"]
+    normalise_outputs(raw)
     validate(raw)
     return raw
 
@@ -216,6 +231,7 @@ def resolve(raw: dict, registry_dir: Path = None) -> dict:
         merged["slug"] = raw.get("slug")
     else:
         merged = copy.deepcopy(raw)
+    normalise_outputs(merged)
     validate(merged)
     return merged
 
@@ -242,6 +258,74 @@ def available(registry_dir: Path = None) -> list:
                 print(f"[profiles] IGNORING broken profile {path.name}: {e}",
                       flush=True)
     return good
+
+
+# --------------------------------------------------------------------------- #
+# Outputs
+# --------------------------------------------------------------------------- #
+def allowed_outputs(profile: dict) -> tuple:
+    """The documents THIS style may declare — see `OUTPUTS` for why it depends
+    on whether the style has designed page art."""
+    return TEMPLATE_OUTPUTS if profile.get("template") else NUMERIC_OUTPUTS
+
+
+# What a profile written for an older version may still say, and what it means
+# now. A profile on disk is data people wrote before 2.4.0 removed HTML and
+# swapped DOCX for PPTX on template styles; refusing it outright would make
+# every such style vanish from the app with only a log line to explain it.
+_RETIRED_OUTPUTS = {"html": "HTML output was removed in 2.4.0"}
+
+# Said once per process, not once per load. `available()` re-loads every profile
+# on every dashboard render, and a line repeated forty times a page is a log
+# nobody reads — which defeats the point of saying it at all.
+_ANNOUNCED = set()
+
+
+def _announce(message: str) -> None:
+    if message not in _ANNOUNCED:
+        _ANNOUNCED.add(message)
+        print(message, flush=True)
+
+
+def normalise_outputs(p: dict) -> dict:
+    """Rewrite a profile's `outputs` to what this version can build.
+
+    Announced, never silent (RULEBOOK rule 17): a style that asked for HTML, or
+    a template style that asked for DOCX, says on stdout what it got instead.
+    Order is preserved and duplicates are dropped, so `["pdf","docx","html"]` on
+    a template style becomes `["pdf","pptx"]` and not a re-ordered surprise.
+    """
+    outs = p.get("outputs")
+    if not isinstance(outs, list):
+        return p
+    slug = p.get("slug") or "<no slug>"
+    allowed = allowed_outputs(p)
+    swap = "pptx" if p.get("template") else "docx"      # the editable format
+    kept = []
+    for o in outs:
+        if o in allowed:
+            new = o
+        elif o in _RETIRED_OUTPUTS:
+            _announce(f"[profiles] {slug}: dropping {o!r} — "
+                      f"{_RETIRED_OUTPUTS[o]}")
+            continue
+        elif o in OUTPUTS:
+            # A real output, wrong kind of style: docx on a designed page (or
+            # pptx on a numeric one) is the editable format under its old name.
+            new = swap
+            _announce(f"[profiles] {slug}: {o!r} is not built for this kind "
+                      f"of style — using {new!r} instead")
+        else:
+            continue                    # unknown: leave it for validate() to refuse
+        if new not in kept:
+            kept.append(new)
+    if kept and kept != outs:
+        p["outputs"] = kept
+    elif not kept and outs:
+        p["outputs"] = ["pdf"]
+        _announce(f"[profiles] {slug}: no buildable output left — falling "
+                  "back to PDF")
+    return p
 
 
 # --------------------------------------------------------------------------- #
@@ -407,12 +491,23 @@ def validate(p: dict) -> dict:
     outs = p.get("outputs") or []
     if not outs:
         raise ProfileError(f"{slug}: needs at least one output")
-    bad = [o for o in outs if o not in OUTPUTS]
+    allowed = allowed_outputs(p)
+    bad = [o for o in outs if o not in allowed]
     if bad:
-        extra = ("  ('xlsx' is a global data export, not a profile output — "
-                 "see docs/profile-engine.md §10)" if "xlsx" in bad else "")
+        if "xlsx" in bad:
+            extra = ("  ('xlsx' is a global data export, not a profile output "
+                     "— see docs/profile-engine.md §10)")
+        elif "html" in bad:
+            extra = "  (HTML output was removed in 2.4.0)"
+        elif p.get("template"):
+            extra = ("  (a designed-page style renders as an exact PDF and an "
+                     "editable PPTX; Word cannot layer a picture over a "
+                     "full-page background)")
+        else:
+            extra = ("  (a numeric style has no page art, so DOCX is its "
+                     "editable format and PPTX would add nothing)")
         raise ProfileError(f"{slug}: unsupported output(s) {bad}; "
-                           f"allowed: {list(OUTPUTS)}.{extra}")
+                           f"allowed: {list(allowed)}.{extra}")
     return p
 
 

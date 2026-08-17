@@ -129,15 +129,38 @@ function initSubmitForm() {
 
   /* ---- style rows + sample modal ---- */
   const selectedCard = () => cards.find((c) => c.dataset.slug === typeInput.value);
+
+  /* Outputs. The formats belong to the STYLE, so the row is rebuilt whenever
+     the style changes and never carries a tick over to a style that cannot
+     produce it — the server refuses that anyway (report_types.check_outputs),
+     but offering it would be a promise the job could not keep. */
+  const OUTPUT_NOTE = { pdf: "exact, print-ready", docx: "editable in Word",
+    pptx: "editable deck — every slot a movable object" };
+  const outputsBox = $("outputs"), outputsOption = $("outputs-option"), outputsHint = $("outputs-hint");
+  const styleOutputs = (c) => (c && c.dataset.outputs ? c.dataset.outputs.split(",").filter(Boolean) : []);
+  const checkedOutputs = () => [...outputsBox.querySelectorAll("input:checked")].map((i) => i.value);
+  const renderOutputs = (wanted) => {
+    const list = styleOutputs(selectedCard());
+    outputsOption.hidden = !list.length;
+    const keep = wanted && wanted.length ? wanted.filter((w) => list.includes(w)) : list;
+    outputsBox.innerHTML = list.map((o) => `<label class="check"><input type="checkbox" name="outputs" value="${esc(o)}"${(keep.includes(o) ? " checked" : "")}><span><b>${esc(o.toUpperCase())}</b> <span class="faint">${esc(OUTPUT_NOTE[o] || "")}</span></span></label>`).join("");
+    syncOutputsHint();
+  };
+  function syncOutputsHint() {
+    const n = checkedOutputs().length;
+    outputsHint.textContent = n ? "" : "Pick at least one — a report with no file is nothing to download.";
+  }
+  outputsBox.addEventListener("change", () => { syncOutputsHint(); updateSummary(); });
+
   const syncOptions = () => {
     const c = selectedCard();
     cropOption.hidden = !c || c.dataset.keepEngagement !== "1";
     speedOption.hidden = !c || c.dataset.workerChoice !== "1";
   };
-  const selectStyle = (slug) => {
+  const selectStyle = (slug, wantOutputs) => {
     typeInput.value = slug;
     cards.forEach((c) => { const on = c.dataset.slug === slug; c.classList.toggle("on", on); c.setAttribute("aria-checked", String(on)); });
-    syncOptions(); updateSummary();
+    syncOptions(); renderOutputs(wantOutputs); updateSummary();
   };
   const modal = $("sample-modal");
   const openSample = (c) => {
@@ -201,7 +224,8 @@ function initSubmitForm() {
     const c = selectedCard();
     const workers = c && c.dataset.workerChoice === "1" ? (+workersSelect.value || defaultWorkers) : 1;
     const eta = fmtEta(estimateSeconds(ready, c ? c.dataset.pool : "capture", workers));
-    summary.innerHTML = `<b>${esc(platformLabel())}</b> · <b>${esc(c ? c.dataset.label : "—")}</b> · <b>${ready}</b> link${ready === 1 ? "" : "s"}${eta ? " · " + eta : ""}`;
+    const outs = checkedOutputs().map((o) => o.toUpperCase()).join(" + ");
+    summary.innerHTML = `<b>${esc(platformLabel())}</b> · <b>${esc(c ? c.dataset.label : "—")}</b> · <b>${ready}</b> link${ready === 1 ? "" : "s"}${outs ? " · " + esc(outs) : ""}${eta ? " · " + eta : ""}`;
     const etaEl = pv.stat.querySelector(".eta"); if (etaEl) etaEl.innerHTML = eta ? `${eta}` : "";
   }
   const platformLabel = () => { const b = platButtons.find((x) => x.classList.contains("on")); return b ? b.textContent.replace(/soon/i, "").trim() : "X"; };
@@ -312,7 +336,7 @@ function initSubmitForm() {
   const applyPreset = (p) => {
     if (!p) return;
     selectPlatform(p.platform);
-    if (cards.find((c) => c.dataset.slug === p.report_type)) selectStyle(p.report_type);
+    if (cards.find((c) => c.dataset.slug === p.report_type)) selectStyle(p.report_type, p.outputs);
     keepEngagement.checked = !!p.keep_engagement;
     workersSelect.value = p.workers ? String(p.workers) : "";
     dedupe.checked = !!p.dedupe;
@@ -348,7 +372,7 @@ function initSubmitForm() {
         keep_engagement: keepEngagement.checked && c.dataset.keepEngagement === "1",
         workers: c.dataset.workerChoice === "1" ? (+workersSelect.value || 0) : 0,
         dedupe: dedupe.checked, sheet_url: activeTab === "sheet" ? sheet.value.trim() : "",
-        report_name: nameInput.value.trim() } });
+        outputs: checkedOutputs(), report_name: nameInput.value.trim() } });
       presets = r.presets; renderPresets(); showError("");
     } catch (err) { showError(err.message); }
   });
@@ -359,6 +383,8 @@ function initSubmitForm() {
     if (!ready) return showError("Add some links first.");
     if (!typeInput.value) return showError("Pick a report style.");
     if (!nameInput.value.trim()) { nameInput.focus(); return showError("Give the report a name."); }
+    const wantOutputs = checkedOutputs();
+    if (styleOutputs(selectedCard()).length && !wantOutputs.length) return showError("Tick at least one output format.");
     submitBtn.disabled = true; spinner.hidden = false;
     const body = new FormData();
     body.append("csrf_token", CSRF());
@@ -368,6 +394,7 @@ function initSubmitForm() {
     const c = selectedCard();
     if (keepEngagement.checked && c.dataset.keepEngagement === "1") body.append("keep_engagement", "1");
     if (workersSelect.value && c.dataset.workerChoice === "1") body.append("workers", workersSelect.value);
+    wantOutputs.forEach((o) => body.append("outputs", o));
     try {
       const res = await fetch("/api/jobs", { method: "POST", body });
       const data = await res.json().catch(() => ({}));
@@ -395,7 +422,7 @@ function initJobPage(executionMode) {
   const counter = $("counter"), elapsed = $("elapsed"), errBox = $("job-error"), downloads = $("downloads");
   const cancelForm = $("cancel-form"), activity = $("activity"), skippedCard = $("skipped-card");
   const skippedList = $("skipped"), skippedCount = $("skipped-count"), ephemeralNote = $("ephemeral-note");
-  const KINDS = ["pdf", "docx", "html", "xlsx", "zip"];
+  const KINDS = ["pdf", "docx", "pptx", "xlsx", "zip"];
 
   const render = (job) => {
     pill.textContent = job.status; pill.className = `st ${job.status}`;
@@ -1033,7 +1060,9 @@ function initTemplateDesigner() {
     const meta = {
       label: $("t-label").value.trim(), slug: editingSlug || "",
       base: $("t-base").value, paper: $("t-paper").value, orientation: $("t-orient").value,
-      links_table: $("t-links").checked, outputs: ["pdf", "docx", "html"],
+      // A designed page renders as an exact PDF and an editable PPTX; there
+      // is no trailing links page any more, so nothing to toggle here.
+      links_table: false, outputs: ["pdf", "pptx"],
       slots: items.filter((it) => it.kind === "slot").map(box),
       logos: items.filter((it) => it.kind === "logo").map(box),
       summary_box: summary ? box(summary) : null,
@@ -1124,7 +1153,7 @@ function initTemplateDesigner() {
     saveBtn.disabled = !ok;
   }
   $("t-label").addEventListener("input", setSaveable);
-  ["t-paper", "t-orient", "t-base", "t-links"].forEach((id) => $(id).addEventListener("change", () => { syncKitNote(); schedulePreview(0); }));
+  ["t-paper", "t-orient", "t-base"].forEach((id) => $(id).addEventListener("change", () => { syncKitNote(); schedulePreview(0); }));
   saveBtn.addEventListener("click", async () => {
     msg.textContent = ""; saveBtn.disabled = true;
     const meta = buildMeta();
@@ -1159,7 +1188,6 @@ function initTemplateDesigner() {
       $("t-paper").value = String((p.page || {}).size || "a4").toLowerCase(); $("t-orient").value = (p.page || {}).orientation || "portrait";
       // Duplicating a SHIPPED template (e.g. combined-16x9): it has no `extends`, so keep its own engine
       if (!p.extends && p.capture && p.capture.engine) $("t-base").value = { combined: "combined-16x9", instagram: "instagram", facebook: "facebook", influencer: "influencer", x: "twitter" }[p.capture.engine] || "twitter";
-      $("t-links").checked = (p.content || {}).links_table !== false;
       items = []; nextId = 1;
       fonts = (tpl.fonts || []).map((name) => ({ name, file: null }));
       for (const k of PAGE_KINDS) {

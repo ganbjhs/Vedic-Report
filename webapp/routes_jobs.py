@@ -7,6 +7,7 @@ user-supplied string is ever used as a path.
 import asyncio
 import json
 import time
+from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -24,7 +25,8 @@ _TABS_SEEN = []
 _KINDS = {"pdf": "application/pdf",
           "docx": "application/vnd.openxmlformats-officedocument."
                   "wordprocessingml.document",
-          "html": "text/html; charset=utf-8",
+          "pptx": "application/vnd.openxmlformats-officedocument."
+                  "presentationml.presentation",
           "xlsx": "application/vnd.openxmlformats-officedocument."
                   "spreadsheetml.sheet",
           "zip": "application/zip"}
@@ -57,6 +59,11 @@ def public_job(job: dict) -> dict:
         "platform": rt.platform if rt else report_types.DEFAULT_PLATFORM,
         "keep_engagement": bool(job.get("keep_engagement")),
         "workers": job.get("workers") or 0,
+        # What was asked for, resolved: a job saved before 2.4.0 stored nothing
+        # and meant "every format this style builds", so History shows that
+        # rather than an empty cell.
+        "outputs": list(report_types.clean_outputs(job["report_type"],
+                                                   job.get("outputs") or ())),
         "status": job["status"],
         "phase": job.get("phase") or "",
         "done": done,
@@ -268,12 +275,26 @@ async def submit_job(request: Request,
                      csrf_token: str = Form(...),
                      keep_engagement: str = Form(""),
                      workers: str = Form(""),
+                     # One value per ticked box; absent entirely means "every
+                     # format this style builds", so an older client keeps
+                     # working unchanged.
+                     outputs: List[str] = Form(None),
                      user: str = Depends(auth.require_user_api)):
     auth.verify_csrf(request, csrf_token)
 
     rt = report_types.get(report_type)
     if rt is None:
         raise HTTPException(status_code=400, detail="Unknown report type.")
+
+    # The tick boxes are drawn from this style's own outputs, so anything else
+    # arriving here was not offered. Refused rather than ignored: a job that
+    # quietly dropped a requested format would hand back a file the user did
+    # not ask for and say nothing.
+    asked = [str(o).strip().lower() for o in (outputs or []) if str(o).strip()]
+    why_not_outputs = report_types.check_outputs(report_type, asked)
+    if why_not_outputs:
+        raise HTTPException(status_code=400, detail=why_not_outputs)
+    want_outputs = report_types.clean_outputs(report_type, asked)
 
     # A disabled pill is a hint; this is the gate. Without it a hand-crafted
     # POST naming a platform with no capture engine would create a job that
@@ -333,7 +354,7 @@ async def submit_job(request: Request,
     job_id = store.create(owner=user, name=stem, title=title,
                           report_type=report_type, link_count=len(rows),
                           upload_name=upload_name, keep_engagement=keep,
-                          workers=want_workers)
+                          workers=want_workers, outputs=want_outputs)
     try:
         await asyncio.to_thread(runner.build_job_dir, job_id, rows, raw, upload_name)
     except Exception as e:

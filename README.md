@@ -1,7 +1,8 @@
 # X / Twitter Report Automation
 
 Give it a list of X/Twitter post links; it screenshots every post in a logged-in
-browser and builds a **PDF + Word (.docx)** report.
+browser and builds a **PDF + Word (.docx)** report — or, for a designed-page
+(Canva) style, a **PDF + an editable PowerPoint deck (.pptx)**.
 
 > Changing or rebuilding this project? Read **[RULEBOOK.md](RULEBOOK.md)** first —
 > it collects the constraints and traps that are not obvious from the code.
@@ -17,7 +18,9 @@ The web app's dashboard (`webapp/`, no build step — one CSS file, one JS file)
 
 * **New report** — Platform → Style → Links, with a live preview table of what
   will be captured (duplicates and rejected rows called out by row number), a
-  rough time estimate, and a sticky bar with the report name and Generate.
+  rough time estimate, an **Outputs** row listing exactly the formats the chosen
+  style produces (all ticked — untick one and it is not built), and a sticky bar
+  with the report name and Generate.
 * **Report styles** — a gallery of every style with its real page thumbnail,
   plus a **style designer**: page size, grid, image box, aspect/padding, corner
   radius, border, shadow, cover, footer, per-post fields, outputs. The preview
@@ -184,7 +187,7 @@ X account — push it hard enough and you trade speed for rate-limit retries.
                                   │
                            progress parsed from the pipeline's stdout
  live status ◀──────────  NDJSON stream / polled JSON
- download   ◀──────────  PDF · DOCX · screenshots.zip
+ download   ◀──────────  PDF · DOCX / PPTX · screenshots.zip
 ```
 
 **The process, step by step:**
@@ -203,9 +206,11 @@ X account — push it hard enough and you trade speed for rate-limit retries.
    Before every shutter it clears X's dialogs, sheets and dim backdrop off the
    post; a reply is shot together with its parent, and the frame is checked
    against that promise before it is accepted.
-5. **Build.** Screenshots are JPEG-compressed and assembled into a PDF and DOCX.
-   The document header is exactly the name you typed — no date, no decoration.
-6. **Deliver.** PDF, DOCX and a ZIP of all screenshots, named after the report
+5. **Build.** Screenshots are JPEG-compressed and assembled into the formats
+   you ticked — PDF + DOCX for the numeric styles, PDF + PPTX for a
+   designed-page one. The document header is exactly the name you typed — no
+   date, no decoration.
+6. **Deliver.** The documents and a ZIP of all screenshots, named after the report
    and scoped to the session that created the job. Links that failed are listed
    in the activity log with a reason, and left out of the document — including
    posts X age-restricted behind mobile-app verification, which a desktop
@@ -252,9 +257,19 @@ centre.
 *pending* until an admin approves it on the Report styles page; then it appears
 on New report like any other style.
 
+**What you get out of it.** A designed style produces **a PDF and a PPTX**, the
+same page twice. The PDF is the print-ready one. The PPTX is the same slide with
+nothing flattened: the art is the background picture, and every screenshot, every
+value, the LINK button and the summary table are separate objects you can move,
+retype or restyle — in PowerPoint, in Keynote, or after uploading to Google
+Slides. There is no Word version of a designed style, and no links page at the
+end: each post carries its own LINK.
+
 **Optional — your own fonts.** Upload up to three `.ttf`/`.otf` files (≤2 MB
-each) and pick one per text slot. They are embedded in the PDF and inlined into
-the HTML, and they travel with the style into every job.
+each) and pick one per text slot. They travel with the style into every job and
+are **embedded** in the PDF. A .pptx can only ask for a font by name, so the
+deck names the family read out of your file — on a machine that does not have
+it installed, PowerPoint substitutes.
 
 **Then look at the first PDF.** The preview is drawn from the same geometry as
 the document, but it is a picture of one page — open the first real report and
@@ -287,7 +302,7 @@ check it (this project's rule 3, and it has been earned).
 │   └── inf_report_builder.py A4 PDF + DOCX, two posts per page
 │
 ├── profiles/                 the profile engine (styles as JSON) — see docs/profile-engine.md
-│   ├── tpl_builder.py        documents for designed-page (Canva) styles
+│   ├── tpl_builder.py        PDF + editable PPTX for designed-page (Canva) styles
 │   └── tpl_preview.py        the design kit: Canva slot guide + one-page preview
 ├── facebook/                 the Facebook capture engine (public posts, logged-out) — via profiles/
 ├── instagram/                the Instagram capture engine (public posts, logged-out) — via profiles/

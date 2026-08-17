@@ -114,12 +114,40 @@ check("profiles is in _CODE_ITEMS", "profiles" in RN._CODE_ITEMS, True)
 for item in RN._CODE_ITEMS:
     check(f"{item} exists in the repo", (ROOT / item).exists(), True)
 
-print("\n7. html is a downloadable kind and gets published")
+print("\n7. the downloadable kinds are exactly what the app can build")
 from webapp import routes_jobs as RJ                # noqa: E402
-check("html in _KINDS", "html" in RJ._KINDS, True)
-check("publish() looks for html",
-      "html" in RN.publish.__code__.co_consts or
-      any("html" in str(c) for c in RN.publish.__code__.co_consts), True)
+check("pptx is downloadable", "pptx" in RJ._KINDS, True)
+check("html is gone", "html" in RJ._KINDS, False)
+check("publish() covers every report format",
+      RN._REPORT_EXTS, ("pdf", "docx", "pptx"))
+check("no style declares html",
+      sorted({o for rt in RT.all_types() for o in rt.outputs}),
+      ["docx", "pdf", "pptx"])
+
+print("\n8. the output choice is a filter over the style's own formats")
+# The tick boxes are drawn from rt.outputs; this is the gate behind them.
+check("a format the style builds is accepted",
+      RT.check_outputs("combined-16x9", ["pdf"]), "")
+check("a format it does not build is refused",
+      bool(RT.check_outputs("combined-16x9", ["docx"])), True)
+check("twitter is refused a deck",
+      bool(RT.check_outputs("twitter", ["pptx"])), True)
+check("nothing asked means everything the style builds",
+      RT.clean_outputs("combined-16x9", []), ("pdf", "pptx"))
+check("the style's own order is kept, not the request's",
+      RT.clean_outputs("twitter", ["docx", "pdf"]), ("pdf", "docx"))
+
+# A profile type is told; a built-in is not (its entrypoint is frozen, so the
+# choice is applied when publishing instead).
+check("a narrowed profile job passes --outputs",
+      RN.build_command("combined-16x9", "P", "04-08-26",
+                       outputs=["pdf"])[-2:], ["--outputs", "pdf"])
+check("asking for everything adds no flag",
+      "--outputs" in RN.build_command("combined-16x9", "P", "04-08-26",
+                                      outputs=["pdf", "pptx"]), False)
+check("a built-in never gets --outputs",
+      "--outputs" in RN.build_command("twitter", "T", "04-08-26",
+                                      outputs=["pdf"]), False)
 
 print()
 if FAILS:

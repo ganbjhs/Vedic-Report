@@ -36,5 +36,5 @@
       {"field": "date",         "x": 0.0722, "y": 0.3856, "w": 0.28,  "h": 0.035, "size_pt": 13, "color": "#F15323", "align": "center", "page": "summary"}
     ]
   },
-  "outputs": ["pdf", "html", "docx"]
+  "outputs": ["pdf", "pptx"]
 }

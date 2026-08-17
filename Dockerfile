@@ -30,7 +30,9 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-lohit-deva fonts-freefont-ttf \
  && rm -rf /var/lib/apt/lists/*
 
-# Dependencies first so code edits don't invalidate the layer.
+# Dependencies first so code edits don't invalidate the layer. requirements.txt
+# is the FROZEN CLI set and stays exactly as tested; anything the web layer adds
+# — python-pptx, for the template styles' editable deck — goes in the -web file.
 COPY requirements.txt requirements-web.txt ./
 RUN pip install --no-cache-dir --break-system-packages \
         -r requirements.txt -r requirements-web.txt

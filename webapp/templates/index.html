@@ -48,6 +48,7 @@
          data-worker-choice="{{ 1 if rt.allows_worker_choice else 0 }}"
          data-keep-engagement="{{ 1 if rt.allows_keep_engagement else 0 }}"
          data-pool="{{ rt.worker_pool }}"
+         data-outputs="{{ rt.outputs | join(',') }}"
          data-large="{{ pv.img_large if pv else '' }}"
          data-desc="{{ rt.description }}">
       <span class="radio"></span>
@@ -117,6 +118,14 @@
 
   <!-- options (capability-driven) -->
   <div class="options">
+    <div class="field" id="outputs-option">
+      <span>Outputs</span>
+      <!-- Filled from the selected style's own formats: a designed page offers
+           PDF + PPTX, a numeric style PDF + DOCX. Everything is ticked, so
+           doing nothing gives you what the style has always produced. -->
+      <div class="outrow" id="outputs" role="group" aria-label="Output formats"></div>
+      <span class="hint" id="outputs-hint"></span>
+    </div>
     <label class="toggle" id="crop-option" hidden>
       <input type="checkbox" name="keep_engagement" id="keep-engagement" value="1">
       <span><b>Keep the engagement line in the screenshot</b>

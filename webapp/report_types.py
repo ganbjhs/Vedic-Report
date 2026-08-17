@@ -112,6 +112,12 @@ class ReportType:
     description: str = ""
     caption: str = ""            # one line under the thumbnail
     builtin: bool = False
+    # Which documents THIS style can produce. Per style, deliberately: a
+    # designed-page template renders as an exact PDF and an editable PPTX, a
+    # numeric style as PDF + DOCX, and the two built-ins keep the PDF + DOCX
+    # their own frozen builders have always written. There is no server-wide
+    # format setting — a global one would either promise a deck for a style
+    # with no page art, or hide a format the style really does build.
     outputs: tuple = field(default=("pdf", "docx"))
     # True for a style designed in the web app (data/profiles/), which may be
     # edited or deleted there; shipped profiles and built-ins may not.
@@ -246,6 +252,38 @@ def slugs() -> tuple:
 
 def is_known(slug: str) -> bool:
     return get(slug) is not None
+
+
+def check_outputs(type_slug: str, asked) -> str:
+    """'' when every requested format is one this style builds, else why not.
+
+    Same shape as `check_runnable`, and for the same reason: the tick boxes on
+    the form are drawn from `rt.outputs`, but a hand-crafted POST can name
+    anything. A format this style does not build must be refused here rather
+    than silently ignored, or the user would be told they asked for a deck and
+    handed a PDF with no explanation.
+    """
+    rt = get(type_slug)
+    if rt is None:
+        return f"Unknown report type {type_slug!r}."
+    bad = [o for o in (asked or []) if o not in rt.outputs]
+    if bad:
+        return (f"{rt.label} does not produce "
+                f"{', '.join(sorted(b.upper() for b in bad))}. It produces "
+                f"{', '.join(o.upper() for o in rt.outputs)}.")
+    return ""
+
+
+def clean_outputs(type_slug: str, asked) -> tuple:
+    """The formats to build, in the style's own order. Empty / unknown request
+    means every format the style declares — what every caller before 2.4.0
+    meant, and what a preset saved then still means."""
+    rt = get(type_slug)
+    if rt is None:
+        return ()
+    want = {str(o).strip().lower() for o in (asked or [])}
+    kept = tuple(o for o in rt.outputs if o in want)
+    return kept or tuple(rt.outputs)
 
 
 # --------------------------------------------------------------------------- #

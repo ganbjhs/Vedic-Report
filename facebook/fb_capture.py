@@ -278,9 +278,61 @@ def trim_post(page, article) -> dict:
         return empty
 
 
+# The Page name, read off the post's own header row.
+#
+# The URL is not a source for this and never was: `/share/r/<code>` and
+# `/share/p/<code>` carry no name at all, and `/61559555815073/posts/…` carries
+# a numeric page id, which is what used to be printed above the screenshot. The
+# name is a link in the header band at the top of the article, inside an h2/h3
+# or a <strong> — the timestamp beside it is a plain link, which is why the
+# emphasised candidates are tried first. Structural, so it survives Facebook
+# serving the page in Hindi (RULEBOOK §18b).
+_JS_PAGE_NAME = r"""
+(root) => {
+  const R = el => el.getBoundingClientRect();
+  const top = R(root).y, aw = R(root).width;
+  const text = el => (el.innerText || '').replace(/\s+/g, ' ').trim();
+  const usable = (t) => t && t.length <= 60 && !/^https?:/i.test(t)
+                        && !/^[\d.,\s]+$/.test(t);
+  const band = el => { const r = R(el); return r.y - top >= -2 && r.y - top <= 140
+                                          && r.height > 0 && r.width <= aw * 0.95; };
+  for (const sel of ['h2 a[role="link"]', 'h3 a[role="link"]',
+                     'h2 strong', 'h3 strong',
+                     'strong a[role="link"]', 'a[role="link"] strong',
+                     'strong span']) {
+    for (const el of root.querySelectorAll(sel)) {
+      if (!band(el)) continue;
+      const t = text(el);
+      if (usable(t)) return t;
+    }
+  }
+  // last resort: the first profile link in the header band
+  for (const a of root.querySelectorAll('a[role="link"]')) {
+    if (!band(a)) continue;
+    const t = text(a);
+    if (usable(t) && !/^\d+\s*[hmd]$/i.test(t)) return t;
+  }
+  return '';
+}
+"""
+
+
 def _handle_from(page, article, url) -> str:
+    """The Page name from the post itself, falling back to the URL's slug.
+
+    The page ALWAYS wins over the URL here. A `/share/…` link has no name in it
+    and a numeric-id permalink has an id rather than a name, and that id is what
+    a report with no handle column would otherwise print above the screenshot.
+    """
+    try:
+        name = (article.evaluate(_JS_PAGE_NAME) or "").strip()
+        if name:
+            return name[:60]
+    except Exception:
+        pass
     m = re.search(r"facebook\.com/([^/?#]+)/(?:posts|photos|videos)/", url.lower())
-    if m and m.group(1) not in ("photo", "watch", "reel", "share", "groups"):
+    if m and not m.group(1).isdigit() and \
+            m.group(1) not in ("photo", "watch", "reel", "share", "groups"):
         return m.group(1)
     for sel in ('h2 strong', 'h3 strong', 'strong a[role="link"]', 'a[role="link"] strong'):
         try:

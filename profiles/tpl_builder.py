@@ -186,6 +186,92 @@ def _pdf_font(t, fonts):
 
 
 # --------------------------------------------------------------------------- #
+# Non-Latin text — RULEBOOK rule 14: register a Unicode TTF or it prints boxes
+# --------------------------------------------------------------------------- #
+# This is not hypothetical here. A combined report takes the account name from
+# the CAPTURE when the sheet has no handle column, and a Varanasi Facebook Page
+# is called "काशी के मोदी". Helvetica is a Type 1 font encoded WinAnsi, so that
+# name came out as a row of black rectangles — legible nowhere, and exactly the
+# failure rule 14 was written for. The same list `inf_report_builder` uses, plus
+# faces that actually carry Devanagari.
+_UNICODE_FONTS = (
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/Library/Fonts/DejaVuSans.ttf",
+)
+_UNI_CACHE = []          # [(reportlab font name, {codepoints}) | None]
+
+
+def _unicode_font():
+    """A registered Unicode TTF and the code points it can draw, or None.
+
+    Looked up once per process and never guessed at: the coverage set comes from
+    the font's own cmap, so a font that is present but has no Devanagari is
+    rejected here instead of printing boxes later.
+    """
+    if _UNI_CACHE:
+        return _UNI_CACHE[0]
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    found = None
+    for path in _UNICODE_FONTS:
+        p = Path(path)
+        if not p.exists():
+            continue
+        try:
+            face = TTFont("tpl-unicode", str(p))
+            pdfmetrics.registerFont(face)
+            found = ("tpl-unicode", set(face.face.charToGlyph))
+            break
+        except Exception as e:
+            print(f"[tpl] unicode font {p.name} would not load: {e}", flush=True)
+    if found is None:
+        print("[tpl] no Unicode font on this machine — non-Latin text will "
+              "print as boxes (RULEBOOK rule 14)", flush=True)
+    _UNI_CACHE.append(found)
+    return found
+
+
+def _fits_font(value, font) -> bool:
+    """Can `font` actually draw every character of `value`?"""
+    from reportlab.pdfbase import pdfmetrics
+    if font.startswith("Helvetica") or font.startswith("Times") or \
+            font.startswith("Courier"):
+        try:                      # the standard fonts are WinAnsi-encoded
+            value.encode("cp1252")
+            return True
+        except UnicodeEncodeError:
+            return False
+    try:
+        cmap = pdfmetrics.getFont(font).face.charToGlyph
+    except Exception:
+        return True               # unknown shape — let reportlab decide
+    return all(ord(ch) in cmap for ch in value)
+
+
+def _drawable(value, font):
+    """`font`, or a Unicode substitute when `font` cannot draw `value`.
+
+    Falling back silently is what rule 17 forbids, so the swap is announced the
+    first time it happens and the text is left alone when nothing can draw it.
+    """
+    if not value or _fits_font(value, font):
+        return font
+    uni = _unicode_font()
+    if uni and all(ord(ch) in uni[1] for ch in value):
+        return uni[0]
+    print(f"[tpl] {font} cannot draw {value!r} and no installed font can — "
+          "printing it anyway", flush=True)
+    return font
+
+
+# --------------------------------------------------------------------------- #
 # PDF
 # --------------------------------------------------------------------------- #
 def build_pdf(results, images, places, profile, title, out):
@@ -213,7 +299,9 @@ def build_pdf(results, images, places, profile, title, out):
         if not value:
             return
         size = float(t.get("size_pt", 10))
-        font = _pdf_font(t, fonts)
+        # The value decides the font, not only the slot: a captured Facebook
+        # Page name may be Devanagari where the style asked for Helvetica.
+        font = _drawable(value, _pdf_font(t, fonts))
         c.setFont(font, size)
         c.setFillColor(colors.HexColor(t.get("color") or "#111111"))
         x, y, w = t["x"] * W, H - t["y"] * H - size, t["w"] * W
@@ -259,8 +347,9 @@ def build_pdf(results, images, places, profile, title, out):
             c.rect(bx, yy, bw, rh, stroke=1, fill=0)
             c.line(bx + bw * 0.62, yy, bx + bw * 0.62, yy + rh)
             c.setFillColor(colors.HexColor("#7A3E12"))
-            c.setFont("Helvetica-Bold", fs)
-            c.drawString(bx + 8, yy + rh * 0.32, str(name)[:60])
+            label = str(name)[:60]
+            c.setFont(_drawable(label, "Helvetica-Bold"), fs)
+            c.drawString(bx + 8, yy + rh * 0.32, label)
             c.setFont("Helvetica-Bold" if last else "Helvetica", fs)
             c.setFillColor(colors.HexColor("#111111"))
             c.drawRightString(bx + bw - 10, yy + rh * 0.32, str(n))

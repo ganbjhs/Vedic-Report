@@ -11,6 +11,11 @@ keep-test is parameterised.
 Used by both `prof_runner` (what the job captures) and `webapp/uploads.analyse`
 (what the preview shows), so the two cannot disagree about what a Facebook link
 is. Nothing here imports Playwright.
+
+It also reads the **sectioned** sheet the team keeps by hand: no link column and
+no handle column, section names in column A, and the header row's own first cell
+naming the first section. That is recognised from its shape (`metric_header`),
+not from a mode the user has to pick — see RULEBOOK §18c.
 """
 import re
 import sys
@@ -86,6 +91,22 @@ def normalize_ig_url(url: str) -> str:
     return u if u.endswith("/") else u + "/"
 
 
+def normalize_url(url: str, platform: str = "combined") -> str:
+    """The link exactly as `rows_from_grid` would keep it.
+
+    The preview needs this: it walks the raw grid looking for URLs that did NOT
+    survive, and an Instagram link only fails that test because the reader
+    dropped its `?igsh=…`. Comparing raw text would report the row the user can
+    see in the table right above as rejected."""
+    link = input_loader._clean_url(url)
+    plat = platform_of(link) if platform == "combined" else platform
+    if plat == "facebook":
+        return normalize_fb_url(link)
+    if plat == "instagram":
+        return normalize_ig_url(link)
+    return link
+
+
 def platform_of(url: str):
     """'x' | 'facebook' | 'instagram' | None for a URL."""
     if is_x_url(url):
@@ -104,14 +125,19 @@ def is_any_url(url: str) -> bool:
 MATCHERS = {"x": is_x_url, "facebook": is_fb_url, "instagram": is_ig_url,
             "combined": is_any_url}
 
+# One column, two metrics. "Reach/views" is how the team's own sheet heads the
+# single number it has for both, so that column feeds `views` AND `reach` with
+# the same value rather than forcing a choice the sheet did not make.
+_REACH_VIEWS = ("reach/views", "views/reach", "reach / views", "views / reach")
+
 # Extra sheet columns a combined report may carry. Header text -> metric key.
 # Values are printed as typed (the team reads them from Insights); nothing here
 # is scraped. Header match is case-insensitive, punctuation-insensitive.
 METRIC_HEADERS = {
     "like": ("like", "likes", "reactions", "reaction"),
     "impressions": ("impression", "impressions", "post impression", "post impressions"),
-    "views": ("views", "video views", "view", "plays"),
-    "reach": ("reach", "post reach"),
+    "views": ("views", "video views", "view", "plays") + _REACH_VIEWS,
+    "reach": ("reach", "post reach") + _REACH_VIEWS,
     "comments": ("comments", "comment"),
     "shares": ("shares", "share", "reposts", "retweets"),
     "followers": ("followers",),
@@ -119,24 +145,70 @@ METRIC_HEADERS = {
 _SECTION_HEADERS = ("section", "category", "group", "type", "bucket")
 _HANDLE_HEADERS = ("handle", "handle name", "account", "account name", "page name",
                    "name", "author", "page", "profile")
+# A header cell that names the link column. `input_loader._LINK_HEADERS` is the
+# frozen list; these are its normalised forms plus the spellings this reader has
+# seen in the wild.
+_LINK_HEADER_CELLS = tuple(sorted(
+    {re.sub(r"[^a-z0-9 ]+", "", h) for h in input_loader._LINK_HEADERS}
+    | {"post url", "posturl"}))
 
 
 def _norm(h: str) -> str:
-    return re.sub(r"[^a-z0-9 ]+", "", (h or "").lower()).strip()
+    """Lower-case, punctuation-free, single-spaced — so 'Post Impression',
+    'post_impression' and 'Post  Impression' are one header, and 'Reach/views'
+    normalises the same way whichever slash spacing the sheet used."""
+    return re.sub(r"\s+", " ",
+                  re.sub(r"[^a-z0-9 ]+", "", (h or "").lower())).strip()
 
 
-def metric_columns(grid) -> dict:
-    """{metric_key: column_index} from the header row, if any."""
-    for cells in grid[:5]:
+_METRIC_NAMES = {k: {_norm(n) for n in names} for k, names in METRIC_HEADERS.items()}
+
+
+def _has_letters(s: str) -> bool:
+    """True if `s` holds at least one letter. A cell of digits, commas and
+    spaces ('676  63,000') is a stray metric value, never a section name."""
+    return bool(re.search(r"[^\W\d_]", s or "", re.UNICODE))
+
+
+def metric_header(grid):
+    """`(row_index, {metric_key: column_index}, first_section_or_None)` for the
+    sheet's header row, or None.
+
+    Two shapes are recognised, and neither needs a mode switch.
+
+    * The ordinary one names a **link column** and puts the metric headers
+      beside it; there is no section in the header row, so the third item is
+      None.
+    * The **sectioned** one — what the team's own sheet looks like — has no link
+      header at all. Column A holds the FIRST section's name and the cells
+      beside it are the metric headers; every later section is a plain row with
+      its name in column A. Two or more metric headers sitting next to a piece
+      of ordinary text is the whole signal.
+    """
+    for i, cells in enumerate(grid[:5]):
         low = [_norm(c) for c in cells]
         found = {}
-        for key, names in METRIC_HEADERS.items():
+        for key, names in _METRIC_NAMES.items():
             j = next((j for j, c in enumerate(low) if c in names), None)
             if j is not None:
                 found[key] = j
-        if found and any(c in ("link", "url", "post link", "postlink") for c in low):
-            return found
-    return {}
+        if not found:
+            continue
+        if any(c in _LINK_HEADER_CELLS for c in low):
+            return i, found, None
+        first = cells[0] if cells else ""
+        if 0 in found.values() or input_loader._URL_RE.search(first):
+            continue        # column A is itself a metric header, or a link
+        if len({j for j in found.values() if j > 0}) >= 2 and _has_letters(first):
+            return i, found, first.strip()
+    return None
+
+
+def metric_columns(grid) -> dict:
+    """{metric_key: column_index} from the header row, if any — including a
+    sectioned sheet's header, whose first cell is a section name."""
+    head = metric_header(grid)
+    return head[1] if head else {}
 
 
 def fb_name(url: str) -> str:
@@ -173,13 +245,16 @@ def rows_from_grid(grid, platform: str = "x") -> list:
     def row(category, account, link, cells=()):
         link = input_loader._clean_url(link)
         plat = platform_of(link) if platform == "combined" else platform
-        if plat == "facebook":
-            link = normalize_fb_url(link)
-        elif plat == "instagram":
-            link = normalize_ig_url(link)
+        link = normalize_url(link, platform)
         r = {"category": (category or "Uncategorized").strip() or "Uncategorized",
              "account_name": (account or "").strip() or _display_name(link, plat or "x"),
              "link": link, "post_link": link, "platform": plat or platform}
+        if not (account or "").strip():
+            # The sheet has no handle column, so `account_name` above is a
+            # placeholder derived from the URL — and for /61559.../posts/ or
+            # /share/p/ it is a page id or nothing at all. Flag it so the worker
+            # can put the name the capture actually read in its place.
+            r["account_auto"] = True
         metrics = {}
         for key, j in mcols.items():
             if j < len(cells) and str(cells[j]).strip():
@@ -202,19 +277,41 @@ def rows_from_grid(grid, platform: str = "x") -> list:
                 and cmap["category"] < len(cells) else ""
             rows.append(row(category, account, link, cells))
     else:
-        category = "Uncategorized"
-        for cells in grid:
+        # Plain-list mode, and the sectioned sheet's mode: column A carries
+        # either a post URL or a section name. A header row (whether it names a
+        # link column or only metrics) is never a section — the body starts
+        # after it — and its first cell is the first section when the sheet is
+        # sectioned.
+        head = metric_header(grid)
+        start = (head[0] + 1) if head else 0
+        category = (head[2] if head else None) or "Uncategorized"
+        mcol_idx = set(mcols.values())
+        for cells in grid[start:]:
             if cells and cells[0].lstrip().startswith("#"):
                 continue
-            url = next((c for c in cells if input_loader._URL_RE.search(c)), "")
+            first = cells[0] if cells else ""
+            if not input_loader._URL_RE.search(first) and not first.strip():
+                # Column A empty. A row like ["", "676", "63,000", "63,000"]
+                # sits under every block of the team's sheet; it is neither a
+                # post nor a section, so it is dropped rather than promoted to
+                # a category made of numbers.
+                continue
+            url = first if input_loader._URL_RE.search(first) else \
+                next((c for c in cells if input_loader._URL_RE.search(c)), "")
             if url:
-                account = next((c for c in cells if c and not input_loader._URL_RE.search(c)
+                account = next((c for j, c in enumerate(cells)
+                                if c and j not in mcol_idx
+                                and not input_loader._URL_RE.search(c)
                                 and not re.fullmatch(r"[\d,]+", c)), "")
                 rows.append(row(category, account, url, cells))
-            else:
-                joined = " ".join(c for c in cells if c)
-                if joined.lower() not in input_loader._IGNORE_HEADERS:
-                    category = joined or category
+                continue
+            joined = " ".join(c for j, c in enumerate(cells)
+                              if c and j not in mcol_idx)
+            if joined.lower() in input_loader._IGNORE_HEADERS:
+                continue
+            if not _has_letters(first):
+                continue        # digits / commas / spaces only — not a section
+            category = joined.strip() or category
 
     kept = [r for r in rows if keep(r["link"])]
     dropped = len(rows) - len(kept)

@@ -73,6 +73,13 @@ def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
             res.update({"idx": t["idx"], "category": t["category"],
                         "account_name": t["account"],
                         "post_link": t["post_link"]})
+            # A sheet with no handle column gives every row a placeholder name
+            # derived from its URL ("Facebook post", a numeric page id, "X
+            # post"). The capture just read the real one off the page — the FB
+            # Page name, the IG @username, the X @handle — so use it. Only for
+            # rows the reader flagged: a name the user typed always wins.
+            if t.get("account_auto") and (res.get("handle") or "").strip():
+                res["account_name"] = res["handle"].strip()
             if t.get("sheet_metrics"):
                 res["sheet_metrics"] = dict(t["sheet_metrics"])
             if influencer:

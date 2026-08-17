@@ -659,6 +659,13 @@ before touching the engine.
     values print exactly as the sheet holds them (`18234`, not `18,234`);
     the type is Helvetica, not the deck's Poppins (a style may ship fonts —
     §18a — but a *shipped* style's font file would have to live in the repo);
+    **and Helvetica is WinAnsi, so a non-Latin value is swapped per string to
+    an installed Unicode face** (`tpl_builder._drawable`) — without that, the
+    captured Page name "काशी के मोदी" printed as black rectangles, which is
+    rule 14 arriving through the data rather than through the title. The
+    Dockerfile installs `fonts-lohit-deva` so the server has one to swap to;
+    if nothing on the machine can draw the string it prints anyway and says
+    so on stdout (rule 17);
     and the summary table is `tpl_builder`'s, so its divider sits at 62% of
     the box, not the deck's 50%.
 11. **Slide pages are landscape 16:9 / 4:3.** `PAGE_SIZES` stores them
@@ -673,6 +680,8 @@ before touching the engine.
 13. **A blueprint exists for a reason.** `docs/BLUEPRINT.md` is the single
    file to hand to the next redesign; update it in the same commit as any
    structural change (new folder, new route family, new contract).
+14. **Sectioned sheets** (section names in column A, header's first cell = the
+    first section) are recognised automatically; no special mode.
 
 ---
 

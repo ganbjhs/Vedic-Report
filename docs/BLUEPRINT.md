@@ -89,7 +89,14 @@ profiles/                  the profile engine — presentation as data
                            client-deck, contact-sheet, twitter-hi-res, facebook
   netlinks.py              which links belong to which platform ('combined' = any);
                            platform-neutral row reader (+ Section, + sheet metric
-                           columns Like/Impressions/Views/Reach/…)
+                           columns Like/Impressions/Views/Reach/…). Reads the
+                           SECTIONED sheet the team keeps by hand — no link, handle
+                           or section column; section names in column A; the header
+                           row's own first cell is the first section; a "Reach/views"
+                           column feeds both metrics; blank-A number rows are junk.
+                           Recognised by shape (metric_header), never by a mode.
+                           A row the sheet did not name is flagged `account_auto`,
+                           and prof_worker puts the CAPTURED name in its place.
   assets/logos/            platform marks drawn by PIL, used by template logo slots
   registry/combined-16x9.json + assets/combined-16x9/   the shipped Combined preset
   layout.py                page geometry → placements
@@ -98,12 +105,15 @@ profiles/                  the profile engine — presentation as data
   prof_runner.py           workers/retry/quality/results.json (own CTX_KWARGS)
   prof_worker.py           imports the engine DIRECTLY (x | influencer | facebook)
   prof_builder.py          PDF/DOCX/HTML from profile + results.json
-  tpl_builder.py           the same for TEMPLATE styles (designed PNG pages + slots)
+  tpl_builder.py           the same for TEMPLATE styles (designed PNG pages + slots);
+                           swaps in a Unicode face per string when Helvetica
+                           cannot draw it (captured Hindi Page names — rule 14)
   tpl_preview.py           the design kit: Canva slot guide + one-page preview
                            (PIL; same fractions as tpl_builder — RULEBOOK §18a)
   thumbnails.py            renders the style thumbnails from real geometry
   run_profile.py           entrypoint mirroring run.py's CLI
-  tests/run_all.py         7 zero-capture suites (parity, dispatch, inputs, …)
+  tests/run_all.py         8 zero-capture suites (parity, dispatch, inputs,
+                           sectioned sheet, …)
 
 webapp/
   main.py                  app, pages, auth routes, _shell() context, asset_v
@@ -244,7 +254,7 @@ this project) — see RULEBOOK §18a for what that costs and what pins it down.
 .venv/bin/pip install -r requirements.txt -r requirements-web.txt
 .venv/bin/python -m playwright install chromium
 cp .env.example .env            # APP_USERS, APP_ADMINS, SESSION_SECRET, X_* …
-.venv/bin/python profiles/tests/run_all.py     # 7 suites, zero captures
+.venv/bin/python profiles/tests/run_all.py     # 8 suites, zero captures
 .venv/bin/python -m uvicorn webapp.main:app --reload --port 8000
 .venv/bin/python scripts/probe_logged_out.py <url>   # before trusting a platform
 docker compose up -d --build     # server; see README "Deploying"

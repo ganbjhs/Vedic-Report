@@ -138,6 +138,9 @@ def build_tasks(rows, platform="x") -> list:
             "idx": i, "capture_url": capture_url,
             "post_link": (row.get("post_link") or "").strip() or capture_url,
             "account": account,
+            # the sheet named nobody, so `account` above is a placeholder the
+            # worker replaces with the handle the capture read (netlinks)
+            "account_auto": bool(row.get("account_auto")),
             # per-row platform for a combined report; the profile's otherwise
             "platform": row.get("platform") if platform == "combined" else platform,
             "sheet_metrics": row.get("sheet_metrics") or None,

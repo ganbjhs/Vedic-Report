@@ -373,6 +373,32 @@ else:
         finally:
             registry.set_user_dir(None)
 
+# --------------------------------------------------------------------------- #
+print("\n11. non-Latin text picks a font that can draw it (rule 14)")
+# A combined report prints the name the CAPTURE read, and a Varanasi Facebook
+# Page is called "काशी के मोदी". Helvetica is WinAnsi-encoded, so drawing that
+# in Helvetica is the black-rectangle bug rule 14 is about.
+import tpl_builder                             # noqa: E402
+
+check("Helvetica is kept for Latin text",
+      tpl_builder._drawable("The Chaupal", "Helvetica"), "Helvetica")
+check("Helvetica is kept for cp1252 text (é, ·)",
+      tpl_builder._drawable("Café · Banaras", "Helvetica"), "Helvetica")
+check("Helvetica cannot draw Devanagari",
+      tpl_builder._fits_font("काशी के मोदी", "Helvetica"), False)
+
+swapped = tpl_builder._drawable("काशी के मोदी", "Helvetica")
+uni = tpl_builder._unicode_font()
+if uni:
+    check("Devanagari swaps to the registered Unicode font", swapped, uni[0])
+    check("...which really carries those glyphs",
+          all(ord(ch) in uni[1] for ch in "काशी के मोदी"), True)
+else:
+    # A machine with no Unicode TTF must still build — and must SAY so rather
+    # than swap to something that cannot draw it either (rule 17).
+    check("with no Unicode font installed the request font is kept",
+          swapped, "Helvetica")
+
 print()
 if FAILS:
     print(f"FAILED {len(FAILS)}: {FAILS}")

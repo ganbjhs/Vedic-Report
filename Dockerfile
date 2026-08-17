@@ -19,6 +19,17 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Indic fonts. NOT for Chromium — the base image renders these pages fine — but
+# for reportlab: a combined report prints the account name the CAPTURE read, and
+# a Varanasi Facebook Page is called "काशी के मोदी". Helvetica is WinAnsi, so
+# without a Devanagari face on disk that name prints as black rectangles
+# (RULEBOOK rule 14). `tpl_builder._unicode_font` looks for exactly these paths
+# and says on stdout when it finds none.
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends fonts-lohit-deva fonts-freefont-ttf \
+ && rm -rf /var/lib/apt/lists/*
+
 # Dependencies first so code edits don't invalidate the layer.
 COPY requirements.txt requirements-web.txt ./
 RUN pip install --no-cache-dir --break-system-packages \

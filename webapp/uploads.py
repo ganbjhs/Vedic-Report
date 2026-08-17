@@ -296,7 +296,14 @@ def write_canonical_xlsx(rows: list, dest: Path) -> None:
     header = ["Account", "Link"] + (["Section"] if with_sections else []) + [k.title() for k in keys]
     ws.append(header)
     for r in rows:
-        row = [r.get("account_name", ""), r.get("link", "")]
+        # An `account_auto` row had NO name in the source sheet — what it
+        # carries is a placeholder derived from the URL. Writing that placeholder
+        # here would read back as a real name, and the worker would then keep
+        # "Facebook post" instead of the page name the capture reads off the
+        # post. Leaving the cell empty round-trips the flag through the
+        # canonical sheet, and the reader derives the same placeholder again.
+        account = "" if r.get("account_auto") else r.get("account_name", "")
+        row = [account, r.get("link", "")]
         if with_sections:
             row.append(r.get("category") or "")
         m = r.get("sheet_metrics") or {}
@@ -477,9 +484,14 @@ def analyse(grid: list, dedupe: bool = False, platform: str = "x") -> dict:
         for cell in cells:
             for raw in _URL_RE.findall(cell or ""):
                 cleaned = input_loader._clean_url(raw)
-                if cleaned in kept or cleaned in seen_raw:
+                # Compare what the READER would have kept, not the raw text: it
+                # normalises a Facebook/Instagram link (host, tracking query),
+                # so a captured row would otherwise be listed as rejected right
+                # under itself.
+                canonical = netlinks.normalize_url(cleaned, platform)
+                if canonical in kept or canonical in seen_raw:
                     continue
-                seen_raw.add(cleaned)
+                seen_raw.add(canonical)
                 reason = (f"this is not {ours} link"
                           if not is_ours(cleaned)
                           else f"not recognised as a {platform} post link")

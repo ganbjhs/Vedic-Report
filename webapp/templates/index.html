@@ -71,7 +71,7 @@
           <label id="drop" class="drop" for="file-input">
             <input id="file-input" class="visually-hidden" type="file" name="file" accept="{{ accept }}">
             <b>Drop .xlsx / .csv here</b> or click to browse
-            <small>Links auto-detected · account names optional · up to {{ max_mb }} MB, {{ max_links }} links</small>
+            <small>Links auto-detected · account names optional · up to {{ max_mb }} MB{% if max_links %}, {{ max_links }} links{% else %} · no link limit{% endif %}</small>
           </label>
           <div id="file-chip" class="chip" hidden><span id="file-name"></span><button type="button" id="file-clear" aria-label="Remove file">×</button></div>
         </div>
@@ -84,7 +84,15 @@
         <div data-panel="sheet" hidden>
           <label class="field"><span>Google Sheets link</span>
             <input id="sheet-input" name="sheet_url" type="url" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0">
-            <span class="hint">Share → <b>Anyone with the link</b>, or File → Share → <b>Publish to web</b>. Private sheets are not supported. Re-read when you press Generate, so late edits are picked up.</span></label>
+            <span class="hint">Share → <b>Anyone with the link</b>. Any layout works — links anywhere, headings as sections, dates wherever they are. Re-read when you press Generate.</span></label>
+          <label class="field" style="margin-top:8px"><span>Which part</span>
+            <select id="sheet-mode" name="sheet_mode">
+              <option value="latest">Newest date (date-named tab, or newest date block)</option>
+              <option value="tab">The tab in the link / picked below</option>
+              <option value="all">Every tab that has links</option>
+            </select></label>
+          <div class="small faint" id="sheet-info" style="margin-top:6px"></div>
+          <p class="hint" style="margin-top:8px">Want this to run by itself when a new date appears? Add the sheet on <a href="/project/sources">Sources</a>.</p>
         </div>
         <div class="pickers" id="pickers" hidden>
           <label class="picker" id="pick-sheet-wrap" hidden><span>Tab</span><select id="pick-sheet"></select></label>

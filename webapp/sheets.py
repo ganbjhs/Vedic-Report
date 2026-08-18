@@ -168,8 +168,18 @@ def _open_no_redirect(url: str):
 
 def fetch_csv(url: str) -> str:
     """Fetch the sheet's CSV. Raises SheetError with something a user can act on."""
-    target = export_url(url)
+    return _fetch(export_url(url), allow_html=False)
 
+
+def fetch_text(url: str, allow_html: bool = False) -> str:
+    """Fetch any docs.google.com page under the same guards (v3: the workbook's
+    htmlview page, to list its tabs). `allow_html` because that page IS html;
+    a sign-in page still fails — it redirects to accounts.google.com, which the
+    allow-list refuses."""
+    return _fetch(_validate((url or "").strip()), allow_html=allow_html)
+
+
+def _fetch(target: str, allow_html: bool) -> str:
     for _ in range(MAX_REDIRECTS + 1):
         try:
             resp = _open_no_redirect(target)
@@ -196,7 +206,7 @@ def fetch_csv(url: str) -> str:
 
         with resp:
             ctype = (resp.headers.get("Content-Type") or "").lower()
-            if "text/html" in ctype:
+            if "text/html" in ctype and not allow_html:
                 # 200 OK with a sign-in page. Parsing this as CSV would invent
                 # rows out of HTML instead of telling the truth.
                 raise SheetError(
@@ -205,7 +215,8 @@ def fetch_csv(url: str) -> str:
                     "link”, then try again.")
             if ctype and not any(t in ctype for t in
                                  ("text/csv", "text/plain",
-                                  "application/octet-stream")):
+                                  "application/octet-stream")
+                                 + (("text/html",) if allow_html else ())):
                 raise SheetError(f"Expected CSV but Google sent {ctype!r}.")
 
             chunks, size = [], 0

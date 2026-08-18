@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Sources · {{ project.name }} — VedicReport{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+
+{% block content %}
+<div class="row" style="justify-content:space-between;align-items:flex-start">
+  <div>
+    <h1>Sources <span class="faint" style="font-weight:500;font-size:16px">· {{ project.emoji }} {{ project.name }}</span></h1>
+    <p class="sub" style="margin-bottom:0">A Google Sheet the server keeps watching. It reads the sheet the way you do — links anywhere, headings as sections, dates wherever they are — and when a <b>new date</b> (or new links) appears it starts a run with this project's styles. Checked every {{ sync_minutes }} min.</p>
+  </div>
+  <button type="button" class="btn primary" id="src-add-btn">+ Add Google Sheet</button>
+</div>
+
+<div id="src-list" style="margin-top:18px;display:grid;gap:12px" data-pid="{{ project.id }}"></div>
+<div class="ov-empty" id="src-empty" hidden>No sheet is watched yet. Add the workbook link — every tab is read; you choose whether the newest date tab, one tab, or all of them count.</div>
+
+<!-- add / inspect dialog -->
+<div class="modal" id="src-modal" hidden role="dialog" aria-modal="true" aria-label="Add a Google Sheet source">
+  <div class="modal-card" style="width:820px"><button type="button" class="modal-x" id="src-close" aria-label="Close">×</button>
+    <h3 style="margin:0 0 4px">Add a Google Sheet</h3>
+    <p class="small muted" style="margin:0 0 12px">Share → “Anyone with the link” (viewer is enough). No columns to point at — paste the link and look at what the reader understood before saving.</p>
+    <form id="src-form" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="fields" style="grid-template-columns:1fr">
+        <label class="field"><span>Sheet link</span><input name="url" type="url" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0" required></label>
+      </div>
+      <div class="fields" style="grid-template-columns:1fr 1fr 1fr;margin-top:10px">
+        <label class="field"><span>Which part</span>
+          <select name="mode">
+            <option value="latest">Newest date — tab named by date, or newest date block inside a tab</option>
+            <option value="tab">One tab (pick below)</option>
+            <option value="all">Every tab that has links</option>
+          </select></label>
+        <label class="field" id="src-tab-wrap" hidden><span>Tab</span><select name="gid"></select></label>
+        <label class="field"><span>Label <span class="faint">(optional)</span></span><input name="label" type="text" maxlength="80" placeholder="e.g. Varanasi day-wise"></label>
+      </div>
+      <div class="fields" style="grid-template-columns:1fr 1fr;margin-top:10px">
+        <label class="check"><input type="checkbox" name="auto_run" checked><span><b>Auto-run</b> — start a run with this project's styles by itself. Off = only tell me, I press Run.</span></label>
+        <label class="field"><span>Run when</span>
+          <select name="trigger">
+            <option value="new_date">a new date appears (new day tab / new date block)</option>
+            <option value="any_change">anything changes (new date or new links)</option>
+          </select></label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button type="button" class="btn" id="src-inspect">Look at the sheet</button>
+        <button type="submit" class="btn primary" id="src-save" disabled>Save &amp; watch</button>
+        <span class="small" id="src-msg"></span>
+      </div>
+    </form>
+    <div id="src-report" hidden style="margin-top:14px">
+      <div class="row" style="gap:6px;flex-wrap:wrap" id="src-report-pills"></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+        <div><b class="small">Tabs found</b><div id="src-tabs" class="small" style="margin-top:4px;max-height:160px;overflow:auto"></div></div>
+        <div><b class="small">Sections</b><div id="src-sections" class="small" style="margin-top:4px"></div></div>
+      </div>
+      <b class="small" style="display:block;margin-top:10px">First links the reader found</b>
+      <div style="overflow:auto;max-height:200px"><table class="tbl" id="src-sample"><thead><tr><th>Section</th><th>Date</th><th>Account</th><th>Link</th></tr></thead><tbody></tbody></table></div>
+      <div class="small faint" id="src-notes" style="margin-top:6px"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script id="sources-data" type="application/json">{{ sources_list | tojson }}</script>
+<script>initProjectSources();</script>
+{% endblock %}

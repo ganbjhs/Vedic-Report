@@ -154,10 +154,19 @@ JOB_TIMEOUT_MINUTES = max(1, _int("JOB_TIMEOUT_MINUTES", 90))
 # measures a better number on the account you are actually using.
 DAILY_CAPTURE_BUDGET = max(1, _int("DAILY_CAPTURE_BUDGET", 320))
 
+# Grok (xAI) — optional. Used by the smart sheet reader as a second opinion
+# on column names, and by Grok Studio later. Empty = every AI feature off.
+XAI_API_KEY = os.environ.get("XAI_API_KEY", "").strip()
+XAI_MODEL = os.environ.get("XAI_MODEL", "grok-4").strip() or "grok-4"
+
+# Sheet sources (v3): how often the sync loop looks at every project's sheets.
+SHEET_SYNC_MINUTES = max(1, _int("SHEET_SYNC_MINUTES", 10))
+
 # Upload limits
 MAX_UPLOAD_MB = max(1, _int("MAX_UPLOAD_MB", 5))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-MAX_LINKS = max(1, _int("MAX_LINKS", 200))
+# 0 = no limit (v3 default). A positive number caps links per job.
+MAX_LINKS = max(0, _int("MAX_LINKS", 0))
 
 # Retention
 RETENTION_DAYS = max(1, _int("RETENTION_DAYS", 7))
@@ -240,7 +249,7 @@ def public_settings() -> dict:
         "Capture speed ceiling (MAX_WORKERS)": MAX_WORKERS,
         "Influencer report browsers (INFLUENCER_WORKERS)": INFLUENCER_WORKERS,
         "Reports running at once (MAX_CONCURRENT_JOBS)": MAX_CONCURRENT_JOBS,
-        "Links per report (MAX_LINKS)": MAX_LINKS,
+        "Links per report (MAX_LINKS)": MAX_LINKS or "unlimited",
         "Upload size limit": f"{MAX_UPLOAD_MB} MB",
         "Job time limit": f"{JOB_TIMEOUT_MINUTES} min",
         "Reports kept for": f"{RETENTION_DAYS} day(s)",

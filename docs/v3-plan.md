@@ -1,6 +1,6 @@
 # VedicReport v3 — "Projects + Grok" release plan
 
-*Draft v3, 17 Aug 2026 — **status 18 Aug: 3.0-a shipped** (projects, project styles, PPTX for numeric styles, page background). Next: API panel + Sources. (project switcher in the left bar; project pages in the left bar; metrics optional; post metrics deferred; simple API; Grok chat per project). Companion demo: `docs/v3-dashboard-demo.html` (click through it first — this file explains what you saw).*
+*Draft v3, 17 Aug 2026 — **status 18 Aug: 3.0-a shipped** (projects, project styles, PPTX for numeric styles, page background, Sources with the smart sheet reader + new-date auto-run, no link limit). Next: API panel. (project switcher in the left bar; project pages in the left bar; metrics optional; post metrics deferred; simple API; Grok chat per project). Companion demo: `docs/v3-dashboard-demo.html` (click through it first — this file explains what you saw).*
 
 ---
 

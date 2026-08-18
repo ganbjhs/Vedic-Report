@@ -4,8 +4,10 @@
 > *projects* — pick one in the left bar (or make a new one), give it the styles
 > it prints in (one or more, each with its own PDF / DOCX / PPTX choice and an
 > optional page background), and every run belongs to it. Numeric styles now
-> export a **PPTX** too. Read `docs/v3-plan.md` for what comes next (Sources
-> that stay in sync, the per-project API key, Grok Studio).
+> export a **PPTX** too. **Sources**: add the team's Google Sheet — any layout,
+> no columns to point at — and a run starts by itself when a new date appears.
+> No link limit. Read `docs/v3-plan.md` for what comes next (the per-project
+> API key, Grok Studio).
 
 Give it a list of X/Twitter post links; it screenshots every post in a logged-in
 browser and builds a **PDF + Word (.docx)** report — or, for a designed-page

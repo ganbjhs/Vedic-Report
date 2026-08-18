@@ -128,6 +128,7 @@ function initSubmitForm() {
   let settings = {}; try { settings = JSON.parse(form.dataset.settings || "{}") || {}; } catch (_) {}
   const input = $("file-input"), drop = $("drop"), chip = $("file-chip"), chipName = $("file-name");
   const paste = $("paste-input"), sheet = $("sheet-input"), dedupe = $("dedupe");
+  const sheetMode = $("sheet-mode"), sheetInfo = $("sheet-info");
   const pickers = $("pickers"), pickSheet = $("pick-sheet"), pickLink = $("pick-link"), pickAccount = $("pick-account");
   const nameInput = $("report-name"), errorBox = $("form-error"), submitBtn = $("submit-btn");
   const spinner = submitBtn.querySelector(".spinner");
@@ -137,7 +138,7 @@ function initSubmitForm() {
   const pv = { pill: $("prev-pill"), empty: $("prev-empty"), loading: $("prev-loading"), error: $("prev-error"),
     scroll: $("prev-scroll"), rows: $("prev-rows"), stat: $("prev-stat") };
 
-  let activeTab = "file", userLinkCol = "", userAccountCol = "", ready = 0, lastPreview = null;
+  let activeTab = "file", userLinkCol = "", userAccountCol = "", userSheet = "", ready = 0, lastPreview = null;
   const showError = (msg) => { errorBox.textContent = msg || ""; errorBox.hidden = !msg; };
 
   /* ---- platform ---- */
@@ -255,8 +256,9 @@ function initSubmitForm() {
   paste.addEventListener("input", () => schedulePreview(450));
   sheet.addEventListener("input", () => schedulePreview(700));
   sheet.addEventListener("paste", () => schedulePreview(120));
+  if (sheetMode) sheetMode.addEventListener("change", () => { userSheet = ""; schedulePreview(0); });
   dedupe.addEventListener("change", () => schedulePreview(0));
-  pickSheet.addEventListener("change", () => { userLinkCol = ""; schedulePreview(0); });
+  pickSheet.addEventListener("change", () => { userLinkCol = ""; userSheet = pickSheet.value; if (activeTab === "sheet" && sheetMode) sheetMode.value = "tab"; schedulePreview(0); });
   pickLink.addEventListener("change", () => { userLinkCol = pickLink.value; schedulePreview(0); });
   pickAccount.addEventListener("change", () => { userAccountCol = pickAccount.value; schedulePreview(0); });
 
@@ -298,6 +300,10 @@ function initSubmitForm() {
   const shortLink = (u) => String(u).replace(/^https?:\/\/(www\.)?/, "").replace(/(status\/\d{6})\d+/, "$1…");
   const renderPreview = (data) => {
     lastPreview = data;
+    if (sheetInfo) {
+      const si = data.sheet_info;
+      sheetInfo.innerHTML = si ? [si.tab ? `tab <b>${esc(si.tab)}</b>` : "", si.latest_date ? `newest date <b>${esc(si.latest_date)}</b>` : "", si.sections && si.sections.length ? `${si.sections.length} section(s): ${esc(si.sections.slice(0, 6).join(" · "))}` : "", ...(si.notes || []).map(esc)].filter(Boolean).join(" · ") : "";
+    }
     pv.loading.hidden = true; pv.empty.hidden = true; pv.error.hidden = true; pv.scroll.hidden = false; pv.stat.hidden = false;
     renderPickers(data);
     const dupPos = new Set(); (data.duplicates || []).forEach((d) => d.positions.slice(1).forEach((p) => dupPos.add(p)));
@@ -353,6 +359,8 @@ function initSubmitForm() {
     } else if (activeTab === "sheet") {
       if (!sheet.value.trim()) return false;
       body.append("sheet_url", sheet.value.trim());
+      body.append("sheet_mode", sheetMode ? sheetMode.value : "latest");
+      if (userSheet && (!sheetMode || sheetMode.value === "tab")) body.append("sheet", userSheet);
     } else {
       if (!paste.value.trim()) return false;
       body.append("text", paste.value);
@@ -1388,4 +1396,111 @@ function initProjectSettings() {
     try { await api(`/api/projects/${encodeURIComponent(pid)}`, { method: "DELETE" }); location.href = "/"; }
     catch (err) { say(err.message, false); }
   });
+}
+
+/* =========================================================================
+   v3 · Project → Sources: watched Google Sheets
+   ========================================================================= */
+function initProjectSources() {
+  const list = $("src-list"); if (!list) return;
+  const pid = list.dataset.pid;
+  let sources = []; try { sources = JSON.parse($("sources-data").textContent) || []; } catch (_) {}
+  const base = `/api/projects/${encodeURIComponent(pid)}/sources`;
+  const MODE = { latest: "newest date", tab: "one tab", all: "every tab" };
+  const when = (t) => (t ? ago(t) : "never");
+
+  function render() {
+    $("src-empty").hidden = !!sources.length;
+    list.innerHTML = sources.map((s) => {
+      const err = s.last_error ? `<div class="alert alert-error tight" style="margin-top:8px">${esc(s.last_error)}</div>` : "";
+      const jobs = (s.last_job_ids || []).map((j) => `<a href="/jobs/${esc(j)}">${esc(j.slice(0, 6))}</a>`).join(", ");
+      const log = (s.log || []).slice(-6).reverse().map((l) => `<div><time class="faint">${esc(fmtDate(l.t))}</time> <span${l.level === "error" ? ' style="color:var(--bad)"' : ""}>${esc(l.message)}</span></div>`).join("");
+      return `<div class="card" data-sid="${esc(s.id)}">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div style="min-width:0">
+            <b>📗 ${esc(s.label || "Google Sheet")}</b> <span class="tag">${esc(MODE[s.mode] || s.mode)}${s.gid ? " · gid " + esc(s.gid) : ""}</span>
+            ${s.auto_run ? '<span class="tag" style="color:var(--ok);background:var(--ok-bg);border-color:transparent">auto-run on · ' + (s.trigger === "any_change" ? "any change" : "new date") + '</span>' : '<span class="tag">auto-run off</span>'}
+            ${s.enabled ? "" : '<span class="tag hot">paused</span>'}
+            <div class="small faint" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:640px"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a></div>
+          </div>
+          <div class="row" style="gap:6px">
+            <button type="button" class="btn sm" data-act="check">Check now</button>
+            <button type="button" class="btn sm primary" data-act="run">Run now</button>
+            <button type="button" class="btn sm ghost" data-act="toggle">${s.auto_run ? "Turn auto-run off" : "Turn auto-run on"}</button>
+            <button type="button" class="btn sm ghost danger" data-act="del">Remove</button>
+          </div>
+        </div>
+        <table class="kv" style="margin-top:10px">
+          <tr><td>Last seen</td><td>${s.last_tab ? "tab <b>" + esc(s.last_tab) + "</b> · " : ""}${s.last_date ? "date <b>" + esc(s.last_date) + "</b> · " : ""}${s.last_count || 0} link(s)</td></tr>
+          <tr><td>Checked</td><td>${esc(when(s.last_checked_at))}${s.last_changed_at ? " · last change " + esc(when(s.last_changed_at)) : ""}</td></tr>
+          <tr><td>Last runs</td><td>${jobs || '<span class="faint">none yet</span>'}</td></tr>
+        </table>
+        ${err}
+        <details style="margin-top:8px"><summary class="small faint" style="cursor:pointer">Log</summary><div class="small" style="margin-top:6px;display:grid;gap:3px">${log || '<span class="faint">—</span>'}</div></details>
+      </div>`;
+    }).join("");
+  }
+  list.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-act]"); if (!b) return;
+    const sid = b.closest("[data-sid]").dataset.sid, s = sources.find((x) => x.id === sid);
+    b.disabled = true;
+    try {
+      if (b.dataset.act === "del") {
+        if (!confirm("Stop watching this sheet? Runs already made stay.")) { b.disabled = false; return; }
+        const r = await api(`${base}/${encodeURIComponent(sid)}`, { method: "DELETE" }); sources = r.sources;
+      } else if (b.dataset.act === "toggle") {
+        const r = await api(`${base}/${encodeURIComponent(sid)}`, { method: "PATCH", json: { auto_run: !s.auto_run } });
+        sources = sources.map((x) => (x.id === sid ? r.source : x));
+      } else {
+        const r = await api(`${base}/${encodeURIComponent(sid)}/${b.dataset.act}`, { method: "POST", json: {} });
+        sources = sources.map((x) => (x.id === sid ? r.source : x));
+        if (r.check && r.check.job_ids && r.check.job_ids.length) { location.href = "/runs"; return; }
+      }
+      render();
+    } catch (err) { alert(err.message); b.disabled = false; }
+  });
+
+  /* add dialog */
+  const modal = $("src-modal"), form = $("src-form"), msg = $("src-msg"), save = $("src-save"), report = $("src-report");
+  const show = (on) => { modal.hidden = !on; if (on) { form.reset(); report.hidden = true; save.disabled = true; msg.textContent = ""; $("src-tab-wrap").hidden = true; setTimeout(() => form.elements.url.focus(), 30); } };
+  $("src-add-btn").addEventListener("click", () => show(true));
+  $("src-close").addEventListener("click", () => show(false));
+  modal.addEventListener("click", (e) => { if (e.target === modal) show(false); });
+  form.elements.mode.addEventListener("change", () => { $("src-tab-wrap").hidden = form.elements.mode.value !== "tab"; save.disabled = true; });
+  const say = (t, ok) => { msg.textContent = t; msg.style.color = ok ? "var(--ok)" : "var(--bad)"; };
+  async function inspect() {
+    const url = form.elements.url.value.trim(); if (!url) return say("Paste the sheet link first.", false);
+    say("Reading…", true); save.disabled = true;
+    try {
+      const r = await api(`${base}/inspect`, { method: "POST", json: { url, mode: form.elements.mode.value, gid: form.elements.gid.value } });
+      const tabs = r.tabs || [];
+      const sel = form.elements.gid, keep = sel.value;
+      sel.innerHTML = tabs.map((t) => `<option value="${esc(t.gid)}">${esc(t.name)}${t.date ? " · " + esc(t.date) : ""}</option>`).join("");
+      if (keep && tabs.some((t) => t.gid === keep)) sel.value = keep;
+      $("src-tab-wrap").hidden = form.elements.mode.value !== "tab";
+      $("src-report-pills").innerHTML = [
+        `<span class="pill ok"><span class="dot ok"></span> ${r.count} link(s)</span>`,
+        r.tab ? `<span class="pill">tab: ${esc(r.tab.name)}</span>` : `<span class="pill">${tabs.length} tabs</span>`,
+        r.latest_date ? `<span class="pill">newest date: ${esc(r.latest_date)}</span>` : `<span class="pill">no date found</span>`,
+        `<span class="pill">shape: ${esc(r.shape)}</span>`,
+        r.metric_names.length ? `<span class="pill">metrics: ${esc(r.metric_names.join(", "))}</span>` : "",
+      ].join("");
+      $("src-tabs").innerHTML = tabs.map((t) => `<span class="tag" style="margin:2px">${esc(t.name)}${t.date ? " <span class=faint>" + esc(t.date) + "</span>" : ""}</span>`).join(" ") || "<span class=faint>—</span>";
+      $("src-sections").innerHTML = (r.sections || []).map((x) => `<span class="tag" style="margin:2px">${esc(x)}</span>`).join(" ") || "<span class=faint>none — every link in one group</span>";
+      $("src-sample").querySelector("tbody").innerHTML = (r.sample || []).map((p) => `<tr><td>${esc(p.section || "—")}</td><td>${esc(p.date || "—")}</td><td>${esc(p.account || "—")}</td><td class="lnk"><a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.link.replace(/^https?:\/\/(www\.)?/, "").slice(0, 60))}</a></td></tr>`).join("");
+      $("src-notes").textContent = (r.notes || []).join(" ");
+      report.hidden = false; save.disabled = !r.count;
+      say(r.count ? "Looks right? Save & watch." : "No links found — try another part.", !!r.count);
+    } catch (err) { say(err.message, false); report.hidden = true; }
+  }
+  $("src-inspect").addEventListener("click", inspect);
+  form.elements.url.addEventListener("change", () => { report.hidden = true; save.disabled = true; });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault(); say("Saving…", true); save.disabled = true;
+    try {
+      const r = await api(base, { method: "POST", json: { url: form.elements.url.value.trim(), mode: form.elements.mode.value, gid: form.elements.mode.value === "tab" ? form.elements.gid.value : "", label: form.elements.label.value.trim(), auto_run: form.elements.auto_run.checked, trigger: form.elements.trigger.value } });
+      sources = r.sources; render(); show(false);
+    } catch (err) { say(err.message, false); save.disabled = false; }
+  });
+  render();
 }

@@ -216,6 +216,18 @@ first copied into a project-owned one (`styles.fork_for_project` →
 `"<src>-<project>"`) and swapped in the project (`store.project_replace_style`).
 Test: `profiles/tests/test_projects.py`.
 
+## 4b. Sources + the smart sheet reader (v3.0-a, second half)
+
+| Piece | Where |
+|---|---|
+| **Smart reader** — any layout: every URL in any cell is a post (multi-line cells too), headings above links are sections, dates anywhere ("17/8/26", "Date- 4-7-26", "14 Jul") set the date, numbers beside links are metrics named by the header, short text beside a link is the account. Output = canonical `Section | Handle | Link | <metrics>` grid → `uploads.analyse` unchanged | `webapp/smartsheet.py` (`understand`, `latest_block`, `list_tabs` from the workbook's public htmlview page, `read(url, mode=latest|tab|all)`, `fingerprint`, optional `grok_label_columns` when `XAI_API_KEY` is set) |
+| New run → Google Sheet uses it: `sheet_mode` (newest date / one tab / all), tab picker by name, `sheet_info` in the preview | `routes_jobs._grid_from_request`, `index.html`, `app.js` |
+| **Sources** — a project's watched sheets: `sources` table; `check_source` reads → fingerprint → on a NEW DATE (or any change, per `trigger`) starts a run with the project's styles; background loop every `SHEET_SYNC_MINUTES`; first read is a baseline, never a run | `webapp/sources.py`, `webapp/routes_sources.py` (`/api/projects/{pid}/sources`: inspect · create · patch · delete · check · run), `templates/project_sources.html`, `app.js initProjectSources` |
+| **One place jobs are created** — New run and the sync loop both call it | `webapp/runs.py create_run` |
+| **No link limit** — `MAX_LINKS=0` (default) means unlimited; a positive number still caps | `config.py`, `uploads.analyse`, `routes_jobs` |
+| Fetch guards unchanged; `sheets.fetch_text(allow_html=True)` added for the htmlview page | `webapp/sheets.py` |
+| Tests | `profiles/tests/test_smartsheet.py` (the real workbook's four shapes) |
+
 ## 5. Front-end model (for a redesign)
 
 Shell: top bar (brand · theme · avatar menu) · left nav (New report N,

@@ -82,6 +82,34 @@ CREATE TABLE IF NOT EXISTS project_styles (
     PRIMARY KEY (project_id, slug)
 );
 
+-- v3: a SOURCE is where a project's links come from and keep coming from —
+-- today a Google Sheet that the sync loop re-reads. `mode` = latest | tab | all
+-- (see smartsheet.read); `auto_run` = start a run when the fingerprint changes.
+CREATE TABLE IF NOT EXISTS sources (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'sheet',
+    label         TEXT DEFAULT '',
+    url           TEXT NOT NULL,
+    mode          TEXT DEFAULT 'latest',
+    gid           TEXT DEFAULT '',
+    auto_run      INTEGER DEFAULT 1,
+    trigger       TEXT DEFAULT 'new_date',
+    enabled       INTEGER DEFAULT 1,
+    last_fingerprint TEXT DEFAULT '',
+    last_date     TEXT DEFAULT '',
+    last_tab      TEXT DEFAULT '',
+    last_count    INTEGER DEFAULT 0,
+    last_checked_at REAL,
+    last_changed_at REAL,
+    last_error    TEXT DEFAULT '',
+    last_job_ids  TEXT DEFAULT '[]',
+    log           TEXT DEFAULT '[]',
+    created_by    TEXT DEFAULT '',
+    created_at    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sources_project ON sources (project_id, created_at);
+
 CREATE TABLE IF NOT EXISTS users (
     username      TEXT PRIMARY KEY,
     pw_hash       TEXT NOT NULL,
@@ -443,6 +471,91 @@ def project_replace_style(pid: str, old_slug: str, new_slug: str) -> None:
     with _connect() as conn:
         conn.execute("UPDATE project_styles SET slug=? WHERE project_id=? AND slug=?",
                      (new_slug, pid, old_slug))
+
+
+# --------------------------------------------------------------------------- #
+# Sources (v3)
+# --------------------------------------------------------------------------- #
+def _source_row(r) -> dict:
+    d = dict(r)
+    for f in ("last_job_ids", "log"):
+        try:
+            d[f] = json.loads(d.get(f) or "[]")
+        except (ValueError, TypeError):
+            d[f] = []
+    d["auto_run"] = bool(d.get("auto_run"))
+    d["enabled"] = bool(d.get("enabled"))
+    return d
+
+
+def source_create(project_id: str, url: str, mode: str = "latest", gid: str = "",
+                  auto_run: bool = True, label: str = "", created_by: str = "",
+                  kind: str = "sheet", trigger: str = "new_date") -> str:
+    """`trigger`: 'new_date' = run only when the newest date moves on (a new
+    day tab / a new date block); 'any_change' = run whenever links change."""
+    sid = uuid.uuid4().hex[:12]
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO sources (id, project_id, kind, label, url, mode, gid, "
+            "auto_run, trigger, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (sid, project_id, kind, (label or "")[:80], url[:600], mode, gid or "",
+             int(bool(auto_run)), trigger if trigger in ("new_date", "any_change") else "new_date",
+             created_by, time.time()))
+    return sid
+
+
+def source_get(sid: str):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM sources WHERE id=?", (sid,)).fetchone()
+    return _source_row(row) if row else None
+
+
+def sources_for(project_id: str) -> list:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM sources WHERE project_id=? "
+                            "ORDER BY created_at ASC", (project_id,)).fetchall()
+    return [_source_row(r) for r in rows]
+
+
+def sources_all(enabled_only: bool = True) -> list:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM sources " +
+                            ("WHERE enabled=1 " if enabled_only else "") +
+                            "ORDER BY created_at ASC").fetchall()
+    return [_source_row(r) for r in rows]
+
+
+def source_update(sid: str, **fields) -> None:
+    if not fields:
+        return
+    for f in ("last_job_ids", "log"):
+        if f in fields and not isinstance(fields[f], str):
+            fields[f] = json.dumps(fields[f])
+    for f in ("auto_run", "enabled"):
+        if f in fields:
+            fields[f] = int(bool(fields[f]))
+    cols = ", ".join(f"{k}=?" for k in fields)
+    with _connect() as conn:
+        conn.execute(f"UPDATE sources SET {cols} WHERE id=?", (*fields.values(), sid))
+
+
+def source_log(sid: str, message: str, level: str = "info") -> None:
+    with _connect() as conn:
+        row = conn.execute("SELECT log FROM sources WHERE id=?", (sid,)).fetchone()
+        if row is None:
+            return
+        try:
+            log = json.loads(row["log"] or "[]")
+        except (ValueError, TypeError):
+            log = []
+        log.append({"t": time.time(), "level": level, "message": message})
+        conn.execute("UPDATE sources SET log=? WHERE id=?", (json.dumps(log[-60:]), sid))
+
+
+def source_delete(sid: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM sources WHERE id=?", (sid,))
+    return cur.rowcount > 0
 
 
 # --------------------------------------------------------------------------- #

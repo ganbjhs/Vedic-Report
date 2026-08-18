@@ -258,7 +258,7 @@ def parse_rows(path: Path, suffix: str) -> list:
         raise UploadError(
             "No links found. Put one X/Twitter post URL per row (or per line), "
             "or use a sheet with a column headed 'Link'.")
-    if len(rows) > config.MAX_LINKS:
+    if config.MAX_LINKS and len(rows) > config.MAX_LINKS:
         raise UploadError(
             f"That file has {len(rows)} X links — the limit is "
             f"{config.MAX_LINKS} per job. Split it into smaller files.")
@@ -516,8 +516,8 @@ def analyse(grid: list, dedupe: bool = False, platform: str = "x") -> dict:
         "dropped": dropped,
         "duplicates": duplicates,
         "duplicate_count": sum(len(d["positions"]) - 1 for d in duplicates),
-        "over_limit": len(rows) > config.MAX_LINKS,
-        "limit": config.MAX_LINKS,
+        "over_limit": bool(config.MAX_LINKS) and len(rows) > config.MAX_LINKS,
+        "limit": config.MAX_LINKS or 0,
     }
 
 

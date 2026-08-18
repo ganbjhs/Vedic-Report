@@ -12,7 +12,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import auth, config, projects, report_types, sheets, uploads
+from . import auth, config, projects, report_types, runs, sheets, smartsheet, uploads
 from .jobs import queue, runner, store
 
 router = APIRouter(prefix="/api")
@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api")
 # picker. Request-scoped in practice (one preview per request) and only ever
 # used to decorate the response.
 _TABS_SEEN = []
+_SHEET_INFO = {}
 
 _KINDS = {"pdf": "application/pdf",
           "docx": "application/vnd.openxmlformats-officedocument."
@@ -120,7 +121,7 @@ async def _read_capped(upload: UploadFile) -> bytes:
 # Preview — parse an input WITHOUT creating a job
 # --------------------------------------------------------------------------- #
 async def _grid_from_request(file, text: str, sheet_url: str = "",
-                             sheet: str = "") -> tuple:
+                             sheet: str = "", sheet_mode: str = "latest") -> tuple:
     """(grid, source_label, original_bytes) for any input method.
 
     Preview and submit both call this, so what the preview showed is exactly
@@ -135,13 +136,35 @@ async def _grid_from_request(file, text: str, sheet_url: str = "",
     """
     url = (sheet_url or "").strip()
     if url:
-        csv_text = await asyncio.to_thread(sheets.fetch_csv, url)
-        grid = uploads.grid_from_csv_text(csv_text)
-        if not grid:
-            raise uploads.UploadError("That sheet has no readable rows.")
-        info = sheets.describe(url)
-        label = "Google Sheet" + (f" (tab {info['gid']})" if info.get("gid") else "")
-        return grid, label, csv_text.encode("utf-8")
+        # v3: the smart reader — any layout, any tab; `sheet` names a tab
+        # (its gid or its name) when the user picked one, `sheet_mode` says
+        # whether we want the newest date, that one tab, or all tabs.
+        mode = sheet_mode if sheet_mode in ("latest", "tab", "all") else "latest"
+        gid = None
+        if sheet:
+            mode = "tab"
+            gid = sheet if sheet.isdigit() else None
+            if gid is None:
+                for t in await asyncio.to_thread(smartsheet.list_tabs, url):
+                    if t["name"] == sheet:
+                        gid = t["gid"]
+                        break
+        u = await asyncio.to_thread(smartsheet.read, url, mode, gid)
+        _TABS_SEEN.clear()
+        _TABS_SEEN.extend(t["name"] for t in u.get("tabs") or [])
+        _SHEET_INFO.clear()
+        _SHEET_INFO.update({"tab": (u.get("tab") or {}).get("name") or "",
+                            "latest_date": u.get("latest_date"),
+                            "sections": u.get("sections") or [],
+                            "shape": u.get("shape"), "notes": u.get("notes") or [],
+                            "mode": u.get("mode")})
+        if len(u["grid"]) <= 1:
+            raise uploads.UploadError(
+                "No post links found in that sheet" +
+                (f" (tab {u['tab']['name']})" if u.get("tab") else "") +
+                ". " + " ".join(u.get("notes") or []))
+        raw = "\n".join(p["link"] for p in u["posts"]).encode("utf-8")
+        return u["grid"], u.get("source_label") or "Google Sheet", raw
 
     pasted = (text or "").strip()
     if pasted:
@@ -182,6 +205,7 @@ async def preview(request: Request,
                   text: str = Form(""),
                   sheet_url: str = Form(""),
                   sheet: str = Form(""),
+                  sheet_mode: str = Form("latest"),
                   link_col: str = Form(""),
                   account_col: str = Form(""),
                   dedupe: str = Form(""),
@@ -204,7 +228,8 @@ async def preview(request: Request,
 
     try:
         _TABS_SEEN.clear()
-        grid, source, _raw = await _grid_from_request(file, text, sheet_url, sheet)
+        _SHEET_INFO.clear()
+        grid, source, _raw = await _grid_from_request(file, text, sheet_url, sheet, sheet_mode)
         tabs = list(_TABS_SEEN)
         columns = uploads.detect_columns(grid)
         if link_col != "":
@@ -237,12 +262,13 @@ async def preview(request: Request,
                              "dropped": report["dropped"][:50]},
                             status_code=400)
 
-    shown = rows[:config.MAX_LINKS]
+    shown = rows[:config.MAX_LINKS] if config.MAX_LINKS else rows
     return {
         "ok": True,
         "source": source,
         "sheets": tabs,
-        "sheet": sheet or (tabs[0] if tabs else ""),
+        "sheet": sheet or (_SHEET_INFO.get("tab") if _SHEET_INFO else "") or (tabs[0] if tabs else ""),
+        "sheet_info": dict(_SHEET_INFO) if _SHEET_INFO else None,
         "columns": columns["columns"],
         "has_header": columns["has_header"],
         "count": len(rows),
@@ -271,6 +297,7 @@ async def submit_job(request: Request,
                      text: str = Form(""),
                      sheet_url: str = Form(""),
                      sheet: str = Form(""),
+                     sheet_mode: str = Form("latest"),
                      link_col: str = Form(""),
                      account_col: str = Form(""),
                      dedupe: str = Form(""),
@@ -351,7 +378,7 @@ async def submit_job(request: Request,
     pasted = (text or "").strip()
     want_dedupe = dedupe.lower() not in ("", "0", "false", "off")
     try:
-        grid, source, raw = await _grid_from_request(file, pasted, sheet_url, sheet)
+        grid, source, raw = await _grid_from_request(file, pasted, sheet_url, sheet, sheet_mode)
         if link_col != "":
             grid = uploads.reshape(grid, link_col, account_col)
         report = await asyncio.to_thread(uploads.analyse, grid, want_dedupe, platform)
@@ -360,55 +387,26 @@ async def submit_job(request: Request,
             raise uploads.UploadError(
                 f"No {report_types.platform(platform).label} post links found "
                 "in that input.")
-        if len(rows) > config.MAX_LINKS:
+        if config.MAX_LINKS and len(rows) > config.MAX_LINKS:
             raise uploads.UploadError(
                 f"That input has {len(rows)} links — the limit is "
                 f"{config.MAX_LINKS} per job. Split it into smaller batches.")
-    except uploads.UploadError as e:
+    except (uploads.UploadError, sheets.SheetError) as e:
         return JSONResponse({"detail": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse(
             {"detail": f"That file could not be read ({e}). Try re-saving it as "
                        ".xlsx or .csv."}, status_code=400)
 
-    stem = uploads.safe_stem(report_name, "Report")
-    title = uploads.display_title(report_name, "Report")
     upload_name = (source if (pasted or sheet_url.strip())
                    else uploads.safe_upload_name(file.filename))
-
-    job_ids = []
-    for t in types:
-        rt = report_types.get(t)
-        keep = rt.allows_keep_engagement and keep_flag
-        want_workers = (max(0, min(want_workers_raw, config.MAX_WORKERS))
-                        if rt.allows_worker_choice else 0)
-        want_outputs = report_types.clean_outputs(t, asked)
-        # Several styles from one input: name each file after its style too,
-        # so two decks from the same run cannot overwrite each other's download.
-        job_stem = stem if len(types) == 1 else uploads.safe_stem(f"{stem} {rt.label}", "Report")
-        job_title = title
-        job_id = store.create(owner=user, name=job_stem, title=job_title,
-                              report_type=t, link_count=len(rows),
-                              upload_name=upload_name, keep_engagement=keep,
-                              workers=want_workers, outputs=want_outputs,
-                              project_id=project["id"])
-        try:
-            await asyncio.to_thread(runner.build_job_dir, job_id, rows, raw, upload_name)
-        except Exception as e:
-            store.update(job_id, status="failed", phase="Failed",
-                         error=f"Could not prepare the job folder: {e}")
-            return JSONResponse({"detail": f"Could not prepare the job: {e}"},
-                                status_code=500)
-
-        store.append_activity(
-            job_id, f"Uploaded '{upload_name}' — {len(rows)} link(s) accepted "
-                    f"· project {project['name']} · style {rt.label}.")
-
-        if config.EXECUTION_MODE == "inline":
-            store.update(job_id, phase="Waiting to start")
-        else:
-            queue.submit(job_id)
-        job_ids.append(job_id)
+    try:
+        job_ids = await runs.create_run_async(
+            project, rows, raw, upload_name, report_name, types=types, outputs=asked,
+            keep_engagement=keep_flag, workers=want_workers_raw, user=user,
+            note="Started from New run")
+    except runs.RunError as e:
+        return JSONResponse({"detail": str(e)}, status_code=400)
     job_id = job_ids[0]
 
     return JSONResponse({"job_id": job_id, "job_ids": job_ids,

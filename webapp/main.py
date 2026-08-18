@@ -15,8 +15,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import (auth, config, health, previews, projects, report_types,
-               routes_extras, routes_jobs, routes_projects, styles, uploads,
-               x_login)
+               routes_extras, routes_jobs, routes_projects, routes_sources,
+               sources, styles, uploads, x_login)
 from .jobs import cleanup, queue, store
 
 HERE = Path(__file__).resolve().parent
@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
     if config.EXECUTION_MODE != "inline":
         queue.start()
     cleanup.start_scheduler()
+    sources.start_scheduler()          # v3: watch every project's sheet sources
     # Free hosts wipe the disk on restart, so sign in to X now (in the
     # background) rather than making the first report wait for it.
     x_login.warm_up_async()
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI):
           f"x-auto-login={'on' if x_login.credentials_configured() else 'off'}",
           flush=True)
     yield
+    sources.stop_scheduler()
     queue.shutdown()
 
 
@@ -80,6 +82,7 @@ app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 app.include_router(routes_jobs.router)
 app.include_router(routes_extras.router)
 app.include_router(routes_projects.router)
+app.include_router(routes_sources.router)
 
 
 def _shell(request: Request, user: str, nav: str, **extra) -> dict:
@@ -235,6 +238,17 @@ async def project_styles_page(request: Request, user: str = Depends(auth.require
                pool=kinds, previews=previews.manifest(),
                platforms=report_types.PLATFORMS,
                project_public=projects.public(projects.current(request))))
+
+
+@app.get("/project/sources", response_class=HTMLResponse)
+async def project_sources_page(request: Request, user: str = Depends(auth.require_user)):
+    """Where the project's links come from — watched Google Sheets."""
+    project = projects.current(request)
+    return templates.TemplateResponse(
+        request, "project_sources.html",
+        _shell(request, user, "sources",
+               sources_list=[sources.public(s) for s in store.sources_for(project["id"])],
+               sync_minutes=config.SHEET_SYNC_MINUTES))
 
 
 @app.get("/project/settings", response_class=HTMLResponse)

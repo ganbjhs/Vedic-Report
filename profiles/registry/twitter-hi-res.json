@@ -9,5 +9,5 @@
     "device_scale_factor": 2
   },
 
-  "outputs": ["pdf", "docx"]
+  "outputs": ["pdf", "docx", "pptx"]
 }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Report Maker{% endblock %}</title>
+  <title>{% block title %}VedicReport{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <script>
@@ -17,7 +17,8 @@
 <div class="app{% block app_class %}{% endblock %}">
 
   <header class="top">
-    <a class="brand" href="/">{% include "_brand.svg" %} Report Maker</a>
+    <a class="brand" href="/">{% include "_brand.svg" %} VedicReport <span class="tag" style="margin-left:2px">v3</span></a>
+    <span class="crumb small faint" id="top-crumb">{{ project.emoji }} {{ project.name }}{% if project.client %} · {{ project.client }}{% endif %}</span>
     <span class="spacer"></span>
     <button class="btn ghost sm" id="theme-btn" type="button" title="Theme: auto / light / dark" aria-label="Toggle theme">Auto</button>
     <div class="menu">
@@ -34,16 +35,35 @@
   </header>
 
   <nav class="nav" aria-label="Main">
-    <a href="/" class="{{ 'active' if nav == 'new' else '' }}" data-key="n"><span class="ico">＋</span> New report <span class="k">N</span></a>
-    <a href="/history" class="{{ 'active' if nav == 'history' else '' }}" data-key="h"><span class="ico">▤</span> History <span class="k">H</span></a>
-    <a href="/styles" class="{{ 'active' if nav == 'styles' else '' }}" data-key="s"><span class="ico">▦</span> Report styles <span class="k">S</span></a>
+    <div class="sec" style="padding-top:0">Project</div>
+    <div class="pdrop" id="pdrop">
+      <button type="button" class="pdrop-btn" id="pdrop-btn" aria-haspopup="listbox" aria-expanded="false" title="Switch project">
+        <span class="pd-em">{{ project.emoji or '▣' }}</span><span class="pd-name">{{ project.name }}</span><span class="pd-car">▾</span>
+      </button>
+      <div class="pdrop-list" id="pdrop-list" role="listbox" hidden>
+        {% for p in projects %}
+        <button type="button" role="option" data-pid="{{ p.id }}" class="{{ 'on' if p.id == project.id else '' }}" aria-selected="{{ 'true' if p.id == project.id else 'false' }}"><span class="pd-em">{{ p.emoji or '▣' }}</span> {{ p.name }}</button>
+        {% endfor %}
+        <button type="button" class="pd-new" id="pdrop-new">+ New project</button>
+      </div>
+    </div>
+    <a href="/" class="{{ 'active' if nav == 'overview' else '' }}" data-key="o"><span class="ico">◧</span> Overview <span class="k">O</span></a>
+    <a href="/new" class="{{ 'active' if nav == 'new' else '' }}" data-key="n"><span class="ico">＋</span> New run <span class="k">N</span></a>
+    <a href="/runs" class="{{ 'active' if nav == 'history' else '' }}" data-key="h"><span class="ico">▤</span> Runs <span class="k">H</span></a>
+    <a href="/project/styles" class="{{ 'active' if nav == 'pstyles' else '' }}"><span class="ico">▦</span> Styles
+      <span class="k" title="styles picked for this project">{{ project_styles | length }}</span></a>
+    <a href="/project/settings" class="{{ 'active' if nav == 'psettings' else '' }}"><span class="ico">⚙</span> Settings</a>
+    <a class="soon" title="Tomorrow: Google Sheet sync, uploads as versions"><span class="ico">⇅</span> Sources <span class="tag">soon</span></a>
+    <a class="soon" title="Tomorrow: per-project key, one call in → report out"><span class="ico">⌘</span> API <span class="tag">soon</span></a>
+    <div class="sec">Library</div>
+    <a href="/styles" class="{{ 'active' if nav == 'styles' else '' }}" data-key="s"><span class="ico">◫</span> Style pool <span class="k">S</span></a>
     {% if is_admin %}
     <div class="sec">Admin</div>
     <a href="/admin/session-status" class="{{ 'active' if nav == 'accounts' else '' }}"><span class="ico">◉</span> Accounts &amp; sessions
       {% set worst = (platform_health | selectattr('live') | map(attribute='state') | list) %}
       <span class="dot {{ 'bad' if ('invalid' in worst or 'missing' in worst) else ('warn' if 'expiring' in worst else 'ok') }}" style="margin-left:auto" title="Capture account health"></span></a>
     <a href="/admin/users" class="{{ 'active' if nav == 'users' else '' }}"><span class="ico">👥</span> Users &amp; roles</a>
-    <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}"><span class="ico">⚙</span> Settings</a>
+    <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}"><span class="ico">⚙</span> Server settings</a>
     {% if budget %}
     <div class="quota" title="Posts captured today on the shared X account. Quality degrades past the ceiling (RULEBOOK rule 21).">
       <b class="t">Capture budget today</b>
@@ -53,6 +73,26 @@
     {% endif %}
     {% endif %}
   </nav>
+
+  <div class="modal" id="np-modal" hidden role="dialog" aria-modal="true" aria-label="New project">
+    <div class="modal-card np-card"><button type="button" class="modal-x" id="np-close" aria-label="Close">×</button>
+      <h3 style="margin:0 0 4px">New project</h3>
+      <p class="small muted" style="margin:0 0 14px">A client or a recurring report. It keeps its own styles and runs; you can switch between projects any time from the left bar.</p>
+      <form id="np-form" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <div class="fields" style="grid-template-columns:64px 1fr">
+          <label class="field"><span>Icon</span><input name="emoji" type="text" maxlength="4" value="📁" style="text-align:center"></label>
+          <label class="field"><span>Name</span><input name="name" type="text" maxlength="80" required placeholder="e.g. Kashi Ke Wasi — Monthly" autofocus></label>
+          <label class="field" style="grid-column:1/-1"><span>Client <span class="faint">(optional)</span></span><input name="client" type="text" maxlength="80" placeholder="Who this report is for"></label>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button type="submit" class="btn primary">Create project</button>
+          <span class="small" id="np-msg"></span>
+        </div>
+      </form>
+    </div>
+  </div>
+
 
   <main class="main{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}

@@ -8,5 +8,5 @@
   "image": {"max_in": [4.9, 7.0], "aspect": null, "fit": "fit", "background": "#FFFFFF", "radius_pt": 0, "border": null, "shadow": null, "watermark": null},
   "page": {"size": "letter", "orientation": "portrait", "grid": [1, 1], "margins_in": [0.75, 0.75, 0.75, 0.75]},
   "content": {"cover": false, "header": "{title}", "footer": null, "per_post_fields": ["account_name", "post_link"], "metrics": null, "links_table": true},
-  "outputs": ["pdf", "docx"]
+  "outputs": ["pdf", "docx", "pptx"]
 }

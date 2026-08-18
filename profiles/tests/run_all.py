@@ -14,7 +14,8 @@ HERE = Path(__file__).resolve().parent
 SUITES = ("test_shapes.py", "test_parity.py",
           "test_progress_contract.py", "test_builder.py",
           "test_dispatch.py", "test_inputs.py",
-          "test_sheets.py", "test_sectioned_sheet.py")
+          "test_sheets.py", "test_sectioned_sheet.py",
+          "test_projects.py")
 
 
 def main() -> int:

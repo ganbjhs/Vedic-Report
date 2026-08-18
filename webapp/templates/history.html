@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}History — Report Maker{% endblock %}
+{% block title %}Runs · {{ project.name }} — VedicReport{% endblock %}
 {% block app_class %} no-rail{% endblock %}
 
 {% block content %}
-<h1>History</h1>
-<p class="sub">Every report you have generated. Files are kept for a limited time (see <a href="/settings">Settings</a>), so download what you need.</p>
+<h1>Runs <span class="faint" style="font-weight:500;font-size:16px">· {{ project.emoji }} {{ project.name }}</span></h1>
+<p class="sub">Every report made in this project, by anyone on the team. Files are kept for a limited time{% if is_admin %} (see <a href="/settings">Server settings</a>){% endif %}, so download what you need.</p>
 
 <div class="card">
   <div class="filters">
@@ -29,7 +29,7 @@
     {% for j in jobs %}
     <tr data-id="{{ j.id }}" data-status="{{ j.status }}" data-type="{{ j.report_label }}"
         data-text="{{ (j.title ~ ' ' ~ j.report_label ~ ' ' ~ j.upload_name) | lower }}">
-      <td class="name"><a href="/jobs/{{ j.id }}">{{ j.title }}</a><br><span class="small faint">{{ j.upload_name }}</span></td>
+      <td class="name"><a href="/jobs/{{ j.id }}">{{ j.title }}</a><br><span class="small faint">{{ j.upload_name }}{% if j.owner %} · {{ j.owner }}{% endif %}</span></td>
       <td>{{ j.report_label }}</td>
       <td class="small faint">{% for o in j.outputs %}<span class="tag">{{ o | upper }}</span>{% endfor %}</td>
       <td><span class="st {{ j.status }}">{{ j.status }}</span>{% if j.status == 'running' %}<span class="small faint"> {{ j.done }}/{{ j.total }}</span>{% endif %}</td>
@@ -43,7 +43,7 @@
   </table>
   </div>
   {% else %}
-  <p class="faint" style="padding:30px;text-align:center">No reports yet. <a href="/">Make the first one →</a></p>
+  <p class="faint" style="padding:30px;text-align:center">No runs in this project yet. <a href="/new">Make the first one →</a></p>
   {% endif %}
 </div>
 {% endblock %}

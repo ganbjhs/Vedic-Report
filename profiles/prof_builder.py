@@ -1,4 +1,4 @@
-"""Build a profile's documents from results.json — PDF and/or DOCX.
+"""Build a profile's documents from results.json — PDF, DOCX and/or PPTX.
 
 Geometry comes from `layout.py`, shape from `shapes.py`; this module only draws.
 That split is what makes the whole layout testable with no browser and no
@@ -9,7 +9,7 @@ and NOT modified. The two existing report types keep their own builders and
 entrypoints (docs/profile-engine.md §10 decision 3); this one serves additional
 profiles.
 
-Usage: python profiles/prof_builder.py "<header>" "<stem>" "<profile-slug>" [pdf,docx]
+Usage: python profiles/prof_builder.py "<header>" "<stem>" "<profile-slug>" [pdf,docx,pptx]
 """
 import json
 import sys
@@ -93,6 +93,41 @@ def prepare(results, profile, workdir):
     return prepared, layout.placements(profile, dims)
 
 
+def _background(profile):
+    """(image_path or None, '#RRGGBB' or None) — the page background, if any.
+    A missing image file falls back to the colour (or nothing) and says so,
+    rather than taking the build down (rule 17)."""
+    img = registry.background_path(profile)
+    color = registry.background_color(profile)
+    if img is not None and not Path(img).exists():
+        print(f"[report] background image {img} is missing — "
+              f"{'using the colour' if color else 'printing without it'}", flush=True)
+        img = None
+    return (str(img) if img else None), color
+
+
+def _palette(profile):
+    """Ink colours for text: dark on a light page, light on a dark one. Decided
+    from page.background.color; an image background keeps the dark ink (its
+    tone is not known) — set a colour too if the art is dark."""
+    bg = registry.background_color(profile)
+    if bg:
+        r, g, b = _rgb_hex(bg)
+        lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        if lum < 0.45:
+            return {"ink": "#FFFFFF", "grey": "#E2E8F0", "faint": "#CBD5E1",
+                    "accent": "#7CC4FA"}
+    return {"ink": "#0F172A", "grey": "#334155", "faint": "#64748B",
+            "accent": "#1D9BF0"}
+
+
+def _rgb_hex(value, default=(1.0, 1.0, 1.0)):
+    v = (value or "").lstrip("#")
+    if len(v) != 6:
+        return default
+    return tuple(int(v[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
 def shown_link(r) -> str:
     link = (r.get("post_link") or r.get("url") or "").strip()
     return "" if link.startswith("file://") else link
@@ -110,10 +145,26 @@ def build_pdf(results, images, places, profile, title, out):
     page_w, page_h = pw_in * inch, ph_in * inch
     top, right, bottom, left = profile["page"]["margins_in"]
     content = profile["content"]
-    accent = colors.HexColor("#1D9BF0")
+    pal = _palette(profile)
+    accent = colors.HexColor(pal["accent"])
+    ink, grey, faint = (colors.HexColor(pal["ink"]), colors.HexColor(pal["grey"]),
+                        colors.HexColor(pal["faint"]))
 
     c = pdfcanvas.Canvas(str(out), pagesize=(page_w, page_h))
     c.setTitle(title)
+
+    bg_img, bg_color = _background(profile)
+
+    def paint_bg():
+        """Called at the START of every page: the fill first, then the image
+        stretched to the page (a background is designed at the page's aspect,
+        so no fitting — exactly what the PPTX slide does)."""
+        if bg_color:
+            c.setFillColorRGB(*_rgb_hex(bg_color))
+            c.rect(0, 0, page_w, page_h, stroke=0, fill=1)
+        if bg_img:
+            c.drawImage(bg_img, 0, 0, width=page_w, height=page_h,
+                        preserveAspectRatio=False, mask="auto")
 
     def footer(page_no, pages):
         if not content.get("footer"):
@@ -121,20 +172,21 @@ def build_pdf(results, images, places, profile, title, out):
         text = content["footer"].format(page=page_no, pages=pages,
                                         title=title)
         c.setFont("Helvetica", 8)
-        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFillColor(faint)
         c.drawCentredString(page_w / 2, bottom * inch / 2, text)
 
     n_pages = (max((p.page for p in places), default=-1) + 1) if places else 0
 
     if content.get("cover"):
+        paint_bg()
         c.setFont("Helvetica-Bold", 26)
-        c.setFillColor(colors.HexColor("#0F172A"))
+        c.setFillColor(ink)
         c.drawCentredString(page_w / 2, page_h * 0.56, title)
         c.setStrokeColor(accent)
         c.setLineWidth(2)
         c.line(page_w * 0.3, page_h * 0.53, page_w * 0.7, page_h * 0.53)
         c.setFont("Helvetica", 11)
-        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFillColor(faint)
         c.drawCentredString(page_w / 2, page_h * 0.49,
                             f"{len(results)} post(s)")
         c.showPage()
@@ -148,9 +200,10 @@ def build_pdf(results, images, places, profile, title, out):
                 c.showPage()
             current = place.page
             cursor_y = None
+            paint_bg()
             if content.get("header"):
                 c.setFont("Helvetica-Bold", 13)
-                c.setFillColor(colors.HexColor("#0F172A"))
+                c.setFillColor(ink)
                 c.drawCentredString(page_w / 2,
                                     page_h - top * inch * 0.55,
                                     content["header"].format(title=title))
@@ -170,7 +223,7 @@ def build_pdf(results, images, places, profile, title, out):
                 continue
             c.setFont("Helvetica", 7.5)
             c.setFillColor(accent if field == "post_link"
-                           else colors.HexColor("#334155"))
+                           else grey)
             c.drawString(x, caption_y, str(value)[:110])
             if field == "post_link":
                 c.linkURL(value, (x, caption_y - 2, x + place.w_in * inch,
@@ -180,7 +233,7 @@ def build_pdf(results, images, places, profile, title, out):
         for label, key in content.get("metrics") or []:
             val = (r.get("metrics") or {}).get(key, "—")
             c.setFont("Helvetica", 7.5)
-            c.setFillColor(colors.HexColor("#334155"))
+            c.setFillColor(grey)
             c.drawString(x, caption_y, f"{label}: {val}")
             caption_y -= 9.5
 
@@ -199,10 +252,11 @@ def build_pdf(results, images, places, profile, title, out):
         if cursor_y is None or cursor_y - 26 < bottom * inch + need:
             if places:
                 c.showPage()
+            paint_bg()
             cursor_y = page_h - top * inch + 14
         y = cursor_y - 26
         c.setFont("Helvetica-Bold", 14)
-        c.setFillColor(colors.HexColor("#0F172A"))
+        c.setFillColor(ink)
         c.drawString(left * inch, y, "Links")
         y -= 18
         c.setFont("Helvetica", 8)
@@ -212,6 +266,7 @@ def build_pdf(results, images, places, profile, title, out):
                 continue
             if y < bottom * inch:
                 c.showPage()
+                paint_bg()
                 y = page_h - top * inch
                 c.setFont("Helvetica", 8)
             c.setFillColor(accent)
@@ -287,7 +342,135 @@ def build_docx(results, images, places, profile, title, out):
     doc.save(str(out))
 
 
-BUILDERS = {"pdf": build_pdf, "docx": build_docx}
+# --------------------------------------------------------------------------- #
+# PPTX (v3) — the same pages as the PDF, every element a native slide object
+# --------------------------------------------------------------------------- #
+def build_pptx(results, images, places, profile, title, out):
+    """One slide per page, sized exactly like the PDF page (points → EMU).
+
+    Order on every slide: background fill/picture FIRST (so it is at the back),
+    then screenshots as pictures at their placements, then caption lines as
+    text boxes (the post link as a real hyperlink), then metrics, then the
+    header. Cover and Links pages become slides too, so a deck reads like the
+    PDF page for page. python-pptx lives in requirements-web.txt; a bare CLI
+    install gets a clear message from main() and still gets its PDF.
+    """
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
+    from pptx.util import Pt
+
+    pw_in, ph_in = registry.page_inches(profile["page"])
+    W, H = pw_in * INCH, ph_in * INCH
+    top, right, bottom, left = profile["page"]["margins_in"]
+    content = profile["content"]
+    pal = _palette(profile)
+    _c = lambda h: RGBColor(*(int(round(v * 255)) for v in _rgb_hex(h)))
+    accent, ink, grey, faint = (_c(pal["accent"]), _c(pal["ink"]),
+                                _c(pal["grey"]), _c(pal["faint"]))
+
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Pt(W), Pt(H)
+    blank = prs.slide_layouts[6]
+    bg_img, bg_color = _background(profile)
+
+    def new_slide():
+        slide = prs.slides.add_slide(blank)
+        if bg_color:
+            r, g, b = (int(round(v * 255)) for v in _rgb_hex(bg_color))
+            fill = slide.background.fill
+            fill.solid()
+            fill.fore_color.rgb = RGBColor(r, g, b)
+        if bg_img:
+            slide.shapes.add_picture(bg_img, 0, 0, width=Pt(W), height=Pt(H))
+        return slide
+
+    def text(slide, value, x, y, w, h, size, color, bold=False,
+             align=PP_ALIGN.LEFT, link=None):
+        box = slide.shapes.add_textbox(Pt(x), Pt(y), Pt(w), Pt(h))
+        tf = box.text_frame
+        tf.word_wrap = False
+        tf.auto_size = MSO_AUTO_SIZE.NONE
+        tf.vertical_anchor = MSO_ANCHOR.TOP
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        para = tf.paragraphs[0]
+        para.alignment = align
+        run = para.add_run()
+        run.text = str(value)
+        run.font.size = Pt(size)
+        run.font.bold = bool(bold)
+        run.font.color.rgb = color
+        run.font.name = "Arial"          # Helvetica's metric twin — see RULEBOOK 18a
+        if link:
+            run.hyperlink.address = link
+        return box
+
+    n_pages = (max((p.page for p in places), default=-1) + 1) if places else 0
+
+    def footer(slide, page_no):
+        if not content.get("footer"):
+            return
+        value = content["footer"].format(page=page_no, pages=n_pages, title=title)
+        text(slide, value, 0, H - bottom * INCH / 2 - 5, W, 12, 8, faint,
+             align=PP_ALIGN.CENTER)
+
+    if content.get("cover"):
+        slide = new_slide()
+        text(slide, title, 0, H * 0.44 - 18, W, 36, 26, ink, bold=True,
+             align=PP_ALIGN.CENTER)
+        text(slide, f"{len(results)} post(s)", 0, H * 0.51, W, 16, 11, faint,
+             align=PP_ALIGN.CENTER)
+
+    slide, current = None, -1
+    for r, img, place in zip(results, images, places):
+        if place.page != current:
+            if slide is not None:
+                footer(slide, current + 1)
+            current = place.page
+            slide = new_slide()
+            if content.get("header"):
+                text(slide, content["header"].format(title=title),
+                     0, top * INCH * 0.55 - 9, W, 18, 13, ink, bold=True,
+                     align=PP_ALIGN.CENTER)
+        x, y = place.x_in * INCH, place.y_in * INCH
+        w, h = place.w_in * INCH, place.h_in * INCH
+        slide.shapes.add_picture(img, Pt(x), Pt(y), Pt(w), Pt(h))
+        cap_y = y + h + 3
+        for field in content.get("per_post_fields") or []:
+            value = shown_link(r) if field == "post_link" else (r.get(field) or "")
+            if not value:
+                continue
+            is_link = field == "post_link"
+            text(slide, str(value)[:110], x, cap_y, w, 11, 7.5,
+                 accent if is_link else grey, link=(value if is_link else None))
+            cap_y += 10
+        for label, key in content.get("metrics") or []:
+            val = (r.get("metrics") or {}).get(key, "—")
+            text(slide, f"{label}: {val}", x, cap_y, w, 11, 7.5, grey)
+            cap_y += 9.5
+    if slide is not None:
+        footer(slide, current + 1)
+
+    if content.get("links_table"):
+        links = [shown_link(r) for r in results if shown_link(r)]
+        per_slide = max(1, int((H - (top + bottom) * INCH - 30) // 12))
+        for start in range(0, max(len(links), 1), per_slide):
+            slide = new_slide()
+            y = top * INCH
+            text(slide, "Links", left * INCH, y, W - (left + right) * INCH, 18,
+                 14, ink, bold=True)
+            y += 22
+            for link in links[start:start + per_slide]:
+                text(slide, link[:150], left * INCH, y, W - (left + right) * INCH,
+                     11, 8, accent, link=link)
+                y += 12
+            if not links:
+                break
+
+    prs.save(str(out))
+
+
+BUILDERS = {"pdf": build_pdf, "docx": build_docx, "pptx": build_pptx}
 
 
 def _mb(path):

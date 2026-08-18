@@ -72,6 +72,36 @@ async function api(url, opts = {}) {
   });
   const tick = () => document.querySelectorAll("[data-ago]").forEach((el) => { el.textContent = ago(+el.dataset.ago); });
   tick(); setInterval(tick, 30000);
+
+  /* v3: the project switcher in the left bar + the New project dialog. */
+  const pdBtn = $("pdrop-btn"), pdList = $("pdrop-list");
+  if (pdBtn && pdList) {
+    const open = (on) => { pdList.hidden = !on; pdBtn.setAttribute("aria-expanded", String(on)); };
+    pdBtn.addEventListener("click", (e) => { e.stopPropagation(); open(pdList.hidden); });
+    document.addEventListener("click", () => open(false));
+    pdList.addEventListener("click", (e) => e.stopPropagation());
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") open(false); });
+    pdList.querySelectorAll("button[data-pid]").forEach((b) => b.addEventListener("click", async () => {
+      if (b.classList.contains("on")) return open(false);
+      b.disabled = true;
+      try { await api(`/api/projects/${encodeURIComponent(b.dataset.pid)}/select`, { method: "POST", json: {} }); location.reload(); }
+      catch (err) { alert(err.message); b.disabled = false; }
+    }));
+    const modal = $("np-modal"), form = $("np-form"), msg = $("np-msg");
+    const show = (on) => { modal.hidden = !on; open(false); if (on) setTimeout(() => form.elements.name.focus(), 30); };
+    $("pdrop-new").addEventListener("click", () => show(true));
+    $("np-close").addEventListener("click", () => show(false));
+    modal.addEventListener("click", (e) => { if (e.target === modal) show(false); });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault(); msg.textContent = "";
+      const name = form.elements.name.value.trim();
+      if (name.length < 2) { msg.textContent = "Give it a name."; return; }
+      try {
+        await api("/api/projects", { method: "POST", json: { name, client: form.elements.client.value.trim(), emoji: form.elements.emoji.value.trim() } });
+        location.href = "/project/styles";          // first stop: pick what it prints in
+      } catch (err) { msg.textContent = err.message; msg.style.color = "var(--bad)"; }
+    });
+  }
 })();
 
 /* Rough capture-time estimate. Measured order of magnitude only: ~10 s a
@@ -94,7 +124,8 @@ function initSubmitForm() {
   const defaultWorkers = +form.dataset.defaultWorkers || 1;
   const platformInput = $("platform"), typeInput = $("report-type");
   const plat = $("plat"), styles = $("styles");
-  const cards = [...styles.querySelectorAll(".srow[data-slug]")];
+  const cards = styles ? [...styles.querySelectorAll(".srow[data-slug]")] : [];
+  let settings = {}; try { settings = JSON.parse(form.dataset.settings || "{}") || {}; } catch (_) {}
   const input = $("file-input"), drop = $("drop"), chip = $("file-chip"), chipName = $("file-name");
   const paste = $("paste-input"), sheet = $("sheet-input"), dedupe = $("dedupe");
   const pickers = $("pickers"), pickSheet = $("pick-sheet"), pickLink = $("pick-link"), pickAccount = $("pick-account");
@@ -116,19 +147,15 @@ function initSubmitForm() {
     if (!b || b.classList.contains("soon")) return;
     platformInput.value = slug;
     platButtons.forEach((x) => { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-checked", String(on)); });
-    // Only styles for this platform are offered; keep the selection if it fits.
-    let firstVisible = null;
-    cards.forEach((c) => { const ok = c.dataset.platform === slug; c.hidden = !ok; if (ok && !firstVisible) firstVisible = c; });
-    const cur = cards.find((c) => c.dataset.slug === typeInput.value);
-    if (!cur || cur.hidden) selectStyle(firstVisible ? firstVisible.dataset.slug : "");
     updateSummary();
     // What counts as a link depends on the platform, so the preview re-reads.
     if (typeof schedulePreview === "function") schedulePreview(0);
   };
   platButtons.forEach((b) => b.addEventListener("click", () => selectPlatform(b.dataset.platform)));
 
-  /* ---- style rows + sample modal ---- */
-  const selectedCard = () => cards.find((c) => c.dataset.slug === typeInput.value);
+  /* ---- style rows (tick one or more) + sample modal ---- */
+  const selectedCards = () => cards.filter((c) => c.classList.contains("on"));
+  const selectedCard = () => selectedCards()[0];
 
   /* Outputs. The formats belong to the STYLE, so the row is rebuilt whenever
      the style changes and never carries a tick over to a style that cannot
@@ -136,32 +163,47 @@ function initSubmitForm() {
      but offering it would be a promise the job could not keep. */
   const OUTPUT_NOTE = { pdf: "exact, print-ready", docx: "editable in Word",
     pptx: "editable deck — every slot a movable object" };
-  const outputsBox = $("outputs"), outputsOption = $("outputs-option"), outputsHint = $("outputs-hint");
+  const outputsBox = $("outputs"), outputsOption = $("outputs-option");
   const styleOutputs = (c) => (c && c.dataset.outputs ? c.dataset.outputs.split(",").filter(Boolean) : []);
-  const checkedOutputs = () => [...outputsBox.querySelectorAll("input:checked")].map((i) => i.value);
-  const renderOutputs = (wanted) => {
-    const list = styleOutputs(selectedCard());
-    outputsOption.hidden = !list.length;
-    const keep = wanted && wanted.length ? wanted.filter((w) => list.includes(w)) : list;
-    outputsBox.innerHTML = list.map((o) => `<label class="check"><input type="checkbox" name="outputs" value="${esc(o)}"${(keep.includes(o) ? " checked" : "")}><span><b>${esc(o.toUpperCase())}</b> <span class="faint">${esc(OUTPUT_NOTE[o] || "")}</span></span></label>`).join("");
-    syncOutputsHint();
+  // v3: formats were chosen per style on the project's Styles page. The union
+  // of the ticked styles' formats rides along as hidden inputs; the server
+  // keeps, per job, the ones that style builds (clean_outputs).
+  const checkedOutputs = () => { const u = []; selectedCards().forEach((c) => styleOutputs(c).forEach((o) => { if (!u.includes(o)) u.push(o); })); return u; };
+  const renderOutputs = () => {
+    const sel = selectedCards();
+    outputsOption.hidden = !sel.length;
+    outputsBox.innerHTML = sel.map((c) => `<span class="small" style="margin-right:12px"><b>${esc(c.dataset.label)}</b> ${styleOutputs(c).map((o) => `<span class="tag" title="${esc(OUTPUT_NOTE[o] || "")}">${esc(o.toUpperCase())}</span>`).join(" ")}</span>`).join("")
+      + checkedOutputs().map((o) => `<input type="hidden" name="outputs" value="${esc(o)}">`).join("");
   };
-  function syncOutputsHint() {
-    const n = checkedOutputs().length;
-    outputsHint.textContent = n ? "" : "Pick at least one — a report with no file is nothing to download.";
-  }
-  outputsBox.addEventListener("change", () => { syncOutputsHint(); updateSummary(); });
 
   const syncOptions = () => {
-    const c = selectedCard();
-    cropOption.hidden = !c || c.dataset.keepEngagement !== "1";
-    speedOption.hidden = !c || c.dataset.workerChoice !== "1";
+    const sel = selectedCards();
+    cropOption.hidden = !sel.some((c) => c.dataset.keepEngagement === "1");
+    speedOption.hidden = !sel.some((c) => c.dataset.workerChoice === "1");
   };
-  const selectStyle = (slug, wantOutputs) => {
-    typeInput.value = slug;
-    cards.forEach((c) => { const on = c.dataset.slug === slug; c.classList.toggle("on", on); c.setAttribute("aria-checked", String(on)); });
-    syncOptions(); renderOutputs(wantOutputs); updateSummary();
+  const platNote = $("plat-note");
+  /* Every ticked style must capture from the same network (one link list, one
+     platform per run). The first tick decides; styles of another platform are
+     greyed out until it is unticked. */
+  const syncCards = () => {
+    const sel = selectedCards();
+    const platform = sel.length ? sel[0].dataset.platform : "";
+    cards.forEach((c) => {
+      const off = !!platform && c.dataset.platform !== platform;
+      c.classList.toggle("off", off); c.setAttribute("aria-disabled", String(off));
+    });
+    typeInput.value = sel.map((c) => c.dataset.slug).join(",");
+    if (platform && platformInput.value !== platform) selectPlatform(platform);
+    if (platNote) platNote.textContent = platform ? `Capturing ${platformLabel()} links${cards.some((c) => c.classList.contains("off")) ? " — styles for other networks are greyed out until you untick these" : ""}.` : "Tick a style to start.";
   };
+  const toggleStyle = (slug, force) => {
+    const c = cards.find((x) => x.dataset.slug === slug); if (!c) return;
+    if (c.classList.contains("off")) return;
+    const on = force === undefined ? !c.classList.contains("on") : !!force;
+    c.classList.toggle("on", on); c.setAttribute("aria-checked", String(on));
+    syncCards(); syncOptions(); renderOutputs(); updateSummary();
+  };
+  const selectStyle = (slug) => toggleStyle(slug, true);
   const modal = $("sample-modal");
   const openSample = (c) => {
     if (!c || !c.dataset.large) return;
@@ -178,9 +220,9 @@ function initSubmitForm() {
     c.addEventListener("click", (e) => {
       const b = e.target.closest("[data-sample]");
       if (b) { e.stopPropagation(); openSample(c); return; }
-      selectStyle(c.dataset.slug);
+      toggleStyle(c.dataset.slug);
     });
-    c.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); selectStyle(c.dataset.slug); } });
+    c.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleStyle(c.dataset.slug); } });
   });
   workersSelect.addEventListener("change", updateSummary);
 
@@ -221,11 +263,12 @@ function initSubmitForm() {
   /* ---- preview ---- */
   const setReady = (n) => { ready = n; submitBtn.disabled = n <= 0; updateSummary(); };
   function updateSummary() {
-    const c = selectedCard();
+    const sel = selectedCards(), c = sel[0];
     const workers = c && c.dataset.workerChoice === "1" ? (+workersSelect.value || defaultWorkers) : 1;
-    const eta = fmtEta(estimateSeconds(ready, c ? c.dataset.pool : "capture", workers));
+    const eta = fmtEta(estimateSeconds(ready, c ? c.dataset.pool : "capture", workers) * Math.max(1, sel.length));
     const outs = checkedOutputs().map((o) => o.toUpperCase()).join(" + ");
-    summary.innerHTML = `<b>${esc(platformLabel())}</b> · <b>${esc(c ? c.dataset.label : "—")}</b> · <b>${ready}</b> link${ready === 1 ? "" : "s"}${outs ? " · " + esc(outs) : ""}${eta ? " · " + eta : ""}`;
+    const what = sel.length === 0 ? "—" : sel.length === 1 ? c.dataset.label : `${sel.length} styles`;
+    summary.innerHTML = `<b>${esc(platformLabel())}</b> · <b>${esc(what)}</b> · <b>${ready}</b> link${ready === 1 ? "" : "s"}${outs ? " · " + esc(outs) : ""}${eta ? " · " + eta : ""}`;
     const etaEl = pv.stat.querySelector(".eta"); if (etaEl) etaEl.innerHTML = eta ? `${eta}` : "";
   }
   const platformLabel = () => { const b = platButtons.find((x) => x.classList.contains("on")); return b ? b.textContent.replace(/soon/i, "").trim() : "X"; };
@@ -330,86 +373,41 @@ function initSubmitForm() {
     } catch (_) { if (seq === previewSeq) showPreviewError("Preview unavailable — check your connection."); }
   }
 
-  /* ---- presets ---- */
-  let presets = []; try { presets = JSON.parse($("presets-data").textContent) || []; } catch (_) {}
-  const presetPick = $("preset-pick");
-  const applyPreset = (p) => {
-    if (!p) return;
-    selectPlatform(p.platform);
-    if (cards.find((c) => c.dataset.slug === p.report_type)) selectStyle(p.report_type, p.outputs);
-    keepEngagement.checked = !!p.keep_engagement;
-    workersSelect.value = p.workers ? String(p.workers) : "";
-    dedupe.checked = !!p.dedupe;
-    if (p.report_name) nameInput.value = p.report_name;
-    if (p.sheet_url) { sheet.value = p.sheet_url; selectTab("sheet"); } else schedulePreview(0);
-    updateSummary();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-  const renderPresets = () => {
-    presetPick.hidden = !presets.length;
-    presetPick.innerHTML = `<option value="">Load a preset…</option>` + presets.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")
-      + (presets.length ? `<option value="__manage">Delete a preset…</option>` : "");
-  };
-  presetPick.addEventListener("change", async () => {
-    const v = presetPick.value; presetPick.value = "";
-    if (v === "__manage") {
-      const name = prompt("Type the exact name of the preset to delete:\n" + presets.map((p) => "• " + p.name).join("\n"));
-      const p = presets.find((x) => x.name === (name || "").trim());
-      if (!p) return;
-      try { const r = await api(`/api/presets/${encodeURIComponent(p.id)}`, { method: "DELETE" }); presets = r.presets; renderPresets(); }
-      catch (err) { showError(err.message); }
-      return;
-    }
-    applyPreset(presets.find((p) => p.id === v));
-  });
-  $("preset-save").addEventListener("click", async () => {
-    const c = selectedCard(); if (!c) return showError("Pick a style first.");
-    const name = prompt("Preset name", nameInput.value.trim() || `${platformLabel()} · ${c.dataset.label}`);
-    if (!name) return;
-    try {
-      const r = await api("/api/presets", { method: "POST", json: {
-        name, platform: platformInput.value, report_type: typeInput.value,
-        keep_engagement: keepEngagement.checked && c.dataset.keepEngagement === "1",
-        workers: c.dataset.workerChoice === "1" ? (+workersSelect.value || 0) : 0,
-        dedupe: dedupe.checked, sheet_url: activeTab === "sheet" ? sheet.value.trim() : "",
-        outputs: checkedOutputs(), report_name: nameInput.value.trim() } });
-      presets = r.presets; renderPresets(); showError("");
-    } catch (err) { showError(err.message); }
-  });
-
   /* ---- submit ---- */
   form.addEventListener("submit", async (e) => {
     e.preventDefault(); showError("");
     if (!ready) return showError("Add some links first.");
-    if (!typeInput.value) return showError("Pick a report style.");
+    const sel = selectedCards();
+    if (!sel.length) return showError("Tick at least one style.");
     if (!nameInput.value.trim()) { nameInput.focus(); return showError("Give the report a name."); }
-    const wantOutputs = checkedOutputs();
-    if (styleOutputs(selectedCard()).length && !wantOutputs.length) return showError("Tick at least one output format.");
     submitBtn.disabled = true; spinner.hidden = false;
     const body = new FormData();
     body.append("csrf_token", CSRF());
+    body.append("project_id", form.elements.project_id.value);
     body.append("report_name", nameInput.value.trim());
-    body.append("report_type", typeInput.value);
+    sel.forEach((c) => body.append("report_type", c.dataset.slug));
     inputBody(body);
-    const c = selectedCard();
-    if (keepEngagement.checked && c.dataset.keepEngagement === "1") body.append("keep_engagement", "1");
-    if (workersSelect.value && c.dataset.workerChoice === "1") body.append("workers", workersSelect.value);
-    wantOutputs.forEach((o) => body.append("outputs", o));
+    if (keepEngagement.checked && sel.some((c) => c.dataset.keepEngagement === "1")) body.append("keep_engagement", "1");
+    if (workersSelect.value && sel.some((c) => c.dataset.workerChoice === "1")) body.append("workers", workersSelect.value);
+    checkedOutputs().forEach((o) => body.append("outputs", o));
     try {
       const res = await fetch("/api/jobs", { method: "POST", body });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Upload failed (${res.status})`);
-      window.location.href = `/jobs/${data.job_id}`;
+      window.location.href = (data.job_ids && data.job_ids.length > 1) ? "/runs" : `/jobs/${data.job_id}`;
     } catch (err) { showError(err.message); submitBtn.disabled = false; spinner.hidden = true; }
   });
 
   /* ---- boot ---- */
   const q = new URLSearchParams(location.search);
-  selectPlatform(platformInput.value || "x");
-  const wanted = q.get("type");
-  if (wanted && cards.find((c) => c.dataset.slug === wanted && !c.hidden)) selectStyle(wanted);
-  const wantedPreset = q.get("preset");
-  if (wantedPreset) applyPreset(presets.find((p) => p.id === wantedPreset));
+  // Project defaults, then the URL, then: one style → ticked for you.
+  if (settings.dedupe === false) dedupe.checked = false;
+  if (settings.keep_engagement) keepEngagement.checked = true;
+  if (settings.workers) workersSelect.value = String(settings.workers);
+  const wanted = (q.get("type") || "").split(",").filter(Boolean);
+  wanted.forEach((w) => selectStyle(w));
+  if (!selectedCards().length && cards.length === 1) selectStyle(cards[0].dataset.slug);
+  if (!selectedCards().length) { selectPlatform(cards[0] ? cards[0].dataset.platform : "x"); syncCards(); renderOutputs(); }
   resetPreview();
 }
 
@@ -531,7 +529,11 @@ function initStyles() {
       },
       page: { size: f("size").value, orientation: f("orientation").value,
         grid: [Math.max(1, Math.round(num("cols", 1))), Math.max(1, Math.round(num("rows", 1)))],
-        margins_in: [num("m_top", .6), num("m_right", .6), num("m_bottom", .6), num("m_left", .6)] },
+        margins_in: [num("m_top", .6), num("m_right", .6), num("m_bottom", .6), num("m_left", .6)],
+        // v3: a page background (colour) for the PDF and the PPTX. An image
+        // background is set from the project's Styles page, which stores the
+        // file; the designer only carries the colour.
+        background: bool("page_bg_on") ? { color: f("page_bg").value.toUpperCase() } : null },
       content: { cover: bool("cover"), header: f("header").value || null, footer: f("footer").value || null,
         per_post_fields: checked("fields"), links_table: bool("links_table") },
       outputs: checked("outputs"),
@@ -622,6 +624,8 @@ function initStyles() {
       f("size").value = String(pg.size || "letter").toLowerCase(); f("orientation").value = pg.orientation || "portrait";
       if (pg.grid) { f("cols").value = pg.grid[0]; f("rows").value = pg.grid[1]; }
       if (pg.margins_in) ["m_top", "m_right", "m_bottom", "m_left"].forEach((n, i) => { f(n).value = pg.margins_in[i]; });
+      f("page_bg_on").checked = !!(pg.background && pg.background.color);
+      f("page_bg").value = (pg.background && pg.background.color) || "#FFFFFF";
       f("cover").checked = !!ct.cover; f("header").value = ct.header || ""; f("footer").value = ct.footer || "";
       f("links_table").checked = ct.links_table !== false;
       form.querySelectorAll('input[name="fields"]').forEach((i) => { i.checked = (ct.per_post_fields || []).includes(i.value); });
@@ -690,6 +694,20 @@ document.addEventListener("click", async (e) => {
   b.disabled = true;
   try { await api(`/api/styles/${encodeURIComponent(b.dataset.vis)}/visibility`, { method: "POST", json: { show: b.dataset.show === "1" } }); location.reload(); }
   catch (err) { alert(err.message); b.disabled = false; }
+});
+
+/* v3: "Add to <project>" on a pool card — appends the style to the current
+   project's list (every file it builds), then reloads so the card says so. */
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-addproj]"); if (!b) return;
+  b.disabled = true;
+  try {
+    const cur = await api("/api/projects");
+    const list = (cur.current.styles || []).filter((s) => !s.missing).map((s) => ({ slug: s.slug, outputs: s.outputs }));
+    if (!list.some((s) => s.slug === b.dataset.addproj)) list.push({ slug: b.dataset.addproj, outputs: [] });
+    await api(`/api/projects/${encodeURIComponent(cur.current.id)}/styles`, { method: "PUT", json: { styles: list } });
+    location.reload();
+  } catch (err) { alert(err.message); b.disabled = false; }
 });
 
 /* =========================================================================
@@ -1217,4 +1235,157 @@ function initTemplateDesigner() {
   renderFonts(); syncKitNote(); showPage("post"); setSaveable();
   const h = location.hash;
   if (h.startsWith("#mine=")) loadTemplate(decodeURIComponent(h.slice(6)), true);
+}
+
+/* =========================================================================
+   v3 · Project → Styles: tick styles from the pool, per-style files, background
+   ========================================================================= */
+function initProjectStyles() {
+  const grid = $("pick-grid"); if (!grid) return;
+  const pid = grid.dataset.pid;
+  const cards = [...grid.querySelectorAll(".pick[data-slug]")];
+  const status = $("ps-status"), count = $("ps-count");
+  let project = {}; try { project = JSON.parse($("pstyles-data").textContent) || {}; } catch (_) {}
+  const say = (t, cls) => { status.textContent = t; status.style.color = cls === "bad" ? "var(--bad)" : cls === "ok" ? "var(--ok)" : "var(--text3)"; };
+
+  /* what the server knows about each picked style's background */
+  const bgOf = (slug) => ((project.styles || []).find((s) => s.slug === slug) || {}).background || {};
+  const paintBg = (c) => {
+    const sw = c.querySelector("[data-bgsw]"), tx = c.querySelector("[data-bgtext]"); if (!sw) return;
+    const bg = bgOf(c.dataset.slug);
+    sw.style.background = bg.color || "#fff";
+    sw.style.backgroundImage = bg.image ? "repeating-linear-gradient(45deg,#cbd5e1 0 4px,#fff 4px 8px)" : "";
+    tx.textContent = bg.image ? (bg.color ? `Image + ${bg.color}` : "Image") : (bg.color ? bg.color : "No background");
+  };
+  const refresh = () => {
+    cards.forEach((c) => {
+      const on = c.classList.contains("on");
+      c.setAttribute("aria-checked", String(on));
+      const row = c.querySelector("[data-bgrow]"); if (row) row.hidden = !on;
+      c.querySelectorAll("[data-outs] label").forEach((l) => l.classList.toggle("on", l.querySelector("input").checked));
+      paintBg(c);
+    });
+    const n = cards.filter((c) => c.classList.contains("on")).length;
+    count.textContent = `${n} picked · ${cards.filter((c) => !c.hidden).length} shown`;
+    const k = document.querySelector('.nav a[href="/project/styles"] .k'); if (k) k.textContent = String(n);
+  };
+  const payload = () => cards.filter((c) => c.classList.contains("on")).map((c) => ({
+    slug: c.dataset.slug,
+    outputs: [...c.querySelectorAll("[data-outs] input:checked")].map((i) => i.value),
+  }));
+  let timer = null;
+  const save = () => {
+    clearTimeout(timer);
+    say("Saving…");
+    timer = setTimeout(async () => {
+      try {
+        const r = await api(`/api/projects/${encodeURIComponent(pid)}/styles`, { method: "PUT", json: { styles: payload() } });
+        project = r.project || project; say("Saved", "ok"); refresh();
+      } catch (err) { say(err.message, "bad"); }
+    }, 350);
+  };
+  cards.forEach((c) => {
+    c.addEventListener("click", (e) => {
+      if (e.target.closest("[data-outs]") || e.target.closest("[data-bg]")) return;
+      c.classList.toggle("on");
+      // Ticking with nothing chosen means every file the style builds.
+      if (c.classList.contains("on") && !c.querySelectorAll("[data-outs] input:checked").length) c.querySelectorAll("[data-outs] input").forEach((i) => { i.checked = true; });
+      refresh(); save();
+    });
+    c.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); c.click(); } });
+    c.querySelectorAll("[data-outs] input").forEach((i) => i.addEventListener("change", () => {
+      if (!c.classList.contains("on")) c.classList.add("on");
+      if (![...c.querySelectorAll("[data-outs] input")].some((x) => x.checked)) { i.checked = true; say("Keep at least one file for a picked style.", "bad"); }
+      refresh(); save();
+    }));
+  });
+
+  /* filters */
+  const fPlat = $("pf-plat"), fKind = $("pf-kind"), fPicked = $("pf-picked");
+  const filter = () => {
+    fPicked.classList.toggle("on", fPicked.querySelector("input").checked);
+    cards.forEach((c) => {
+      const ok = (!fPlat.value || c.dataset.platform === fPlat.value)
+        && (!fKind.value || c.dataset.kind === fKind.value)
+        && (!fPicked.querySelector("input").checked || c.classList.contains("on"));
+      c.hidden = !ok;
+    });
+    refresh();
+  };
+  [fPlat, fKind].forEach((el) => el.addEventListener("change", filter));
+  fPicked.querySelector("input").addEventListener("change", filter);
+
+  /* background dialog */
+  const modal = $("bg-modal"), form = $("bg-form"), msg = $("bg-msg"), colorIn = $("bg-color"), hex = $("bg-hex"), fileIn = $("bg-file"), fileName = $("bg-file-name");
+  let bgSlug = "";
+  const setColor = (c) => { colorIn.value = c; hex.textContent = c; $("bg-swatches").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.color.toUpperCase() === c.toUpperCase())); };
+  const openBg = (slug, label) => {
+    bgSlug = slug; $("bg-title").textContent = label; msg.textContent = ""; fileIn.value = ""; fileName.textContent = "";
+    setColor((bgOf(slug).color || "#FFFFFF").toUpperCase());
+    modal.hidden = false;
+  };
+  const closeBg = () => { modal.hidden = true; };
+  grid.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-bg]"); if (!b) return;
+    e.stopPropagation();
+    const c = b.closest(".pick");
+    if (!c.classList.contains("on")) { c.classList.add("on"); c.querySelectorAll("[data-outs] input").forEach((i) => { i.checked = true; }); refresh(); }
+    // The style must be in the project before it can take a background.
+    api(`/api/projects/${encodeURIComponent(pid)}/styles`, { method: "PUT", json: { styles: payload() } })
+      .then((r) => { project = r.project || project; openBg(c.dataset.slug, c.dataset.label); })
+      .catch((err) => say(err.message, "bad"));
+  });
+  $("bg-close").addEventListener("click", closeBg);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeBg(); });
+  $("bg-swatches").addEventListener("click", (e) => { const b = e.target.closest("[data-color]"); if (b) setColor(b.dataset.color); });
+  colorIn.addEventListener("input", () => setColor(colorIn.value.toUpperCase()));
+  fileIn.addEventListener("change", () => { fileName.textContent = fileIn.files[0] ? `${fileIn.files[0].name} · ${(fileIn.files[0].size / 1024).toFixed(0)} KB` : ""; });
+  const sendBg = async (remove) => {
+    msg.textContent = "Applying…"; msg.style.color = "";
+    const body = new FormData();
+    body.append("csrf_token", CSRF());
+    if (remove) body.append("remove", "1"); else {
+      body.append("color", colorIn.value.toUpperCase());
+      if (fileIn.files[0]) body.append("image", fileIn.files[0]);
+    }
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(pid)}/styles/${encodeURIComponent(bgSlug)}/background`, { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.detail || `Failed (${res.status})`);
+      msg.textContent = data.slug !== bgSlug ? "Applied — a copy of the style now belongs to this project. Reloading…" : "Applied. Reloading…";
+      msg.style.color = "var(--ok)";
+      setTimeout(() => location.reload(), 700);      // thumbnails re-render server-side
+    } catch (err) { msg.textContent = err.message; msg.style.color = "var(--bad)"; }
+  };
+  form.addEventListener("submit", (e) => { e.preventDefault(); sendBg(false); });
+  $("bg-remove").addEventListener("click", () => sendBg(true));
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeBg(); });
+
+  refresh();
+}
+
+/* =========================================================================
+   v3 · Project → Settings
+   ========================================================================= */
+function initProjectSettings() {
+  const form = $("proj-form"); if (!form) return;
+  const pid = form.dataset.pid, msg = $("proj-msg");
+  const say = (t, ok) => { msg.textContent = t; msg.style.color = ok ? "var(--ok)" : "var(--bad)"; };
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault(); say("Saving…", true);
+    const f = form.elements;
+    try {
+      await api(`/api/projects/${encodeURIComponent(pid)}`, { method: "PATCH", json: {
+        name: f.name.value.trim(), client: f.client.value.trim(), emoji: f.emoji.value.trim(),
+        settings: { dedupe: f.dedupe.checked, keep_engagement: f.keep_engagement.checked,
+          workers: +f.workers.value || 0, note: f.note.value.trim() } } });
+      say("Saved.", true); setTimeout(() => location.reload(), 500);
+    } catch (err) { say(err.message, false); }
+  });
+  const arch = $("proj-archive");
+  if (arch) arch.addEventListener("click", async () => {
+    if (!confirm(`Archive "${form.elements.name.value}"? Its runs stay downloadable from their links; the project leaves the dropdown.`)) return;
+    try { await api(`/api/projects/${encodeURIComponent(pid)}`, { method: "DELETE" }); location.href = "/"; }
+    catch (err) { say(err.message, false); }
+  });
 }

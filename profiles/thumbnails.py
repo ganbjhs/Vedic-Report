@@ -98,6 +98,17 @@ def _page(profile, n_posts, width, with_cover_slot=False):
     scale = width / pw_in
     height = round(ph_in * scale)
     page = Image.new("RGB", (width, height), CARD)
+    # v3: a numeric style's page background (colour and/or image) shows on
+    # the card too, so the pool never hides what the PDF/PPTX will look like.
+    bg_hex = registry.background_color(profile)
+    if bg_hex:
+        v = bg_hex.lstrip("#")
+        page.paste(tuple(int(v[i:i + 2], 16) for i in (0, 2, 4)),
+                   [0, 0, width, height])
+    bg_img = registry.background_path(profile)
+    if bg_img and Path(bg_img).exists():
+        with Image.open(bg_img) as b:
+            page.paste(b.convert("RGB").resize((width, height), Image.LANCZOS))
     ImageDraw.Draw(page).rectangle([0, 0, width - 1, height - 1], outline=PAGE_EDGE)
 
     tpl = profile.get("template")

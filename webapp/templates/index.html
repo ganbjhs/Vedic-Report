@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New report — Report Maker{% endblock %}
+{% block title %}New run — VedicReport{% endblock %}
 {% block app_class %} no-rail{% endblock %}
 {% block main_class %} narrow{% endblock %}
 
 {% block content %}
-<h1>New report</h1>
-<p class="sub">Pick a platform and a style, add your links, name it, generate.</p>
+<h1>New run <span class="faint" style="font-weight:500;font-size:16px">· {{ project.emoji }} {{ project.name }}</span></h1>
+<p class="sub">Add links, tick the styles to print, name it, generate. Each ticked style becomes its own report from the same links.</p>
 
 {% if not x_login_ok %}
 <div class="alert alert-warn">
@@ -15,63 +15,55 @@
 {% endif %}
 
 <form id="job-form" novalidate
-      data-max-links="{{ max_links }}" data-default-workers="{{ default_workers }}">
+      data-max-links="{{ max_links }}" data-default-workers="{{ default_workers }}"
+      data-settings='{{ project.settings | tojson }}'>
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="project_id" value="{{ project.id }}">
   <input type="hidden" name="platform" id="platform" value="x">
   <input type="hidden" name="report_type" id="report-type" value="">
-
-  <!-- 1 · platform -->
-  <div class="step"><span class="n">1</span><h2>Platform</h2>
-    <select id="preset-pick" class="tail preset-pick" aria-label="Load a preset" {% if not presets %}hidden{% endif %}>
-      <option value="">Load a preset…</option>
-      {% for p in presets %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
-    </select></div>
-  <div class="plat" id="plat" role="radiogroup" aria-label="Platform">
+  <!-- The platform is not chosen here: it follows the ticked style. The pills
+       stay in the DOM (hidden) because the preview and the submit read them. -->
+  <div class="plat" id="plat" role="radiogroup" aria-label="Platform" hidden>
     {% for p in platforms %}
-    <button type="button" data-platform="{{ p.slug }}" class="{{ 'soon' if not p.live else '' }}"
-            {% if not p.live %}aria-disabled="true" title="{{ p.note }}"{% endif %}
-            role="radio" aria-checked="{{ 'true' if p.slug == 'x' else 'false' }}">
-      <span class="pl {{ p.slug }}"></span> {{ 'X / Twitter' if p.slug == 'x' else ('Combined (X + FB + IG)' if p.slug == 'combined' else p.label) }}
-      {% if p.badge %}<span class="badge">{{ p.badge }}</span>{% endif %}
-    </button>
+    <button type="button" data-platform="{{ p.slug }}" class="{{ 'soon' if not p.live else '' }}" role="radio" aria-checked="{{ 'true' if p.slug == 'x' else 'false' }}"><span class="pl {{ p.slug }}"></span> {{ 'X / Twitter' if p.slug == 'x' else ('Combined (X + FB + IG)' if p.slug == 'combined' else p.label) }}</button>
     {% endfor %}
   </div>
 
-  <!-- 2 · style: compact rows; "Sample" opens the readable full page -->
-  <div class="step"><span class="n">2</span><h2>Style</h2><span class="hint">— how the pages are laid out</span>
-    <a class="link tail" href="/styles">All styles{% if is_admin %} &amp; designer{% endif %} →</a></div>
-  <div class="slist" id="styles" role="radiogroup" aria-label="Report style">
+  <!-- 1 · styles of this project -->
+  <div class="step"><span class="n">1</span><h2>Styles</h2><span class="hint">— tick one or more of this project's styles</span>
+    <a class="link tail" href="/project/styles">Change the project's styles →</a></div>
+  {% if report_types %}
+  <div class="slist" id="styles" role="group" aria-label="Report styles">
     {% for rt in report_types %}
     {% set pv = previews.get(rt.slug) %}
-    <div class="srow" role="radio" aria-checked="false" tabindex="0"
+    <div class="srow" role="checkbox" aria-checked="false" tabindex="0"
          data-slug="{{ rt.slug }}" data-platform="{{ rt.platform }}" data-label="{{ rt.label }}"
          data-worker-choice="{{ 1 if rt.allows_worker_choice else 0 }}"
          data-keep-engagement="{{ 1 if rt.allows_keep_engagement else 0 }}"
          data-pool="{{ rt.worker_pool }}"
-         data-outputs="{{ rt.outputs | join(',') }}"
+         data-outputs="{{ (chosen_outputs.get(rt.slug) or rt.outputs) | join(',') }}"
          data-large="{{ pv.img_large if pv else '' }}"
          data-desc="{{ rt.description }}">
       <span class="radio"></span>
       <span class="mini-thumb">{% if pv %}<img src="{{ pv.img }}" alt="" loading="lazy">{% endif %}</span>
-      <span class="stext"><b>{{ rt.label }}</b><small>{{ rt.caption }}</small>
-        <span class="stags">{% for o in rt.outputs %}<span class="tag">{{ o | upper }}</span>{% endfor %}{% if rt.custom %}<span class="tag new">Custom</span>{% endif %}</span></span>
+      <span class="stext"><b>{{ rt.label }}</b><small>{{ rt.caption }} · <span class="pl {{ rt.platform }}" style="width:9px;height:9px;vertical-align:-1px"></span> {{ rt.platform }}</small>
+        <span class="stags">{% for o in (chosen_outputs.get(rt.slug) or rt.outputs) %}<span class="tag">{{ o | upper }}</span>{% endfor %}{% if rt.custom %}<span class="tag new">Custom</span>{% endif %}</span></span>
       <button type="button" class="link sample" data-sample="{{ rt.slug }}" {% if not pv %}hidden{% endif %}>Sample</button>
     </div>
     {% endfor %}
   </div>
+  <p class="hint small" id="plat-note" style="margin:8px 0 0"></p>
+  {% else %}
+  <div class="ov-empty">This project has no styles yet — <a href="/project/styles">pick some from the pool</a> and come back.</div>
+  {% endif %}
 
 <!-- 3 · links -->
-  <div class="step"><span class="n">3</span><h2>Links</h2><span class="hint">— file, paste, or a Google Sheet</span></div>
+  <div class="step"><span class="n">2</span><h2>Links</h2><span class="hint">— file, paste, or a Google Sheet</span></div>
   <div class="src">
     <div class="tabs" role="tablist" aria-label="How to add links">
       <button type="button" class="tab" role="tab" data-tab="file" aria-selected="true">Upload file</button>
       <button type="button" class="tab" role="tab" data-tab="paste" aria-selected="false">Paste links</button>
       <button type="button" class="tab" role="tab" data-tab="sheet" aria-selected="false">Google Sheet</button>
-      <span class="spacer"></span>
-      <select id="preset-pick" class="tab" style="width:auto;padding:6px 28px 6px 10px;font-size:12px" aria-label="Load a preset" {% if not presets %}hidden{% endif %}>
-        <option value="">Load preset ▾</option>
-        {% for p in presets %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
-      </select>
     </div>
     <div class="body">
       <div>
@@ -119,12 +111,12 @@
   <!-- options (capability-driven) -->
   <div class="options">
     <div class="field" id="outputs-option">
-      <span>Outputs</span>
-      <!-- Filled from the selected style's own formats: a designed page offers
-           PDF + PPTX, a numeric style PDF + DOCX. Everything is ticked, so
-           doing nothing gives you what the style has always produced. -->
+      <span>Files</span>
+      <!-- The formats were chosen per style on the project's Styles page;
+           this only shows what the ticked styles will produce. Hidden inputs
+           carry them so the server's per-style filter still applies. -->
       <div class="outrow" id="outputs" role="group" aria-label="Output formats"></div>
-      <span class="hint" id="outputs-hint"></span>
+      <span class="hint" id="outputs-hint">Change formats on <a href="/project/styles">Styles</a>.</span>
     </div>
     <label class="toggle" id="crop-option" hidden>
       <input type="checkbox" name="keep_engagement" id="keep-engagement" value="1">
@@ -142,10 +134,9 @@
   <!-- sticky action bar -->
   <div class="actbar">
     <input name="report_name" id="report-name" type="text" maxlength="80" required placeholder="Report name — e.g. Brand mentions 16-08-26" autocomplete="off">
-    <span class="summary" id="summary"><b>X</b> · <b>—</b> · <b>0</b> links</span>
+    <span class="summary" id="summary"><b>—</b> · <b>0</b> links</span>
     <span class="spacer"></span>
-    <button type="button" class="btn" id="preset-save">☆ Save as preset</button>
-    <button type="submit" class="btn primary lg" id="submit-btn" disabled><span class="btn-label">Generate report →</span><span class="spinner" hidden></span></button>
+    <button type="submit" class="btn primary lg" id="submit-btn" disabled><span class="btn-label">Generate →</span><span class="spinner" hidden></span></button>
     <div class="alert alert-error err" id="form-error" hidden role="alert"></div>
   </div>
 </form>
@@ -161,6 +152,5 @@
 
 
 {% block scripts %}
-<script id="presets-data" type="application/json">{{ presets | tojson }}</script>
 <script>initSubmitForm();</script>
 {% endblock %}

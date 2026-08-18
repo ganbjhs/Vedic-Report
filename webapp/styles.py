@@ -145,6 +145,87 @@ def delete(slug: str) -> bool:
     return True
 
 
+# --------------------------------------------------------------------------- #
+# Page background (v3): a colour or a full-page image behind every PDF page
+# and PPTX slide. Stored in the profile as page.background; the image file
+# lives in assets/<slug>/background.png so the runner's copytree carries it.
+# --------------------------------------------------------------------------- #
+_BG_NAME = "background.png"
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _write_profile(slug: str, raw: dict) -> dict:
+    resolved = resolve(raw)
+    dest = _path(slug)
+    config.USER_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(raw, indent=2))
+    tmp.replace(dest)
+    previews.refresh()
+    return resolved
+
+
+def set_background(slug: str, color: str = None, image: bytes = None,
+                   remove: bool = False) -> dict:
+    """Set / replace / clear the page background of a user style."""
+    if not _SLUG.match(slug or "") or slug in reserved_slugs():
+        raise StyleError("Only a style designed in the app can take a background — "
+                         "make your own version of this one first.")
+    p = _path(slug)
+    if not p.exists():
+        raise StyleError("Unknown style.")
+    raw = json.loads(p.read_text())
+    if raw.get("template"):
+        raise StyleError("A designed-page style already has its own page art — "
+                         "replace the page image in the designer instead.")
+    page = dict(raw.get("page") or {})
+    bg = dict(page.get("background") or {}) if isinstance(page.get("background"), dict) else {}
+    if remove:
+        bg = {}
+        img = asset_dir(slug) / _BG_NAME
+        if img.exists():
+            img.unlink()
+    if color:
+        if not _HEX.match(color):
+            raise StyleError("The background colour must be #RRGGBB.")
+        bg["color"] = color.upper()
+    if image:
+        _store_page(slug, "background", image)      # same limits as page art
+        bg["image"] = _BG_NAME
+    page["background"] = bg or None
+    raw["page"] = page
+    return _write_profile(slug, raw)
+
+
+def fork_for_project(src_slug: str, project: dict) -> str:
+    """Copy a shipped (non-editable) numeric style into a project-owned user
+    style so the project can give it its own background. Returns the new
+    slug. Idempotent: the same project + source gives the same slug, and an
+    existing copy is reused rather than overwritten."""
+    if not _SLUG.match(src_slug or ""):
+        raise StyleError("Unknown style.")
+    try:
+        src = registry.load(src_slug)
+    except registry.ProfileError as e:
+        raise StyleError(str(e)) from e
+    if src.get("template"):
+        raise StyleError("Designed-page styles carry their own art — use "
+                         "'Make my own version' on the Style pool page.")
+    slug = f"{src_slug[:24]}-{project['slug'][:14]}".strip("-")[:40]
+    if not _SLUG.match(slug):
+        slug = f"{src_slug[:20]}-{project['id'][:8]}"
+    if _path(slug).exists():
+        return slug
+    raw = {"schema": registry.SCHEMA_VERSION, "slug": slug,
+           "label": f"{src['label']} — {project['name']}"[:60],
+           "extends": src_slug,
+           "description": f"{src.get('description', '')} (copy for {project['name']})".strip(),
+           "capture": {}, "image": {}, "page": {}, "content": {},
+           "outputs": list(src.get("outputs") or ["pdf"])}
+    _write_profile(slug, raw)
+    return slug
+
+
 def preview_png(raw: dict, width: int = 240) -> bytes:
     """A thumbnail of an UNSAVED style, drawn by the same code that draws the
     dashboard cards — so what the designer shows is what the page will be."""

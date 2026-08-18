@@ -1,4 +1,11 @@
-# X / Twitter Report Automation
+# VedicReport — X / Facebook / Instagram report automation
+
+> **v3.0-a (Aug 2026): projects.** The dashboard is now a workspace of
+> *projects* — pick one in the left bar (or make a new one), give it the styles
+> it prints in (one or more, each with its own PDF / DOCX / PPTX choice and an
+> optional page background), and every run belongs to it. Numeric styles now
+> export a **PPTX** too. Read `docs/v3-plan.md` for what comes next (Sources
+> that stay in sync, the per-project API key, Grok Studio).
 
 Give it a list of X/Twitter post links; it screenshots every post in a logged-in
 browser and builds a **PDF + Word (.docx)** report — or, for a designed-page

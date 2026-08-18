@@ -1,4 +1,4 @@
-# Report Maker — Blueprint (v2.3, August 2026)
+# VedicReport — Blueprint (v3.0-a, August 2026)
 
 One file that describes the whole system precisely enough to rebuild it — or
 to hand to a new session and say "redesign this without breaking it". Read
@@ -186,6 +186,35 @@ sessions/ (secret, gitignored) x_state.json, optional fb_state.json
 | Static assets linked as `?v=<sha1 of css+js>` | main.py `asset_v` | browsers pair old CSS with new HTML |
 
 ---
+
+## 4a. Projects (v3.0-a) — the spine every page hangs off
+
+A **project** is a client or a recurring report. It owns the styles that print
+it (picked from the pool, one or more, each with its own file formats) and every
+job belongs to exactly one project. Projects are shared by the team.
+
+| Piece | Where |
+|---|---|
+| tables `projects`, `project_styles`; `jobs.project_id` | `webapp/jobs/store.py` (`_ADDED_COLUMNS`, migration to the **Unsorted** project on first boot) |
+| current project = `request.session["project_id"]` | `webapp/projects.py` (`current`, `select`, `styles_of`, `public`) |
+| API `/api/projects` (list · create · select · patch · delete/archive · PUT styles · POST styles/{slug}/background) | `webapp/routes_projects.py` |
+| pages `/` Overview · `/new` New run · `/runs` · `/project/styles` · `/project/settings` (`/history` → `/runs`) | `webapp/main.py`, `templates/overview.html`, `index.html`, `history.html`, `project_styles.html`, `project_settings.html` |
+| left bar: PROJECT dropdown (list + "+ New project") then Overview / New run / Runs / Styles / Settings; Sources and API are greyed "soon" | `templates/base.html`, `app.js` shell block, `app.css` `.pdrop*` |
+| New run ticks **one or more** of the project's styles → `POST /api/jobs` with repeated `report_type` → one job per style (same links; a shared capture is the 3.0-b optimisation) | `routes_jobs.submit_job`, `app.js initSubmitForm` |
+| Presets are no longer offered (a project replaces them); the API and table remain | `routes_extras.py` |
+
+**Page background + PPTX for numeric styles.** `page.background` = `null` |
+`{"color": "#RRGGBB"}` | `{"image": "background.png"}` (`registry._validate_background`,
+`background_path`, `background_color`). Painted first on every PDF page and
+every PPTX slide by `prof_builder` (`_background`, `_palette` — light ink on a
+dark colour); the image lives in `assets/<slug>/background.png` so the runner's
+one copytree carries it. `NUMERIC_OUTPUTS` = pdf · docx · pptx;
+`prof_builder.build_pptx` = one slide per page, screenshots as pictures,
+captions as text boxes (post link = real hyperlink), cover and Links slides.
+Set from the project Styles page (`styles.set_background`); a shipped style is
+first copied into a project-owned one (`styles.fork_for_project` →
+`"<src>-<project>"`) and swapped in the project (`store.project_replace_style`).
+Test: `profiles/tests/test_projects.py`.
 
 ## 5. Front-end model (for a redesign)
 

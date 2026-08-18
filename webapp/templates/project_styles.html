@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Styles · {{ project.name }} — VedicReport{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+
+{% block content %}
+<div class="row" style="justify-content:space-between;align-items:flex-start">
+  <div>
+    <h1>Styles <span class="faint" style="font-weight:500;font-size:16px">· {{ project.emoji }} {{ project.name }}</span></h1>
+    <p class="sub" style="margin-bottom:0">Tick the styles this project prints in — one or more. Per style, choose the files (PDF · DOCX · PPTX) and, for a deck, a page background. Changes save on their own.</p>
+  </div>
+  <div class="row"><a class="btn" href="/styles">Open the style pool</a><a class="btn primary" href="/new">＋ New run</a></div>
+</div>
+
+<div class="pfilters" style="margin-top:18px">
+  <span class="lab">Platform</span>
+  <select id="pf-plat"><option value="">All</option>{% for p in platforms %}{% if p.live %}<option value="{{ p.slug }}">{{ 'X / Twitter' if p.slug == 'x' else p.label }}</option>{% endif %}{% endfor %}</select>
+  <span class="lab">Kind</span>
+  <select id="pf-kind"><option value="">Any</option><option value="template">Designed page (Canva)</option><option value="numeric">Numeric layout</option><option value="builtin">Built-in report</option></select>
+  <label class="chk" id="pf-picked"><input type="checkbox"> Picked only</label>
+  <span class="spacer"></span>
+  <span class="small faint" id="ps-count"></span>
+  <span class="small" id="ps-status"></span>
+</div>
+
+<div class="pick-grid" id="pick-grid" data-pid="{{ project.id }}">
+  {% set picked = {} %}{% for s in project_styles %}{% set _ = picked.update({s.slug: s.outputs}) %}{% endfor %}
+  {% for rt in pool %}
+  {% set pv = previews.get(rt.slug) %}
+  {% set on = rt.slug in picked %}
+  <div class="pick {{ 'on' if on else '' }}" data-slug="{{ rt.slug }}" data-platform="{{ rt.platform }}" data-label="{{ rt.label }}"
+       data-kind="{{ 'builtin' if rt.builtin else ('template' if rt.template else 'numeric') }}"
+       data-custom="{{ 1 if rt.custom else 0 }}" data-outputs="{{ rt.outputs | join(',') }}"
+       role="checkbox" aria-checked="{{ 'true' if on else 'false' }}" tabindex="0">
+    <div class="tick">✓</div>
+    <div class="shot">{% if pv %}<img src="{{ pv.img_large }}" alt="" loading="lazy">{% endif %}</div>
+    <b>{{ rt.label }}</b>
+    <div class="m"><span class="tag"><span class="pl {{ rt.platform }}" style="width:8px;height:8px;vertical-align:0"></span> {{ rt.platform }}</span><span class="tag">{{ rt.caption }}</span>{% if rt.builtin %}<span class="tag">Built-in</span>{% elif rt.template %}<span class="tag">Designed page</span>{% endif %}{% if rt.custom %}<span class="tag new">Custom</span>{% endif %}</div>
+    <div class="outs" data-outs>
+      {% for o in rt.outputs %}
+      {% set chosen = (o in (picked.get(rt.slug) or rt.outputs)) if on else True %}
+      <label class="{{ 'on' if chosen else '' }}"><input type="checkbox" value="{{ o }}" {{ 'checked' if chosen else '' }}> {{ o | upper }}</label>
+      {% endfor %}
+    </div>
+    {% if not rt.builtin and not rt.template %}
+    <div class="bgrow" data-bgrow {% if not on %}hidden{% endif %}>
+      <span class="bgsw" data-bgsw title="page background"></span>
+      <span data-bgtext>No background</span>
+      <span class="spacer"></span>
+      <button type="button" class="link small" data-bg="{{ rt.slug }}">Background…</button>
+    </div>
+    {% elif rt.template %}
+    <div class="bgrow" data-bgrow {% if not on %}hidden{% endif %}><span class="faint">Background = its own page art</span></div>
+    {% else %}
+    <div class="bgrow" data-bgrow {% if not on %}hidden{% endif %}><span class="faint">Frozen builder · no background, no PPTX</span></div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+<p class="small faint" style="margin-top:14px">A background on a shipped style makes a copy for this project (“<i>Style — Project</i>”) so the original stays untouched. Designed-page (Canva) styles already carry their art; use <a href="/styles">Make my own version</a> in the pool for those.</p>
+
+<div class="modal" id="bg-modal" hidden role="dialog" aria-modal="true" aria-label="Page background">
+  <div class="modal-card bg-card"><button type="button" class="modal-x" id="bg-close" aria-label="Close">×</button>
+    <h3 style="margin:0 0 2px">Page background · <span id="bg-title"></span></h3>
+    <p class="small muted" style="margin:0 0 12px">Painted behind every page of the PDF and every slide of the PPTX. Text turns light on a dark colour by itself. DOCX ignores it.</p>
+    <form id="bg-form" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="field"><span>Colour</span>
+        <div class="row" style="gap:10px">
+          <div class="bg-swatches" id="bg-swatches">
+            {% for c in ['#FFFFFF','#F6F7FB','#0F172A','#1B2440','#111111','#7A1F2B','#14532D','#1D4ED8','#F59E0B'] %}<button type="button" data-color="{{ c }}" style="background:{{ c }}" title="{{ c }}"></button>{% endfor %}
+          </div>
+          <input type="color" id="bg-color" value="#FFFFFF" title="Custom colour"><span class="small faint" id="bg-hex">#FFFFFF</span>
+        </div></div>
+      <div class="field" style="margin-top:12px"><span>Image <span class="faint">(optional — full page, PNG/JPEG, ≥300 px, ≤12 MB; design it at the page's aspect)</span></span>
+        <div class="row"><label class="btn sm">Choose image <input type="file" id="bg-file" accept="image/png,image/jpeg" hidden></label><span class="small" id="bg-file-name"></span></div></div>
+      <div class="row" style="margin-top:14px">
+        <button type="submit" class="btn primary">Apply</button>
+        <button type="button" class="btn" id="bg-remove">Remove background</button>
+        <span class="small" id="bg-msg"></span>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script id="pstyles-data" type="application/json">{{ project_public | tojson }}</script>
+<script>initProjectStyles();</script>
+{% endblock %}

@@ -741,6 +741,18 @@ before touching the engine.
 
 ---
 
+16. **Projects are the spine (v3.0-a).** Every page reads the CURRENT project
+    from the session (`projects.current`); the left-bar dropdown is the only
+    switcher. A job always carries `project_id` (older ones migrated to
+    *Unsorted* on first boot). Jobs are visible to every signed-in colleague
+    — projects are shared — so `_owned_job` gates on signed-in, not owner.
+    New pages must take the project from `_shell()`, never from a URL
+    parameter, or two tabs will disagree about which project is on screen.
+17. **A background on a shipped style forks it.** Shipped/built-in styles
+    are read-only files; `set_background` on one first copies it into a
+    project-owned user style (`fork_for_project`, idempotent) and the project
+    list swaps to the copy. The original never changes under another project.
+
 ## 19. A stray dialog and a cropped reply are the same bug
 
 Both captures used to clear overlays like this, once, right after load:

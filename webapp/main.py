@@ -14,8 +14,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, health, previews, report_types, routes_extras,
-               routes_jobs, styles, uploads, x_login)
+from . import (auth, config, health, previews, projects, report_types,
+               routes_extras, routes_jobs, routes_projects, styles, uploads,
+               x_login)
 from .jobs import cleanup, queue, store
 
 HERE = Path(__file__).resolve().parent
@@ -78,6 +79,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 app.include_router(routes_jobs.router)
 app.include_router(routes_extras.router)
+app.include_router(routes_projects.router)
 
 
 def _shell(request: Request, user: str, nav: str, **extra) -> dict:
@@ -86,8 +88,14 @@ def _shell(request: Request, user: str, nav: str, **extra) -> dict:
     disagree with itself between pages."""
     role = auth.role_of(user)
     admin = role == "admin"
+    # v3: every page hangs off the CURRENT project (left-bar dropdown).
+    project = dict(projects.current(request))
+    project["is_unsorted"] = project["slug"] == store.UNSORTED_SLUG
     ctx = {"user": user, "csrf": auth.csrf_token(request), "nav": nav,
            "is_admin": admin, "role": role,
+           "project": project,
+           "projects": projects.all_projects(),
+           "project_styles": projects.styles_of(project),
            "can_design": role in ("admin", "designer"),
            # Health and budget are admin concerns; a colleague who only makes
            # reports never sees them (they still get a plain "X capture is
@@ -186,39 +194,84 @@ async def logout(request: Request, csrf_token: str = Form("")):
 # App pages
 # --------------------------------------------------------------------------- #
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request, user: str = Depends(auth.require_user)):
-    jobs = [routes_jobs.public_job(j) for j in store.list_for(user, limit=8)]
+async def overview(request: Request, user: str = Depends(auth.require_user)):
+    """The project's front page: what it prints, its last runs, next step."""
+    project = projects.current(request)
+    jobs = [routes_jobs.public_job(j)
+            for j in store.list_for_project(project["id"], limit=8)]
+    return templates.TemplateResponse(
+        request, "overview.html",
+        _shell(request, user, "overview", jobs=jobs,
+               previews=previews.manifest()))
+
+
+@app.get("/new", response_class=HTMLResponse)
+async def new_run(request: Request, user: str = Depends(auth.require_user)):
+    """New run: links in, the project's styles out."""
+    project = projects.current(request)
+    styles_here = projects.styles_of(project)
     return templates.TemplateResponse(
         request, "index.html",
         _shell(request, user, "new",
-               jobs=jobs,
                max_links=config.MAX_LINKS, max_mb=config.MAX_UPLOAD_MB,
                accept=",".join(uploads.ALLOWED_SUFFIXES),
                default_workers=config.CAPTURE_WORKERS,
                max_workers=config.MAX_WORKERS,
-               report_types=styles.visible_types(),
+               # The styles offered are the PROJECT's; the pool is one click
+               # away when the project has none yet.
+               report_types=[s["rt"] for s in styles_here if not s["missing"]],
+               chosen_outputs={s["slug"]: s["outputs"] for s in styles_here},
                previews=previews.manifest(),
+               platforms=report_types.PLATFORMS))
+
+
+@app.get("/project/styles", response_class=HTMLResponse)
+async def project_styles_page(request: Request, user: str = Depends(auth.require_user)):
+    """Which styles this project prints in, picked from the pool."""
+    kinds = report_types.all_types()
+    return templates.TemplateResponse(
+        request, "project_styles.html",
+        _shell(request, user, "pstyles",
+               pool=kinds, previews=previews.manifest(),
                platforms=report_types.PLATFORMS,
-               presets=[routes_extras._public_preset(p)
-                        for p in store.presets_for(user)]))
+               project_public=projects.public(projects.current(request))))
+
+
+@app.get("/project/settings", response_class=HTMLResponse)
+async def project_settings_page(request: Request, user: str = Depends(auth.require_user)):
+    return templates.TemplateResponse(
+        request, "project_settings.html",
+        _shell(request, user, "psettings", max_workers=config.MAX_WORKERS))
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_page(job_id: str, request: Request,
                    user: str = Depends(auth.require_user)):
     job = store.get(job_id)
-    if not job or job["owner"] != user:
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    # Opening a run switches the session to its project, so the left bar and
+    # the Runs page agree with what is on screen.
+    if job.get("project_id") and store.project_get(job["project_id"]):
+        projects.select(request, job["project_id"])
     return templates.TemplateResponse(
         request, "job.html",
         _shell(request, user, "history", job=routes_jobs.public_job(job)))
 
 
-@app.get("/history", response_class=HTMLResponse)
-async def history_page(request: Request, user: str = Depends(auth.require_user)):
-    jobs = [routes_jobs.public_job(j) for j in store.list_for(user, limit=200)]
+@app.get("/runs", response_class=HTMLResponse)
+async def runs_page(request: Request, user: str = Depends(auth.require_user)):
+    """Every run of the current project."""
+    project = projects.current(request)
+    jobs = [routes_jobs.public_job(j)
+            for j in store.list_for_project(project["id"], limit=200)]
     return templates.TemplateResponse(
         request, "history.html", _shell(request, user, "history", jobs=jobs))
+
+
+@app.get("/history")
+async def history_redirect():
+    return RedirectResponse("/runs", status_code=301)
 
 
 @app.get("/settings", response_class=HTMLResponse)

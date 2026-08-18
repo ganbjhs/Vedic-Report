@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — VedicReport{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+
+{% block content %}
+<div class="row" style="justify-content:space-between;align-items:flex-start">
+  <div>
+    <h1>{{ project.emoji }} {{ project.name }}</h1>
+    <p class="sub" style="margin-bottom:0">{% if project.client %}Client: {{ project.client }} · {% endif %}{{ project_styles | length }} style{{ '' if project_styles | length == 1 else 's' }} · {{ jobs | length }} recent run{{ '' if jobs | length == 1 else 's' }}{% if project.is_unsorted is defined and project.is_unsorted %} · reports made before projects existed{% endif %}</p>
+  </div>
+  <div class="row">
+    <a class="btn" href="/project/styles">Styles</a>
+    <a class="btn primary" href="/new">＋ New run</a>
+  </div>
+</div>
+
+{% if not x_login_ok %}
+<div class="alert alert-warn" style="margin-top:16px">
+  {% if is_admin %}<strong>No usable X login on the server.</strong> X captures will hit login walls until it is fixed — <a href="/admin/session-status">Accounts &amp; sessions</a>.
+  {% else %}<strong>X capture is currently unavailable</strong> — ask an admin; Facebook and Instagram reports are unaffected.{% endif %}
+</div>
+{% endif %}
+
+<div class="ov-grid" style="margin-top:20px">
+  <section class="card">
+    <h2 class="card-title" style="display:flex;align-items:center;gap:8px">Prints in <span class="spacer"></span><a class="link small" href="/project/styles">Change →</a></h2>
+    {% if project_styles %}
+    <div class="ov-list" style="margin-top:10px">
+      {% for s in project_styles %}
+      {% set pv = previews.get(s.slug) %}
+      <div class="ov-style">
+        <span class="mini-thumb">{% if pv %}<img src="{{ pv.img }}" alt="" loading="lazy">{% endif %}</span>
+        <span class="stext"><b>{{ s.label }}</b>{% if s.missing %}<small class="faint">— this style was deleted from the pool</small>{% else %}<small class="faint">{{ s.caption }}</small>{% endif %}</span>
+        <span class="stags">{% for o in s.outputs %}<span class="tag">{{ o | upper }}</span>{% endfor %}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="ov-empty" style="margin-top:10px">This project has no styles yet.<br><a class="btn primary sm" href="/project/styles" style="margin-top:10px">Pick from the style pool →</a></div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">Next run</h2>
+    <table class="kv" style="margin-top:8px">
+      <tr><td>Links</td><td>a file, pasted text or a Google Sheet — on the New run page</td></tr>
+      <tr><td>Styles</td><td>{% if project_styles %}{{ project_styles | map(attribute='label') | join(' · ') }}{% else %}<span class="faint">none picked yet</span>{% endif %}</td></tr>
+      <tr><td>Files</td><td>{% set outs = [] %}{% for s in project_styles %}{% for o in s.outputs %}{% if o not in outs %}{% set _ = outs.append(o) %}{% endif %}{% endfor %}{% endfor %}{% if outs %}{{ outs | map('upper') | join(' · ') }}{% else %}<span class="faint">—</span>{% endif %}</td></tr>
+      <tr><td>Defaults</td><td class="small">{% set st = project.settings %}dedupe {{ 'on' if st.get('dedupe', True) else 'off' }}{% if st.get('keep_engagement') %} · engagement line kept{% endif %}{% if st.get('workers') %} · {{ st.get('workers') }} browser(s){% endif %} · <a href="/project/settings">edit</a></td></tr>
+    </table>
+    <div class="row" style="margin-top:12px"><a class="btn primary sm" href="/new">▶ Start a run</a></div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:14px">
+  <h2 class="card-title" style="display:flex;align-items:center;gap:8px">Recent runs <span class="spacer"></span><a class="link small" href="/runs">All runs →</a></h2>
+  {% if jobs %}
+  <div style="overflow:auto;margin-top:8px">
+  <table class="tbl">
+    <thead><tr><th>Report</th><th>Style</th><th>Status</th><th class="num">Posts</th><th>When</th><th>Downloads</th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+    <tr>
+      <td class="name"><a href="/jobs/{{ j.id }}">{{ j.title }}</a><br><span class="small faint">{{ j.upload_name }}{% if j.owner %} · {{ j.owner }}{% endif %}</span></td>
+      <td>{{ j.report_label }}</td>
+      <td><span class="st {{ j.status }}">{{ j.status }}</span>{% if j.status == 'running' %}<span class="small faint"> {{ j.done }}/{{ j.total }}</span>{% endif %}</td>
+      <td class="num">{{ j.done if j.status == 'done' else j.link_count }}</td>
+      <td class="small"><span data-ago="{{ j.created_at }}"></span></td>
+      <td><span class="dl">{% for k in j.artifacts %}<a href="/api/jobs/{{ j.id }}/download/{{ k }}">{{ k | upper }}</a>{% endfor %}</span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="faint" style="padding:22px;text-align:center;margin:0">No runs in this project yet.</p>
+  {% endif %}
+</section>
+<p class="note small faint" style="margin-top:14px">Metrics &amp; charts and post-level numbers arrive with the next release — this page stays plain until then.</p>
+{% endblock %}

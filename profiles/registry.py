@@ -17,6 +17,7 @@ whole module is testable with no captures.
 """
 import copy
 import json
+import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -72,10 +73,13 @@ PAGE_SIZES = {"letter": (8.5, 11.0), "a4": (8.2677, 11.6929),
 #     labelled "approximate" — PPTX replaces it as the editable format and the
 #     approximation is gone.
 #   * a NUMERIC style has no page art to lose, so DOCX is a faithful editable
-#     rendering of it and PPTX would have nothing to add.
+#     rendering of it. Since v3 it ALSO builds a PPTX — one slide per page,
+#     screenshots and captions as native objects — because teams present these
+#     reports, and `page.background` (a colour or a full-page image) gives the
+#     deck a look without designing a whole template.
 OUTPUTS = ("pdf", "docx", "pptx")
 TEMPLATE_OUTPUTS = ("pdf", "pptx")
-NUMERIC_OUTPUTS = ("pdf", "docx")
+NUMERIC_OUTPUTS = ("pdf", "docx", "pptx")
 FITS = ("fit", "pad", "crop-top")
 
 # Every key any section may contain. Anything else raises.
@@ -84,7 +88,12 @@ _ALLOWED = {
                 "workers"},
     "image": {"max_in", "aspect", "fit", "background", "radius_pt", "border",
               "shadow", "watermark"},
-    "page": {"size", "orientation", "grid", "margins_in"},
+    # `background` (v3): None, {"color": "#RRGGBB"} or {"image": "<file>"} —
+    # painted behind every page in the PDF and every slide in the PPTX. The
+    # image lives in assets/<slug>/ beside a template style's page art, so the
+    # runner's one copytree carries it into the job. DOCX ignores it (Word has
+    # no reliable full-page background), which the designer says out loud.
+    "page": {"size", "orientation", "grid", "margins_in", "background"},
     "content": {"cover", "header", "footer", "per_post_fields", "metrics",
                 "links_table"},
 }
@@ -471,6 +480,7 @@ def validate(p: dict) -> dict:
     if margins[1] + margins[3] >= pw or margins[0] + margins[2] >= ph:
         raise ProfileError(f"{slug}: margins leave no content area on a "
                            f"{pw:.2f}x{ph:.2f} in page")
+    _validate_background(page.get("background"), slug)
 
     content = p["content"]
     metrics = content.get("metrics")
@@ -504,11 +514,46 @@ def validate(p: dict) -> dict:
                      "editable PPTX; Word cannot layer a picture over a "
                      "full-page background)")
         else:
-            extra = ("  (a numeric style has no page art, so DOCX is its "
-                     "editable format and PPTX would add nothing)")
+            extra = "  (a numeric style builds PDF, DOCX and PPTX)"
         raise ProfileError(f"{slug}: unsupported output(s) {bad}; "
                            f"allowed: {list(allowed)}.{extra}")
     return p
+
+
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _validate_background(bg, slug: str) -> None:
+    if bg is None:
+        return
+    if not isinstance(bg, dict) or not bg:
+        raise ProfileError(f"{slug}: page.background must be null, "
+                           "{\"color\": \"#RRGGBB\"} or {\"image\": \"file.png\"}")
+    extra = set(bg) - {"color", "image"}
+    if extra:
+        raise ProfileError(f"{slug}: page.background has unknown key(s) {sorted(extra)}")
+    if "color" in bg and not (isinstance(bg["color"], str) and _HEX.match(bg["color"])):
+        raise ProfileError(f"{slug}: page.background.color must be #RRGGBB")
+    img = bg.get("image")
+    if img is not None and (not isinstance(img, str) or not img or "/" in img
+                            or "\\" in img or img.startswith(".")):
+        raise ProfileError(f"{slug}: page.background.image must be a plain filename")
+
+
+def background_path(profile: dict, registry_dir: Path = None):
+    """Absolute path of the page-background image, or None. Same folder as a
+    template style's page art (assets/<slug>/), so it travels with the profile."""
+    bg = (profile.get("page") or {}).get("background") or {}
+    name = bg.get("image") if isinstance(bg, dict) else None
+    if not name:
+        return None
+    return asset_dir(profile["slug"], registry_dir) / name
+
+
+def background_color(profile: dict):
+    """'#RRGGBB' or None."""
+    bg = (profile.get("page") or {}).get("background") or {}
+    return bg.get("color") if isinstance(bg, dict) else None
 
 
 def per_page(profile: dict) -> int:

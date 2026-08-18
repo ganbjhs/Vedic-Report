@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Report styles — Report Maker{% endblock %}
+{% block title %}Style pool — VedicReport{% endblock %}
 {% block app_class %} no-rail{% endblock %}
 
 {% block content %}
-<h1>Report styles</h1>
-<p class="sub">What each style produces.{% if is_admin %} The designer below makes new ones; the two built-in reports (Twitter, Influencer) are the proven pipelines and cannot be edited.{% endif %}</p>
+<h1>Style pool</h1>
+<p class="sub">Every style the team can print in. Add any of them to the current project (<b>{{ project.emoji }} {{ project.name }}</b>) — the project's own list is on <a href="/project/styles">Styles</a>.{% if can_design %} The designers below make new ones; the two built-in reports (Twitter, Influencer) are the proven pipelines and cannot be edited.{% endif %}</p>
+{% set in_project = project_styles | map(attribute='slug') | list %}
 
 <div class="gallery">
   {% for rt in report_types %}
@@ -16,18 +17,14 @@
       <h2>{{ rt.label }}
         {% if rt.builtin %}<span class="tag">Built-in</span>{% elif rt.custom %}<span class="tag new">Custom</span>{% else %}<span class="tag">Profile</span>{% endif %}
         {% for o in rt.outputs %}<span class="tag">{{ o | upper }}</span>{% endfor %}
-        {% if vis == 'live' %}<span class="tag" style="color:var(--ok);border-color:transparent;background:var(--ok-bg)">On New report</span>
-        {% elif vis == 'pending' %}<span class="tag hot">Pending approval</span>
-        {% else %}<span class="tag">Hidden</span>{% endif %}
+        {% if rt.slug in in_project %}<span class="tag" style="color:var(--ok);border-color:transparent;background:var(--ok-bg)">In this project</span>{% endif %}
+        {% if vis == 'hidden' %}<span class="tag">Hidden from pickers</span>{% endif %}
       </h2>
       <p class="cap">{{ rt.caption }}{% if rt.allows_keep_engagement %} · engagement line optional{% endif %}{% if rt.allows_worker_choice %} · capture speed selectable{% endif %}</p>
       <p class="desc">{{ rt.description }}</p>
       <div class="acts">
-        {% if vis == 'live' %}<a class="btn primary sm" href="/?type={{ rt.slug }}">Use this style</a>{% endif %}
-        {% if is_admin %}
-          {% if vis == 'live' %}<button type="button" class="btn sm" data-vis="{{ rt.slug }}" data-show="0">Hide from New report</button>
-          {% else %}<button type="button" class="btn sm primary" data-vis="{{ rt.slug }}" data-show="1">{{ 'Approve & show' if vis == 'pending' else 'Show on New report' }}</button>{% endif %}
-        {% endif %}
+        {% if rt.slug in in_project %}<a class="btn primary sm" href="/new?type={{ rt.slug }}">Use in a run</a>
+        {% else %}<button type="button" class="btn primary sm" data-addproj="{{ rt.slug }}">＋ Add to {{ project.name | truncate(22) }}</button>{% endif %}
         {% if can_design and rt.template %}<button type="button" class="btn sm" data-mine="{{ rt.slug }}" data-label="{{ rt.label }}">Make my own version</button>{% endif %}
         {% if can_design and not rt.builtin and not rt.custom and not rt.template %}<button type="button" class="btn sm" data-dup="{{ rt.slug }}">Duplicate into designer</button>{% endif %}
         {% if rt.custom and can_design %}
@@ -142,7 +139,7 @@
     <label class="check"><input id="t-overwrite" type="checkbox"><span>Replace an existing style with the same name</span></label>
     <span id="t-msg" class="small"></span>
     <span class="spacer"></span>
-    <span class="hint">PDF and HTML render exactly; DOCX is an approximation of a designed page.</span>
+    <span class="hint">A designed page renders exactly as PDF and as an editable PPTX.</span>
   </div>
 </div>
 {% endif %}
@@ -168,6 +165,8 @@
         <label class="field"><span>Orientation</span><select name="orientation"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
         <label class="field"><span>Columns</span><input name="cols" type="number" min="1" max="6" value="1"></label>
         <label class="field"><span>Rows</span><input name="rows" type="number" min="1" max="6" value="1"></label>
+        <label class="field"><span>Page background <span class="faint">(PDF + PPTX)</span></span><input name="page_bg" type="color" value="#FFFFFF"></label>
+        <label class="check" style="align-self:end"><input type="checkbox" name="page_bg_on"><span>Paint the page background</span></label>
         <label class="field"><span>Margin top (in)</span><input name="m_top" type="number" step="0.05" min="0" value="0.75"></label>
         <label class="field"><span>Right</span><input name="m_right" type="number" step="0.05" min="0" value="0.75"></label>
         <label class="field"><span>Bottom</span><input name="m_bottom" type="number" step="0.05" min="0" value="0.75"></label>
@@ -220,6 +219,7 @@
           <div class="chips">
             <label><input type="checkbox" name="outputs" value="pdf" checked> PDF</label>
             <label><input type="checkbox" name="outputs" value="docx" checked> DOCX</label>
+            <label><input type="checkbox" name="outputs" value="pptx" checked> PPTX <span class="faint">(one slide per page, editable)</span></label>
           </div></div>
       </div>
     </fieldset>

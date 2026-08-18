@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VedicReport v3 — Projects + Grok · interactive demo</title>
+<style>
+:root{
+  --bg:#f5f6f8;--surface:#fff;--surface2:#f0f2f5;--border:#e3e6ea;--border-strong:#c9ced6;
+  --text:#14171c;--text2:#5b6472;--text3:#8a93a1;
+  --accent:#2563eb;--accent-bg:#e8effe;--accent-fg:#1d4ed8;
+  --grok:#7c3aed;--grok-bg:#f1eaff;--grok-fg:#5b21b6;
+  --ok:#16a34a;--ok-bg:#e7f7ec;--warn:#d97706;--warn-bg:#fef3e2;--bad:#dc2626;--bad-bg:#fdecec;
+  --x:#111;--fb:#1877f2;--ig:#d62976;
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;
+  --r:10px;--r-sm:6px;--sh:0 1px 2px rgba(0,0,0,.05),0 4px 14px rgba(0,0,0,.05);--sh2:0 6px 24px rgba(0,0,0,.10);
+}
+:root[data-theme="dark"]{
+  --bg:#0f1115;--surface:#171a20;--surface2:#1e222a;--border:#262b34;--border-strong:#39404b;
+  --text:#e8eaee;--text2:#a5adba;--text3:#6f7886;--accent-bg:#1a2b55;--accent-fg:#8fb0ff;
+  --grok-bg:#2a1d4d;--grok-fg:#c4b1ff;
+  --ok-bg:#12331d;--warn-bg:#3a2a0d;--bad-bg:#3d1616;--x:#e8eaee;--sh:none;--sh2:0 8px 28px rgba(0,0,0,.5);
+  --s1:#3987e5;--s2:#d95926;--s3:#199e70;
+}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;background:var(--bg);color:var(--text)}
+a{color:inherit;text-decoration:none}
+.app{display:grid;grid-template-columns:240px 1fr;grid-template-rows:56px 1fr;min-height:100vh}
+.top{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+.brand{font-weight:700;display:flex;align-items:center;gap:8px}
+.brand i{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--accent),var(--grok));display:inline-block}
+.brand small{font-weight:600;color:var(--text3);font-size:11px;border:1px solid var(--border);border-radius:4px;padding:0 5px;margin-left:4px}
+.crumb{color:var(--text3);display:flex;gap:6px;align-items:center}
+.crumb b{color:var(--text)}
+.spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--surface2);white-space:nowrap}
+.pill.ok{background:var(--ok-bg);border-color:transparent;color:var(--ok)}
+.pill.warn{background:var(--warn-bg);border-color:transparent;color:var(--warn)}
+.pill.bad{background:var(--bad-bg);border-color:transparent;color:var(--bad)}
+.pill.grok{background:var(--grok-bg);border-color:transparent;color:var(--grok-fg)}
+.pill.acc{background:var(--accent-bg);border-color:transparent;color:var(--accent-fg)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--text3)}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}.dot.live{background:var(--ok);box-shadow:0 0 0 0 rgba(22,163,74,.6);animation:pulse 1.6s infinite}
+@keyframes pulse{to{box-shadow:0 0 0 7px rgba(22,163,74,0)}}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-weight:600;font-size:13px;cursor:pointer;font-family:inherit}
+.btn:hover{border-color:var(--text3)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.grok{background:var(--grok);border-color:var(--grok);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--text2)}
+.btn.sm{padding:5px 10px;font-size:12px}
+.btn.lg{padding:12px 22px;font-size:15px;border-radius:var(--r)}
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.avatar{width:30px;height:30px;border-radius:50%;background:var(--accent-bg);color:var(--accent-fg);display:grid;place-items:center;font-weight:700;font-size:12px}
+.nav{background:var(--surface);border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;gap:2px;position:sticky;top:56px;height:calc(100vh - 56px)}
+.nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--r-sm);color:var(--text2);font-weight:500;cursor:pointer}
+.nav a.active{background:var(--accent-bg);color:var(--accent-fg);font-weight:600}
+.nav a.grokn.active{background:var(--grok-bg);color:var(--grok-fg)}
+.nav a .k{margin-left:auto;font-size:11px;color:var(--text3);border:1px solid var(--border);border-radius:4px;padding:0 5px}
+.nav .sec{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);padding:14px 12px 4px;font-weight:700}
+.nav .sub{padding-left:14px}
+.nav .sub a{padding:7px 12px;font-size:13px}
+.pdrop{position:relative;margin:4px 0 10px}
+.pdrop>button{width:100%;display:flex;align-items:center;gap:8px;padding:9px 12px;border:1.5px solid var(--accent);border-radius:9px;background:var(--surface2);font:inherit;font-weight:700;font-size:14px;color:var(--text);cursor:pointer;text-align:left}
+.pdrop>button .car{margin-left:auto;color:var(--text2);font-size:11px}
+.pdrop .list{display:none;position:absolute;left:0;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--sh2);padding:6px;z-index:9}
+.pdrop.open .list{display:block}
+.pdrop .list a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:8px;font-size:14px;color:var(--text);cursor:pointer;font-weight:500}
+.pdrop .list a:hover{background:var(--surface2)}
+.pdrop .list a.on{background:var(--accent-bg);color:var(--accent-fg);font-weight:700}
+.pdrop .list .new{border-top:1px solid var(--border);margin-top:6px;padding-top:12px;color:var(--accent-fg);font-weight:700}
+.nav .sec:first-child{padding-top:0}
+.nav .foot{margin-top:auto;padding:12px;border-radius:var(--r);background:var(--surface2);font-size:12px;color:var(--text2)}
+.bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin:6px 0 4px}
+.bar b{display:block;height:100%;background:var(--ok);border-radius:3px}
+.main{padding:24px 28px 80px;max-width:1180px}
+h1{font-size:22px;margin:0 0 4px}
+h2{font-size:15px;margin:0}
+h3{font-size:13px;margin:0 0 8px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
+.sub{color:var(--text2);margin:0 0 20px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;box-shadow:var(--sh)}
+.grid{display:grid;gap:14px}
+.g3{grid-template-columns:repeat(3,1fr)}.g2{grid-template-columns:1fr 1fr}.g4{grid-template-columns:repeat(4,1fr)}
+.pcard{cursor:pointer;transition:transform .12s,box-shadow .12s;position:relative}
+.pcard:hover{transform:translateY(-2px);box-shadow:var(--sh2)}
+.pcard .em{width:38px;height:38px;border-radius:9px;display:grid;place-items:center;font-size:20px;background:var(--surface2)}
+.pcard h2{margin:0}.pcard .cl{color:var(--text3);font-size:12px}
+.pcard .meta{display:flex;gap:14px;margin-top:14px;font-size:12px;color:var(--text2)}
+.pcard .meta b{display:block;color:var(--text);font-size:15px}
+.pcard .foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.newp{border:1.5px dashed var(--border-strong);background:transparent;display:grid;place-items:center;color:var(--text2);min-height:190px;font-weight:600;box-shadow:none}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:14px 0 20px}
+.tabs a{padding:9px 14px;color:var(--text2);font-weight:600;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}
+.tabs a.on{color:var(--text);border-color:var(--text)}
+.tabs a.grokt.on{color:var(--grok-fg);border-color:var(--grok)}
+.kpi{padding:14px 16px}
+.kpi .l{font-size:12px;color:var(--text2);font-weight:600}
+.kpi .v{font-size:26px;font-weight:700;margin:2px 0;letter-spacing:-.3px}
+.kpi .d{font-size:12px;color:var(--text3)}
+.kpi .d.up{color:var(--ok)}.kpi .d.dn{color:var(--bad)}
+.chart{position:relative}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart .ttl{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.chart .ttl b{font-size:13px}
+.chart .ttl span{font-size:12px;color:var(--text3)}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--text2);margin-top:6px}
+.legend i{width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:-1px}
+.tip{position:absolute;pointer-events:none;background:var(--text);color:var(--bg);font-size:12px;padding:6px 9px;border-radius:6px;white-space:nowrap;display:none;z-index:3;box-shadow:var(--sh2)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:8px 10px;border-bottom:1px solid var(--border);font-weight:700}
+td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.th{width:34px;height:44px;border-radius:4px;background:linear-gradient(180deg,#dfe4ec,#c9d0da);border:1px solid var(--border);display:inline-block;vertical-align:middle}
+.pl{width:14px;height:14px;border-radius:4px;display:inline-block;vertical-align:-2px}
+.pl.x{background:var(--x)}.pl.fb{background:var(--fb)}.pl.ig{background:linear-gradient(135deg,#f9ce34,#ee2a7b,#6228d7)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.muted{color:var(--text3)}
+.src{display:flex;gap:14px;align-items:center;padding:14px 16px}
+.src .ic{width:40px;height:40px;border-radius:9px;display:grid;place-items:center;font-weight:800;font-size:13px}
+.src .ic.gs{background:#e6f4ea;color:#188038}.src .ic.xl{background:#e8f0e3;color:#1d6f42}.src .ic.pt{background:var(--surface2);color:var(--text2)}
+.src .t{flex:1}
+.src .t b{display:block}
+.src .t span{font-size:12px;color:var(--text2)}
+.diff{display:inline-flex;gap:8px;font-size:12px}
+.diff b{padding:1px 7px;border-radius:4px}
+.diff .p{background:var(--ok-bg);color:var(--ok)}.diff .m{background:var(--bad-bg);color:var(--bad)}.diff .c{background:var(--warn-bg);color:var(--warn)}
+.log{font-size:12px;color:var(--text2);display:grid;gap:6px}
+.log div{display:flex;gap:10px}
+.log time{color:var(--text3);width:110px;flex:none}
+.styles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.scard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px;cursor:pointer;box-shadow:var(--sh);position:relative;transition:transform .12s}
+.scard:hover{transform:translateY(-2px)}
+.scard.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-bg)}
+.scard .tick{position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:none;place-items:center;font-size:12px}
+.scard.on .tick{display:grid}
+.thumb{aspect-ratio:4/3;background:var(--surface2);border-radius:6px;border:1px solid var(--border);display:grid;place-items:center;padding:10px;margin-bottom:8px;overflow:hidden}
+.page{background:#fff;border:1px solid #d5d9df;width:100%;height:100%;padding:7%;display:grid;gap:5%;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.page.wide{aspect-ratio:16/9;height:auto;align-self:center;grid-template-columns:1.2fr 1fr}
+.page.two{grid-template-columns:1fr 1fr}
+.page.six{grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr 1fr}
+.page.dark{background:#1b2440;border-color:#1b2440}
+.page.dark .shot{background:#3a4a76}
+.shot{background:linear-gradient(180deg,#e2e6ee,#cfd5df);border-radius:4px}
+.scard b{display:block;font-size:13px}
+.scard .m{font-size:11px;color:var(--text3);display:flex;gap:6px;flex-wrap:wrap;margin-top:3px}
+.scard .m span{background:var(--surface2);border-radius:4px;padding:0 5px}
+.out{display:flex;gap:6px;margin-top:8px}
+.out label{font-size:11px;border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--text2)}
+.out label.on{background:var(--accent-bg);color:var(--accent-fg);border-color:transparent}
+.sticky{position:sticky;bottom:0;margin:20px -28px -80px;padding:14px 28px;background:var(--surface);border-top:1px solid var(--border);display:flex;gap:14px;align-items:center;z-index:4}
+.sticky input{flex:1;max-width:340px;padding:9px 12px;border:1px solid var(--border-strong);border-radius:var(--r-sm);font:inherit;background:var(--surface);color:var(--text)}
+/* runs */
+.status{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:12px}
+.prog{height:8px;background:var(--border);border-radius:4px;overflow:hidden;width:160px}
+.prog b{display:block;height:100%;background:var(--accent)}
+/* grok studio */
+.studio{display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start}
+.drop{border:1.5px dashed var(--border-strong);border-radius:var(--r);padding:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.samp{width:64px;height:84px;border-radius:5px;border:1px solid var(--border);background:#fff;position:relative;overflow:hidden;box-shadow:var(--sh)}
+.samp i{position:absolute;left:8px;right:8px;background:#d5dbe6;border-radius:2px}
+.samp em{position:absolute;bottom:3px;left:0;right:0;text-align:center;font-size:9px;color:var(--text3);font-style:normal}
+.samp.add{display:grid;place-items:center;color:var(--text3);font-size:22px;border-style:dashed;background:transparent;box-shadow:none}
+.chat{display:flex;flex-direction:column;height:560px}
+.chat .msgs{flex:1;overflow:auto;display:grid;gap:10px;align-content:start;padding-right:4px}
+.msg{max-width:88%;padding:9px 12px;border-radius:12px;font-size:13px;line-height:1.45}
+.msg.u{background:var(--accent-bg);color:var(--accent-fg);justify-self:end;border-bottom-right-radius:4px}
+.msg.g{background:var(--surface2);border-bottom-left-radius:4px}
+.msg.g:before{content:"Grok";display:block;font-size:10px;font-weight:700;color:var(--grok-fg);letter-spacing:.4px;margin-bottom:2px}
+.msg.v{font-style:italic;color:var(--text2)}
+.chat .in{display:flex;gap:8px;margin-top:10px;align-items:center}
+.chat .in input{flex:1;padding:10px 12px;border:1px solid var(--border-strong);border-radius:var(--r-sm);font:inherit;background:var(--surface);color:var(--text)}
+.mic{width:38px;height:38px;border-radius:50%;border:1px solid var(--border-strong);background:var(--surface);display:grid;place-items:center;cursor:pointer;font-size:16px}
+.mic.rec{background:var(--bad);border-color:var(--bad);color:#fff;animation:pulse2 1s infinite}
+@keyframes pulse2{50%{box-shadow:0 0 0 8px rgba(220,38,38,.15)}}
+.prop{border:1px solid var(--grok);border-radius:var(--r);padding:14px;background:var(--surface)}
+.prop .h{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.prop .h b{font-size:14px}
+.side{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pv{background:var(--surface2);border-radius:8px;padding:10px;text-align:center;font-size:11px;color:var(--text3)}
+.pv .page{aspect-ratio:16/9;height:auto;margin-bottom:6px;position:relative;display:block;padding:0}
+.slot{position:absolute;border:1.5px solid;border-radius:3px;font-size:8px;display:grid;place-items:center;font-weight:700}
+.slot.s{border-color:var(--s1);color:var(--s1);background:rgba(42,120,214,.08)}
+.slot.t{border-color:var(--s2);color:var(--s2);background:rgba(235,104,52,.08)}
+.slot.m{border-color:var(--s3);color:var(--s3);background:rgba(27,175,122,.08)}
+.conf{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.conf span{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text2)}
+.conf span i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;background:var(--ok)}
+.conf span.w i{background:var(--warn)}
+.mem{display:grid;gap:8px}
+.mem div{display:flex;gap:8px;align-items:flex-start;font-size:13px;padding:8px 10px;background:var(--surface2);border-radius:8px}
+.mem div span{flex:1}
+.mem div u{text-decoration:none;color:var(--text3);cursor:pointer}
+/* modal */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;place-items:center;z-index:20}
+.ov.on{display:grid}
+.modal{width:760px;max-width:94vw;background:var(--surface);border-radius:14px;padding:22px;box-shadow:var(--sh2);max-height:90vh;overflow:auto}
+.modal h2{font-size:18px}
+.steps{display:grid;gap:8px;margin:14px 0}
+.steps div{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--text2)}
+.steps div b{width:20px;height:20px;border-radius:50%;border:2px solid var(--border-strong);display:grid;place-items:center;font-size:11px;color:transparent}
+.steps div.done b{background:var(--ok);border-color:var(--ok);color:#fff}
+.steps div.now b{border-color:var(--grok);border-style:dashed}
+.ins{background:var(--grok-bg);border-radius:10px;padding:14px;color:var(--text);font-size:13px}
+.ins h4{margin:0 0 6px;font-size:13px;color:var(--grok-fg)}
+.tag{font-size:11px;padding:1px 7px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);color:var(--text2)}
+.view{display:none}.view.on{display:block}
+select,.sel{appearance:none;-webkit-appearance:none;padding:7px 30px 7px 11px;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a93a1'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--text);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+select.big{font-size:14px;padding:8px 32px 8px 12px}
+.chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--text2);cursor:pointer;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface)}
+.chk input{accent-color:var(--accent);margin:0}
+.chk.on{border-color:var(--accent);color:var(--accent-fg);background:var(--accent-bg)}
+.menu{position:relative;display:inline-block}
+.menu>summary{list-style:none;cursor:pointer}
+.menu>summary::-webkit-details-marker{display:none}
+.menu .dd{position:absolute;right:0;top:calc(100% + 6px);min-width:220px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh2);padding:6px;z-index:8;display:grid;gap:2px}
+.menu .dd a{padding:8px 10px;border-radius:6px;font-size:13px;display:flex;gap:10px;align-items:center;cursor:pointer}
+.menu .dd a:hover{background:var(--surface2)}
+.menu .dd a small{color:var(--text3);margin-left:auto}
+.menu .dd .sec{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:8px 10px 2px;font-weight:700}
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.filters .lab{font-size:12px;color:var(--text3);font-weight:600;margin-left:6px}
+/* studio v2 */
+.studio2{display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start}
+.chat2{height:calc(100vh - 200px);min-height:640px;display:flex;flex-direction:column;padding:0;overflow:hidden}
+.chat2 .head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);font-size:13px}
+.chat2 .msgs{flex:1;overflow:auto;padding:20px 22px;display:grid;gap:14px;align-content:start}
+.chat2 .msg{max-width:78%}
+.chat2 .composer{padding:12px 16px 14px;border-top:1px solid var(--border);background:var(--surface)}
+.composer .box{border:1px solid var(--border-strong);border-radius:12px;padding:10px 12px;display:grid;gap:8px;background:var(--surface)}
+.composer textarea{border:0;outline:0;resize:none;font:inherit;font-size:14px;background:transparent;color:var(--text);min-height:44px}
+.composer .tools{display:flex;gap:6px;align-items:center}
+.composer .tools .btn{padding:5px 9px}
+.attach{display:inline-flex;gap:6px;align-items:center;font-size:12px;background:var(--surface2);border-radius:6px;padding:3px 8px;color:var(--text2)}
+.rail{display:grid;gap:12px;position:sticky;top:72px}
+.rail details{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh)}
+.rail summary{list-style:none;cursor:pointer;padding:12px 14px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px}
+.rail summary::-webkit-details-marker{display:none}
+.rail summary .n{margin-left:auto;font-size:11px;color:var(--text3);font-weight:600;background:var(--surface2);border-radius:999px;padding:1px 7px}
+.rail summary:before{content:"▸";color:var(--text3);font-size:11px;transition:.15s}
+.rail details[open] summary:before{transform:rotate(90deg)}
+.rail .body{padding:0 14px 14px}
+.samps{display:flex;gap:8px;flex-wrap:wrap}
+.samps .samp{width:52px;height:68px}
+.plist{display:grid;gap:6px}
+.plist a{display:flex;gap:8px;align-items:center;font-size:13px;padding:8px 10px;border-radius:8px;background:var(--surface2);cursor:pointer}
+.plist a.on{outline:1.5px solid var(--grok)}
+.plist a small{margin-left:auto;color:var(--text3)}
+.pcard2{border:1px solid var(--grok);border-radius:12px;padding:14px;background:var(--surface);max-width:92% !important}
+.keybox{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;gap:10px;align-items:center}
+.keybox code{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grid>*{min-width:0}
+pre{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;margin:0;line-height:1.5}
+.ep{display:grid;grid-template-columns:70px 1fr auto;gap:10px;font-size:13px;padding:8px 0;border-bottom:1px solid var(--border);align-items:center}
+.ep:last-child{border-bottom:0}
+.ep b{font-size:11px;padding:2px 6px;border-radius:4px;text-align:center}
+.ep b.post{background:var(--accent-bg);color:var(--accent-fg)}.ep b.get{background:var(--ok-bg);color:var(--ok)}
+
+.note{font-size:12px;color:var(--text3);margin-top:8px}
+.tog{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);cursor:pointer}
+.tog i{width:34px;height:20px;border-radius:10px;background:var(--border-strong);position:relative;transition:.15s}
+.tog i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.15s}
+.tog.on i{background:var(--ok)}.tog.on i:after{left:16px}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:13px;display:none;z-index:30}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="brand"><i></i>VedicReport <small>v3</small></div>
+    <div class="crumb" id="crumb"></div>
+    <div class="spacer"></div>
+    <span class="pill ok"><span class="dot live"></span> Sheet sync live</span>
+    <span class="pill grok">✦ Grok connected</span>
+    <span class="pill"><span class="dot ok"></span> 6/8 browser contexts</span>
+    <button class="btn ghost" onclick="toggleTheme()" title="Theme">◐</button>
+    <div class="avatar">TT</div>
+  </div>
+
+  <nav class="nav" id="nav">
+    <div class="sec">Project</div>
+    <div class="pdrop" id="pdrop">
+      <button onclick="document.getElementById('pdrop').classList.toggle('open')"><span id="pdrop-name">🪔 Kashi Ke Wasi — Monthly</span><span class="car">▼</span></button>
+      <div class="list" id="pdrop-list"></div>
+    </div>
+    <a data-go="overview" class="active">Overview</a>
+    <a data-go="sources">Sources</a>
+    <a data-go="pstyles">Styles</a>
+    <a data-go="runs">Runs</a>
+    <a data-go="grok" class="grokn">✦ Grok Studio <span class="k">G</span></a>
+    <a data-go="api">API</a>
+    <a data-go="settings">Settings</a>
+    <div class="sec">Library</div>
+    <a data-go="pool">◫ Style pool <span class="k">S</span></a>
+    <div class="sec">Admin</div>
+    <a>Users &amp; roles</a>
+    <a>Health &amp; capture</a>
+    <div class="foot">Capture cache · 71% hits this week<div class="bar"><b style="width:71%"></b></div>Server idle 94% · no warm-ups</div>
+  </nav>
+
+  <main class="main">
+
+  <!-- ============ OVERVIEW ============ -->
+  <section class="view" id="v-overview">
+    <div class="row" style="justify-content:space-between">
+      <div><h1 id="ptitle">Kashi Ke Wasi — Monthly</h1><p class="sub" style="margin:0">Client: Kashi Ke Wasi · combined X + FB + IG · sheet-synced · runs on sheet change</p></div>
+      <div class="row">
+        <button class="btn" onclick="go('grok')">✦ Grok Studio</button>
+        <button class="btn primary" onclick="go('pstyles')">▶ New run</button>
+      </div>
+    </div>
+        <div class="filters">
+      <label class="chk" id="mtog" onclick="this.classList.toggle('on');document.getElementById('metrics').style.display=this.classList.contains('on')?'block':'none'"><input type="checkbox"> Show metrics &amp; charts <span class="muted">(optional)</span></label>
+      <span class="lab">Run</span><select><option>#12 · 14 Aug</option><option>#11 · 15 Jul</option><option>#10 · 12 Jul</option></select>
+      <span class="lab">Platform</span><select><option>All</option><option>X</option><option>Facebook</option><option>Instagram</option></select>
+      <span class="lab">Section</span><select><option>All</option><option>Ganga Aarti</option><option>Festivals</option><option>Food</option><option>Heritage</option><option>Reels</option></select>
+      <span class="spacer"></span><span class="pill warn">Sheet changed · 7 new links since #12</span>
+    </div>
+    <div id="metrics" style="display:none">
+    <div class="grid g4" style="margin-bottom:14px">
+      <div class="card kpi"><div class="l">Posts captured</div><div class="v">184</div><div class="d up">▲ 12 vs run #11</div></div>
+      <div class="card kpi"><div class="l">Handles</div><div class="v">37</div><div class="d">3 new this run</div></div>
+      <div class="card kpi"><div class="l">Avg impressions (sheet)</div><div class="v">41.2k</div><div class="d dn">▼ 8% vs run #11</div></div>
+      <div class="card kpi"><div class="l">Skipped</div><div class="v">3</div><div class="d">2 deleted · 1 age-gated</div></div>
+    </div>
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card chart"><div class="ttl"><b>Posts by section</b><span>run #12 · hover for values</span></div><div id="c-sec"></div><div class="tip"></div></div>
+      <div class="card chart"><div class="ttl"><b>Platform mix per run</b><span>last 6 runs</span></div><div id="c-mix"></div>
+        <div class="legend"><span><i style="background:var(--s1)"></i>X</span><span><i style="background:var(--s2)"></i>Facebook</span><span><i style="background:var(--s3)"></i>Instagram</span></div><div class="tip"></div></div>
+    </div>
+    <div class="card chart" style="margin-bottom:14px"><div class="ttl"><b>Posts captured per run</b><span>Mar → Aug</span></div><div id="c-line"></div><div class="tip"></div></div>
+    </div>
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h3>Last outputs · run #12</h3>
+        <table><tr><td>Combined report (16:9)</td><td class="muted">PDF · PPTX · <span class="pill acc" style="padding:1px 7px">web</span></td></tr>
+        <tr><td>Twitter Report (letter)</td><td class="muted">PDF · DOCX</td></tr>
+        <tr><td>Enriched · Insights page</td><td><span class="pill grok" style="padding:1px 7px">✦ on</span></td></tr>
+        <tr><td>Screenshots.zip</td><td class="muted">184 files · 61% from cache</td></tr></table>
+        <div class="row" style="margin-top:12px"><button class="btn sm">Open web report</button><button class="btn sm ghost">Share link</button></div>
+      </div>
+      <div class="card">
+        <h3>Next run</h3>
+        <table><tr><td>Source</td><td>Google Sheet · tab “Aug 2026” <span class="pill ok" style="padding:1px 7px"><span class="dot live"></span> synced</span></td></tr>
+        <tr><td>Links</td><td>191 · 4 duplicates · 1 rejected (row 63)</td></tr>
+        <tr><td>Styles</td><td>3 selected → 7 files</td></tr>
+        <tr><td>Estimate</td><td>~9 min · 118 cache hits</td></tr></table>
+        <div class="row" style="margin-top:12px"><button class="btn primary sm" onclick="startRun()">▶ Generate now</button><button class="btn sm ghost" onclick="go('sources')">Check sources</button></div>
+      </div>
+    </div>
+    <p class="note">Post-level metrics (likes, impressions per post) come later with the backend work — hidden for now.</p>
+  </section>
+
+  <!-- ============ SOURCES ============ -->
+  <section class="view" id="v-sources">
+    <div class="row" style="justify-content:space-between"><div><h1>Sources</h1><p class="sub" style="margin:0">Where the links come from. A Google Sheet stays in sync; uploads and pastes are kept as versions.</p></div>
+      <details class="menu"><summary class="btn primary">+ Add source ▾</summary><div class="dd">
+        <a onclick="toast('Paste a published-CSV link → pick tab → map columns')">📗 Google Sheet <small>live sync</small></a>
+        <a onclick="toast('Upload .xlsx / .xls / .csv / .tsv')">📊 Upload Excel / CSV</a>
+        <a onclick="toast('Paste messy text — links are extracted')">¶ Paste links</a>
+        <a onclick="toast('One link, added to the next run')">🔗 Single link</a>
+        <div class="sec">Coming</div><a class="muted">Notion · Airtable · private Sheets (OAuth)</a></div></details></div>
+        <div class="grid" style="gap:10px">
+      <div class="card src"><div class="ic gs">GS</div><div class="t"><b>Kashi monthly links — tab “Aug 2026” <span class="pill ok" style="margin-left:6px"><span class="dot live"></span> synced 4 min ago</span></b><span class="mono">docs.google.com/…/pub?gid=1834…&amp;output=csv</span><br><span>Columns: Section=A · Handle=B · Link=C · Like=D · Impressions=E · Reach=G &nbsp;·&nbsp; every 5 min while open, hourly idle · ETag + hash</span></div>
+        <div style="text-align:right"><div class="diff"><b class="p">+7 links</b><b class="m">−1</b><b class="c">3 metrics changed</b></div><div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm" onclick="toast('Fetched · unchanged since 4 min ago (ETag hit, no parse)')">Sync now</button><button class="btn sm ghost">Mapping</button></div></div></div>
+      <div class="card src"><div class="ic xl">XL</div><div class="t"><b>fake-accounts-july.xlsx</b><span>v3 · uploaded 12 Aug by Tilak · 61 links · used in run #10</span></div><div class="row"><button class="btn sm ghost">Versions (3)</button><button class="btn sm ghost">Replace</button></div></div>
+      <div class="card src"><div class="ic pt">¶</div><div class="t"><b>Pasted list — 9 Aug</b><span>14 links extracted from messy text · 2 duplicates dropped</span></div><button class="btn sm ghost">Open</button></div>
+      
+    </div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card"><h3>Sync log</h3><div class="log">
+        <div><time>Today 14:02</time><span>Sheet changed → preview re-run · +7 −1 · 3 metric cells · run queued (on-change)</span></div>
+        <div><time>Today 13:57</time><span>ETag unchanged · skipped</span></div>
+        <div><time>Yesterday</time><span>Idle → hourly cadence</span></div>
+        <div><time>14 Aug 09:10</time><span>Run #12 built from snapshot <span class="mono">a91f…c2</span></span></div></div></div>
+      <div class="card"><h3>Preview of next run</h3><table><tr><td>Rows</td><td><b>191</b></td></tr><tr><td>Duplicates</td><td>4 (rows 22, 87, 88, 140)</td></tr><tr><td>Rejected</td><td>1 — row 63: <span class="mono">youtube.com/…</span> not a supported link</td></tr><tr><td>Sections</td><td>Ganga Aarti · Festivals · Food · Heritage · Reels</td></tr><tr><td>Est. capture</td><td>~9 min · 118 cache hits</td></tr></table></div>
+    </div>
+  </section>
+
+  <!-- ============ PROJECT STYLES ============ -->
+  <section class="view" id="v-pstyles">
+    <h1>Styles for this project</h1><p class="sub">Pick one or more from the pool. One capture, every selected style is built from it.</p>
+        <div class="filters"><span class="pill acc" id="selcount">3 selected</span><button class="btn sm" onclick="go('pool')">Pick from pool →</button><span class="spacer"></span>
+      <span class="lab">Options</span>
+      <label class="chk on" onclick="this.classList.toggle('on')"><input type="checkbox" checked> ✦ Enrich after build</label>
+      <label class="chk on" onclick="this.classList.toggle('on')"><input type="checkbox" checked> Reuse cached screenshots</label>
+      <label class="chk" onclick="this.classList.toggle('on')"><input type="checkbox"> Keep engagement line</label>
+      <label class="chk" onclick="this.classList.toggle('on')"><input type="checkbox"> Dedupe across sections</label></div>
+    <div class="styles" id="pstyle-grid"></div>
+    <div class="sticky"><input value="Kashi Ke Wasi — August 2026"><span class="muted" style="font-size:12px">191 links · 3 styles → 7 files · ~9 min · Enrich +~40 s</span><span class="spacer"></span><button class="btn lg primary" onclick="startRun()">Generate</button></div>
+  </section>
+
+  <!-- ============ RUNS ============ -->
+  <section class="view" id="v-runs">
+    <h1>Runs</h1><p class="sub">Every run records the source snapshot it was built from, so it can be regenerated exactly.</p>
+        <div class="card" style="padding:0">
+      <table><thead><tr><th>#</th><th>When</th><th>Trigger</th><th>Links</th><th>Styles</th><th>Status</th><th>Enriched</th><th></th></tr></thead><tbody id="runrows">
+      <tr id="liverun" style="display:none"><td>13</td><td>now</td><td>manual</td><td>191</td><td>3</td><td><span class="status"><span class="dot live"></span> capturing <div class="prog"><b id="lp" style="width:5%"></b></div><span id="lpt">9/191</span></span></td><td>—</td><td><button class="btn sm ghost">Open</button></td></tr>
+      <tr><td>12</td><td>14 Aug 09:10</td><td>sheet change</td><td>184</td><td>3</td><td><span class="status" style="color:var(--ok)">● done · 3 skipped</span></td><td><span class="pill grok" style="padding:1px 7px">✦ yes</span></td><td><button class="btn sm ghost">Open</button> <button class="btn sm ghost">Compare ▾</button></td></tr>
+      <tr><td>11</td><td>15 Jul 10:40</td><td>schedule</td><td>172</td><td>3</td><td><span class="status" style="color:var(--ok)">● done</span></td><td class="muted">no</td><td><button class="btn sm ghost">Open</button> <button class="btn sm grok" onclick="openEnrich()">✦ Enrich</button></td></tr>
+      <tr><td>10</td><td>12 Jul 17:02</td><td>manual (xlsx)</td><td>61</td><td>1</td><td><span class="status" style="color:var(--ok)">● done</span></td><td class="muted">no</td><td><button class="btn sm ghost">Open</button></td></tr>
+      <tr><td>9</td><td>14 Jun 09:00</td><td>schedule</td><td>168</td><td>2</td><td><span class="status" style="color:var(--warn)">● done · 9 skipped</span></td><td class="muted">no</td><td><button class="btn sm ghost">Open</button></td></tr>
+      </tbody></table></div>
+    <div class="card" style="margin-top:14px"><h3>Compare #12 vs #11 (Grok summary)</h3><div class="ins"><h4>✦ What changed</h4>Posts +12 (Reels section doubled to 24). Average impressions fell 8%, driven by Festivals (−22%) while Ganga Aarti held. 3 new handles appeared (@banaras.diaries strongest). Two posts from run #11 were deleted upstream and are flagged in the skipped list.</div></div>
+  </section>
+
+  <!-- ============ GROK STUDIO ============ -->
+  <section class="view" id="v-grok">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px"><div><h1>✦ Grok Studio</h1><p class="sub" style="margin:0">Chat is per project — samples, proposals, memory and sessions here belong to the selected project only. Switch project in the left bar to switch context.</p></div>
+      <div class="row"><span class="pill acc" id="grokproj">🪔 Kashi Ke Wasi — Monthly</span><select><option>grok-4 (vision)</option><option>grok-4-fast</option></select></div></div>
+    <div class="studio2">
+      <div class="card chat2">
+        <div class="head"><span class="pill grok">✦ Template session · Kashi navy 16:9</span><span class="muted">6 samples · Proposal 3 live</span><span class="spacer"></span><label class="chk" onclick="this.classList.toggle('on')"><input type="checkbox"> read replies aloud</label><details class="menu"><summary class="btn sm ghost">⋯</summary><div class="dd"><a>New session</a><a>Rename</a><a>Export thread</a><a class="muted">Clear memory for this session</a></div></details></div>
+        <div class="msgs" id="msgs">
+          <div class="msg g">I read the 6 samples (23 pages). They share one layout — I drafted <b>Proposal 1</b>. Fonts I'm unsure of; the header looks like Poppins.</div>
+          <div class="msg u">Metric pills smaller, and the cover must show the client name in Hindi.</div>
+          <div class="msg g">Done → <b>Proposal 2</b>: pills at 7% height, cover title in a Devanagari-capable face (Noto Sans Devanagari). Saved to memory: <i>“cover client name in Devanagari”</i>.</div>
+          <div class="msg u v">🎙 “add page number bottom right and use the July one as reference for the summary table”</div>
+          <div class="msg g">Added page counter, summary table copied from Jul.pdf p.2 (4 columns by section). <b>Proposal 3</b> passes the validator:</div>
+          <div class="msg g pcard2">
+            <div class="row" style="justify-content:space-between;margin-bottom:10px"><b>✦ Proposal 3 — “Navy band, 16:9, metrics as pills”</b><span class="pill ok">validator: pass</span></div>
+            <div class="side">
+              <div class="pv"><div class="page dark" style="border-radius:4px"><div class="slot s" style="left:5%;top:14%;width:52%;height:78%">screenshot</div><div class="slot t" style="left:60%;top:14%;width:35%;height:9%">account</div><div class="slot t" style="left:60%;top:25%;width:20%;height:7%">section</div><div class="slot m" style="left:60%;top:36%;width:35%;height:9%">metrics</div><div class="slot t" style="left:60%;top:48%;width:14%;height:8%">LINK</div><div class="slot t" style="left:82%;top:86%;width:13%;height:7%">page</div></div>Slots read from Jul.pdf p.3</div>
+              <div class="pv"><div class="page dark" style="border-radius:4px;padding:0"><div style="position:absolute;inset:0;background:linear-gradient(180deg,#1b2440 0 12%,#f6f7fb 12% 100%);border-radius:4px"></div><div class="shot" style="position:absolute;left:5%;top:14%;width:52%;height:78%;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.25)"></div><div style="position:absolute;left:60%;top:16%;font-size:9px;font-weight:700;color:#1b2440">@kashikewasi</div><div style="position:absolute;left:60%;top:26%;font-size:7px;color:#5b6472">Ganga Aarti · X</div><div style="position:absolute;left:60%;top:37%;display:flex;gap:3px"><span style="font-size:6px;background:#1b2440;color:#fff;border-radius:8px;padding:1px 5px">Like 676</span><span style="font-size:6px;background:#1b2440;color:#fff;border-radius:8px;padding:1px 5px">Impr 63.9k</span></div><div style="position:absolute;left:60%;top:49%;font-size:6px;border:1px solid #1b2440;border-radius:3px;padding:1px 4px;color:#1b2440">LINK</div><div style="position:absolute;right:5%;bottom:6%;font-size:6px;color:#8a93a1">Post 3 / 184</div></div>Rendered by the real renderer</div>
+            </div>
+            <div class="conf"><span><i></i>16:9 · 98%</span><span><i></i>6 slots · 94%</span><span><i></i>navy #1b2440 · 97%</span><span class="w"><i></i>font “Poppins?” · 61%</span><span><i></i>cover + summary + post + end</span></div>
+            <div class="row"><button class="btn primary sm" onclick="toast('Saved to Style pool as “Kashi navy 16:9” and added to this project')">Save to pool + use in project</button><button class="btn sm">Open in designer</button><button class="btn sm ghost">Show slot list</button><button class="btn sm ghost">Undo to Proposal 2</button></div>
+          </div>
+        </div>
+        <div class="composer"><div class="box">
+          <div class="row" style="gap:6px"><span class="attach">📎 Jul.pdf</span><span class="attach">📎 +5 samples</span><span class="attach">🧠 memory · 5 facts</span></div>
+          <textarea id="chatin" placeholder="Ask Grok to change the look, learn a new template, or explain a run… (Enter to send, Shift+Enter for a new line)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+          <div class="tools"><button class="btn ghost" title="Attach sample report" onclick="toast('Attach PDF / PPTX / DOCX / PNG — added to Samples in the rail')">📎</button><button class="btn ghost" id="mic" onclick="mic()" title="Push to talk">🎙</button>
+            <select style="padding:5px 26px 5px 9px;font-size:12px"><option>Mode: Template design</option><option>Mode: Enrich a run</option><option>Mode: Ask about data</option></select>
+            <span class="spacer"></span><span class="muted" style="font-size:12px">12.4k tokens · ≈ $0.31 this project</span><button class="btn grok" onclick="send()">Send ↑</button></div>
+        </div></div>
+      </div>
+      <aside class="rail">
+        <details open><summary>Samples <span class="n">6 / 10</span></summary><div class="body">
+          <div class="samps">
+            <div class="samp"><i style="top:6px;height:8px;background:#1b2440"></i><i style="top:20px;height:32px"></i><em>Jul.pdf</em></div>
+            <div class="samp"><i style="top:6px;height:8px;background:#1b2440"></i><i style="top:20px;height:32px"></i><em>Jun.pdf</em></div>
+            <div class="samp"><i style="top:6px;height:8px;background:#1b2440"></i><i style="top:20px;height:32px"></i><em>May.pptx</em></div>
+            <div class="samp"><i style="top:6px;height:8px;background:#7a1f2b"></i><i style="top:20px;height:32px"></i><em>Diwali</em></div>
+            <div class="samp"><i style="top:8px;height:42px"></i><em>cover.png</em></div>
+            <div class="samp"><i style="top:6px;height:8px;background:#1b2440"></i><i style="top:20px;height:32px"></i><em>Apr.pdf</em></div>
+            <div class="samp add">+</div></div>
+          <div class="note">23 / 40 pages rasterised · Grok reads layout, colours, fonts — never numbers.</div></div></details>
+        <details open><summary>Proposals <span class="n">3</span></summary><div class="body"><div class="plist">
+          <a class="on">✦ Proposal 3 · navy 16:9 <small>pass</small></a><a>Proposal 2 <small>pass</small></a><a>Proposal 1 <small>1 fix</small></a></div>
+          <div class="note">Each proposal is a normal style JSON — open any in the designer.</div></div></details>
+        <details open><summary>Memory <span class="n">5 facts</span></summary><div class="body"><div class="mem">
+          <div><span>Prefers 16:9; navy #1b2440 brand band</span><u>✎</u></div>
+          <div><span>Cover: client name in Devanagari</span><u>✎</u></div>
+          <div><span>No engagement counts on the Twitter (letter) report</span><u>✎</u></div>
+          <div><span>Metric labels: “Like”, “Post Impression”, “Reach/views”</span><u>✎</u></div>
+          <div><span>Insights tone: short, factual, Hindi section names kept</span><u>✎</u></div></div>
+          <div class="note">Summarised from the thread every ~30 turns; editable; the raw thread is kept.</div></div></details>
+        <details><summary>Project context <span class="n">auto</span></summary><div class="body" style="font-size:13px;color:var(--text2)">Sources: Sheet “Aug 2026” · Styles: 3 · Last run #12 (184 posts) · Sections: Ganga Aarti, Festivals, Food, Heritage, Reels</div></details>
+        <details><summary>Sessions · this project <span class="n">4</span></summary><div class="body"><div class="plist"><a class="on">Template · Kashi navy 16:9<small>today</small></a><a>Enrich · run #12<small>14 Aug</small></a><a>Why did Festivals drop?<small>15 Jul</small></a><a>Template · first try<small>Jun</small></a></div></div></details>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="view" id="v-settings">
+    <h1>Project settings</h1><p class="sub">Name, schedule, share, budget.</p>
+        <div class="grid g2">
+      <div class="card"><h3>General</h3><table><tr><td>Name</td><td>Kashi Ke Wasi — Monthly</td></tr><tr><td>Client</td><td>Kashi Ke Wasi</td></tr><tr><td>Report name pattern</td><td class="mono">{client} — {month} {year}</td></tr><tr><td>Screenshot cache</td><td>reuse ≤ 7 days <span class="muted">(toggle “always fresh”)</span></td></tr></table></div>
+      <div class="card"><h3>Schedule & sync</h3><table><tr><td>Run</td><td>on sheet change (debounced 10 min)</td></tr><tr><td>Sync cadence</td><td>5 min active · 60 min idle · pause after 14 days</td></tr><tr><td>Notify</td><td>email Tilak when a run finishes</td></tr></table></div>
+      <div class="card"><h3>Share</h3><table><tr><td>Web report link</td><td class="mono">report.vedictech.in/p/kashi/…3f9a</td></tr><tr><td>Access</td><td>read-only · secret URL · revocable</td></tr></table></div>
+      <div class="card"><h3>Budget & danger zone</h3><table><tr><td>Storage</td><td>412 MB / 1 GB · oldest runs pruned first</td></tr><tr><td>Grok tokens (month)</td><td>12.4k · ≈ $0.31</td></tr><tr><td>API</td><td>1 live key · see API tab</td></tr></table><div class="row" style="margin-top:12px"><button class="btn sm danger">Archive project</button></div></div>
+    </div>
+  </section>
+
+  <!-- ============ API ============ -->
+  <section class="view" id="v-api">
+    <h1>API</h1><p class="sub">Let another platform send links to <b>this project</b> and get its report back. One key, one call.</p>
+    <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
+      <div class="grid" style="gap:14px">
+        <div class="card"><h3>1 · Your key for this project</h3>
+          <div class="keybox"><code id="apikey">vr_kashi_9f2c••••••••••••••••••••b71e</code><button class="btn sm" onclick="toast('Copied')">Copy</button><button class="btn sm ghost" onclick="toast('New key generated · old key stops working')">Regenerate</button></div>
+          <div class="note">Only this project's report can be made with it. Regenerate to cut off anyone using the old key.</div></div>
+        <div class="card"><h3>2 · Send links</h3>
+<pre>POST https://report.vedictech.in/v1/run
+Authorization: Bearer vr_kashi_…
+
+{ "links": [
+    "https://x.com/…/status/…",
+    "https://instagram.com/p/…"
+  ] }
+
+→ { "run_id": "run_7f31", "status": "queued" }</pre>
+          <div class="note">Optional fields: <span class="mono">"name"</span> for the report title, <span class="mono">"section"</span> per link, <span class="mono">"webhook"</span> to be called when done.</div></div>
+        <div class="card"><h3>3 · Get the report</h3>
+<pre>GET https://report.vedictech.in/v1/run/run_7f31
+
+→ { "status": "done",
+    "pdf":  "https://…/Kashi-Aug-2026.pdf",
+    "pptx": "https://…/Kashi-Aug-2026.pptx",
+    "web":  "https://…/Kashi-Aug-2026.html" }</pre>
+          <div class="note">Poll this, or give a webhook in step 2 and we call you. Links expire after 7 days.</div></div>
+      </div>
+      <div class="grid" style="gap:14px">
+        <div class="card"><h3>What the caller gets</h3><table>
+          <tr><td>Styles</td><td>the 3 selected in this project</td></tr>
+          <tr><td>Files</td><td>PDF · PPTX / DOCX · web</td></tr>
+          <tr><td>Enrich</td><td><label class="chk on" onclick="this.classList.toggle('on')"><input type="checkbox" checked> include Insights page</label></td></tr>
+          <tr><td>Limit</td><td>200 links per call · 60 calls / hour</td></tr></table>
+          <div class="note">Change styles on the Styles page — the API follows the project.</div></div>
+        <div class="card"><h3>Try it (no capture)</h3><p style="font-size:13px;color:var(--text2);margin:0 0 10px">Test key returns a sample report instantly so integration can be checked without using browser time.</p>
+          <div class="keybox"><code>vr_kashi_test_41aa••••••••0c9d</code><button class="btn sm" onclick="toast('Copied')">Copy</button></div></div>
+        <div class="card"><h3>Recent calls</h3><table><tr><td class="mono">POST /v1/run</td><td>2 h ago</td><td class="muted">191 links · done</td></tr><tr><td class="mono">POST /v1/run</td><td>14 Aug</td><td class="muted">184 links · done</td></tr><tr><td class="mono">GET /v1/run/…</td><td>14 Aug</td><td class="muted">200</td></tr></table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STYLE POOL ============ -->
+  <section class="view" id="v-pool">
+    <div class="row" style="justify-content:space-between"><div><h1>Style pool</h1><p class="sub" style="margin:0">Every style in one place — built-in, designed in Canva, or drafted by Grok. Add any of them to a project.</p></div><div class="row"><button class="btn" onclick="go('grok')">✦ Draft with Grok</button><button class="btn primary">+ Design a style</button></div></div>
+    <div class="filters" style="margin-top:16px"><span class="lab">Platform</span><select><option>All</option><option>X</option><option>Facebook</option><option>Instagram</option><option>Combined</option></select><span class="lab">Page</span><select><option>Any</option><option>16:9</option><option>A4</option><option>Letter</option></select><span class="lab">Kind</span><select><option>Any</option><option>Template (Canva)</option><option>Numeric</option></select>
+      <label class="chk" onclick="this.classList.toggle('on')"><input type="checkbox"> ✦ AI-drafted only</label><label class="chk" onclick="this.classList.toggle('on')"><input type="checkbox"> Mine</label><span class="spacer"></span><select><option>Sort: recent</option><option>Sort: name</option><option>Sort: most used</option></select></div>
+    <div class="styles" id="pool-grid"></div>
+    <p class="note">Selection here adds to the current project. Outputs per style: template → PDF · PPTX · web; numeric → PDF · DOCX · web.</p>
+  </section>
+
+  </main>
+</div>
+
+<!-- Enrich modal -->
+<div class="ov" id="enrich"><div class="modal">
+  <div class="row" style="justify-content:space-between"><h2 style="margin:0">✦ Enrich run #11</h2><button class="btn ghost" onclick="closeEnrich()">✕</button></div>
+  <p class="muted" style="margin:6px 0 0">Adds an insight layer beside the report. Captured data and sheet numbers are never changed.</p>
+  <div class="steps" id="esteps">
+    <div><b>1</b>Read results.json + sheet metrics + project memory</div>
+    <div><b>2</b>Tag posts (topic · sentiment · format) and find outliers</div>
+    <div><b>3</b>Compare with run #10 (same project)</div>
+    <div><b>4</b>Draw charts (posts by section · platform mix · metric distribution)</div>
+    <div><b>5</b>Write headline + one paragraph per section</div>
+    <div><b>6</b>Rebuild outputs with an Insights page · keep the plain version</div>
+  </div>
+  <div id="eresult" style="display:none">
+    <div class="ins"><h4>✦ Headline insight</h4>July's 172 posts reached an average of 44.8k impressions, up 6% on June. Ganga Aarti video posts carried the month (3 of the top 5); Festivals under-performed against its post count. Instagram reels are the fastest-growing format (+40% posts, +55% likes).</div>
+    <div class="grid g2" style="margin-top:12px">
+      <div class="card chart"><div class="ttl"><b>Impressions by section</b><span>run #11</span></div><div id="c-en"></div><div class="tip"></div></div>
+      <div class="card"><h3>Per-post tags (sample)</h3><table><tr><td>@kashikewasi · Aarti</td><td><span class="tag">video</span> <span class="tag">devotional</span> <span class="tag">top 5</span></td></tr><tr><td>Kashi page · Sawan</td><td><span class="tag">photo</span> <span class="tag">festival</span></td></tr><tr><td>@banaras.diaries · Kachori</td><td><span class="tag">reel</span> <span class="tag">food</span> <span class="tag">outlier ↑</span></td></tr></table>
+        <div class="row" style="margin-top:12px"><span class="tag">public-metric fill: 14 blank cells · flagged “public, 17 Aug”</span></div></div>
+    </div>
+    <div class="row" style="margin-top:14px"><button class="btn primary" onclick="closeEnrich();toast('Enriched outputs built · Insights page inserted after cover · plain versions kept')">Add Insights page to outputs</button><button class="btn">Preview web report</button><span class="spacer"></span><span class="muted" style="font-size:12px">2.1k tokens · 38 s</span></div>
+  </div>
+  <div id="eprog" class="row" style="margin-top:8px"><span class="dot live"></span><span class="muted" id="etext">Reading run…</span></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------- data ----------
+const projects=[
+ {em:'🪔',n:'Kashi Ke Wasi — Monthly',c:'Kashi Ke Wasi',posts:184,runs:12,styles:3,sync:'live',next:'on sheet change',flag:'Sheet changed · 7 new'},
+ {em:'🕵️',n:'July fake accounts',c:'Internal',posts:61,runs:1,styles:1,sync:'xlsx',next:'manual',flag:''},
+ {em:'📣',n:'Influencer tracker — Q3',c:'Agency X',posts:96,runs:4,styles:2,sync:'live',next:'weekly · Mon 09:00',flag:'Enriched'},
+ {em:'🏛️',n:'Heritage week',c:'Tourism board',posts:40,runs:2,styles:1,sync:'paste',next:'—',flag:''},
+ {em:'🗂️',n:'Unsorted (v2 jobs)',c:'migrated',posts:530,runs:41,styles:'—',sync:'—',next:'—',flag:''},
+];
+const styles=[
+ {n:'Combined report (16:9)',t:'template',plat:'Combined',size:'16:9',cls:'wide',dark:true,by:'shipped',on:true},
+ {n:'Twitter Report (letter)',t:'numeric',plat:'X',size:'Letter',cls:'',by:'built-in',on:true},
+ {n:'Kashi navy 16:9',t:'template',plat:'Combined',size:'16:9',cls:'wide',dark:true,by:'✦ AI-drafted',on:true},
+ {n:'Influencer (A4, 2-up)',t:'numeric',plat:'X',size:'A4',cls:'two',by:'built-in',on:false},
+ {n:'Client deck',t:'numeric',plat:'X',size:'16:9',cls:'wide',by:'shipped',on:false},
+ {n:'Contact sheet (2×3)',t:'numeric',plat:'Any',size:'A4',cls:'six',by:'shipped',on:false},
+ {n:'Facebook page (letter)',t:'numeric',plat:'FB',size:'Letter',cls:'',by:'shipped',on:false},
+ {n:'Diwali special',t:'template',plat:'Combined',size:'16:9',cls:'wide',dark:true,by:'Priya · Canva',on:false},
+];
+// ---------- render ----------
+function thumb(s){
+  const shots=s.cls==='two'?2:s.cls==='six'?6:s.cls==='wide'?2:1;
+  return `<div class="thumb"><div class="page ${s.cls} ${s.dark?'dark':''}">${'<div class="shot"></div>'.repeat(shots)}</div></div>`;
+}
+function scard(s,i,pool){
+  const outs=s.t==='template'?['PDF','PPTX','web']:['PDF','DOCX','web'];
+  return `<div class="scard ${s.on?'on':''}" onclick="togStyle(${i})"><div class="tick">✓</div>${thumb(s)}<b>${s.n}</b><div class="m"><span>${s.plat}</span><span>${s.size}</span><span>${s.t}</span><span>${s.by}</span></div><div class="out">${outs.map((o,k)=>`<label class="${k<2||o==='web'?'on':''}">${o}</label>`).join('')}</div></div>`;
+}
+function scards(){
+  document.getElementById('pstyle-grid').innerHTML=styles.filter(s=>s.on).map((s)=>scard(s,styles.indexOf(s))).join('')+`<div class="scard" style="display:grid;place-items:center;border-style:dashed;min-height:180px;color:var(--text2);font-weight:600" onclick="go('pool')">+ Pick from pool</div>`;
+  document.getElementById('pool-grid').innerHTML=styles.map((s,i)=>scard(s,i,true)).join('');
+  document.getElementById('selcount').textContent=styles.filter(s=>s.on).length+' selected';
+}
+function togStyle(i){styles[i].on=!styles[i].on;scards();}
+// ---------- charts (plain SVG) ----------
+function bars(el,data,color,unit){
+  const W=520,H=200,pl=110,pr=20,pt=8,pb=8,max=Math.max(...data.map(d=>d.v));
+  const bh=(H-pt-pb)/data.length, gap=2;
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img">`;
+  data.forEach((d,i)=>{const y=pt+i*bh+gap,h=bh-gap*2,w=(W-pl-pr)*d.v/max;
+    s+=`<text x="${pl-10}" y="${y+h/2+4}" text-anchor="end" font-size="12" fill="var(--text2)">${d.k}</text>`;
+    s+=`<rect class="hit" data-l="${d.k}: ${d.v.toLocaleString()}${unit||''}" x="${pl}" y="${y}" width="${w}" height="${h}" rx="0" fill="${color}"/>`;
+    s+=`<rect x="${pl+w-4}" y="${y}" width="4" height="${h}" rx="3" fill="${color}"/>`;
+    s+=`<text x="${pl+w+6}" y="${y+h/2+4}" font-size="11" fill="var(--text2)">${d.v.toLocaleString()}${unit||''}</text>`;});
+  s+='</svg>';document.getElementById(el).innerHTML=s;hover(el);
+}
+function stacked(el,runs){
+  const W=520,H=200,pl=40,pr=10,pt=8,pb=24,cols=['var(--s1)','var(--s2)','var(--s3)'],names=['X','Facebook','Instagram'];
+  const max=Math.max(...runs.map(r=>r.v.reduce((a,b)=>a+b,0)));const bw=(W-pl-pr)/runs.length;
+  let s=`<svg viewBox="0 0 ${W} ${H}">`;
+  [0,.5,1].forEach(f=>{const y=pt+(H-pt-pb)*(1-f);s+=`<line x1="${pl}" x2="${W-pr}" y1="${y}" y2="${y}" stroke="var(--border)"/><text x="${pl-6}" y="${y+4}" text-anchor="end" font-size="11" fill="var(--text3)">${Math.round(max*f)}</text>`});
+  runs.forEach((r,i)=>{let acc=0;const x=pl+i*bw+bw*.2,w=bw*.6;
+    r.v.forEach((v,k)=>{const h=(H-pt-pb)*v/max,y=pt+(H-pt-pb)-acc-h;acc+=h+2;
+      s+=`<rect class="hit" data-l="${r.k} · ${names[k]}: ${v}" x="${x}" y="${y}" width="${w}" height="${Math.max(h-2,0)}" fill="${cols[k]}"/>`;});
+    s+=`<text x="${x+w/2}" y="${H-6}" text-anchor="middle" font-size="11" fill="var(--text2)">${r.k}</text>`;});
+  s+='</svg>';document.getElementById(el).innerHTML=s;hover(el);
+}
+function line(el,pts){
+  const W=620,H=200,pl=40,pr=16,pt=12,pb=24,max=200,min=100;
+  const X=i=>pl+(W-pl-pr)*i/(pts.length-1),Y=v=>pt+(H-pt-pb)*(1-(v-min)/(max-min));
+  let s=`<svg viewBox="0 0 ${W} ${H}">`;
+  [100,150,200].forEach(v=>{s+=`<line x1="${pl}" x2="${W-pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--border)"/><text x="${pl-6}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="var(--text3)">${v}</text>`});
+  s+=`<path d="${pts.map((p,i)=>(i?'L':'M')+X(i)+' '+Y(p.v)).join(' ')}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>`;
+  pts.forEach((p,i)=>{s+=`<circle class="hit" data-l="Run ${p.k}: ${p.v} posts" cx="${X(i)}" cy="${Y(p.v)}" r="5" fill="var(--s1)" stroke="var(--surface)" stroke-width="2"/><text x="${X(i)}" y="${H-6}" text-anchor="middle" font-size="11" fill="var(--text2)">${p.k}</text>`;
+    if(i===pts.length-1)s+=`<text x="${X(i)-8}" y="${Y(p.v)-10}" text-anchor="end" font-size="11" font-weight="700" fill="var(--text)">${p.v}</text>`;});
+  s+='</svg>';document.getElementById(el).innerHTML=s;hover(el);
+}
+function hover(el){const box=document.getElementById(el).closest('.chart'),tip=box.querySelector('.tip');
+  box.querySelectorAll('.hit').forEach(h=>{h.addEventListener('mousemove',e=>{tip.style.display='block';tip.textContent=h.dataset.l;const r=box.getBoundingClientRect();tip.style.left=(e.clientX-r.left+12)+'px';tip.style.top=(e.clientY-r.top-30)+'px';});h.addEventListener('mouseleave',()=>tip.style.display='none');});}
+function charts(){
+  bars('c-sec',[{k:'Ganga Aarti',v:52},{k:'Festivals',v:41},{k:'Food',v:33},{k:'Heritage',v:34},{k:'Reels',v:24}],'var(--s1)');
+  stacked('c-mix',[{k:'#7',v:[90,40,20]},{k:'#8',v:[95,42,25]},{k:'#9',v:[98,44,26]},{k:'#10',v:[40,12,9]},{k:'#11',v:[100,46,26]},{k:'#12',v:[102,50,32]}]);
+  line('c-line',[{k:'#7',v:150},{k:'#8',v:162},{k:'#9',v:168},{k:'#10',v:120},{k:'#11',v:172},{k:'#12',v:184}]);
+}
+// ---------- routing ----------
+const titles={overview:'Overview',sources:'Sources',pstyles:'Styles',runs:'Runs',api:'API',grok:'Grok Studio',settings:'Settings',pool:'Style pool'};
+const inProject=['overview','sources','pstyles','runs','api','grok','settings'];
+function go(v){
+  if(!titles[v])v='overview';
+  document.querySelectorAll('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
+  document.querySelectorAll('#nav a[data-go]').forEach(a=>a.classList.toggle('active',a.dataset.go===v));
+  document.getElementById('pdrop').classList.remove('open');
+  document.getElementById('crumb').innerHTML=inProject.includes(v)?`› ${projects[cur].n} › <b>${titles[v]}</b>`:`› <b>${titles[v]}</b>`;
+  if(v==='grok'){const m=document.getElementById('msgs');setTimeout(()=>m.scrollTop=m.scrollHeight,50);}
+  location.hash=v;window.scrollTo(0,0);
+}
+let cur=0;
+function pdropRender(){document.getElementById('pdrop-list').innerHTML=projects.map((p,i)=>`<a class="${i===cur?'on':''}" onclick="pickProject(${i})">${p.em} ${p.n}</a>`).join('')+`<a class="new" onclick="toast('New project: name → client → first source → pick styles')">+ New project</a>`;
+  document.getElementById('pdrop-name').textContent=projects[cur].em+' '+projects[cur].n;document.getElementById('grokproj').textContent=projects[cur].em+' '+projects[cur].n;document.getElementById('ptitle').textContent=projects[cur].n;}
+function pickProject(i){cur=i;pdropRender();toast('Switched to '+projects[i].n+' — sources, styles, runs, Grok chat and API key are this project\'s');go(location.hash.replace('#','')||'overview');}
+document.addEventListener('click',e=>{if(!e.target.closest('#pdrop'))document.getElementById('pdrop').classList.remove('open');});
+document.querySelectorAll('#nav a[data-go]').forEach(a=>a.onclick=()=>go(a.dataset.go));
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;const m={g:'grok',s:'pool',n:'pstyles',o:'overview'};if(m[e.key])go(m[e.key]);});
+// ---------- interactions ----------
+function toast(t){const el=document.getElementById('toast');el.textContent=t;el.style.display='block';clearTimeout(el._t);el._t=setTimeout(()=>el.style.display='none',3200);}
+function toggleTheme(){const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark';}
+function startRun(){go('runs');const tr=document.getElementById('liverun');tr.style.display='';let n=9;const t=setInterval(()=>{n=Math.min(191,n+7);document.getElementById('lp').style.width=(n/191*100)+'%';document.getElementById('lpt').textContent=n+'/191';if(n>=191){clearInterval(t);tr.children[5].innerHTML='<span class="status" style="color:var(--ok)">● done · building 3 styles…</span>';setTimeout(()=>{tr.children[5].innerHTML='<span class="status" style="color:var(--ok)">● done</span>';tr.children[6].innerHTML='<span class="pill grok" style="padding:1px 7px">✦ yes</span>';toast('Run #13 done · 7 files · 118/191 shots from cache');},1500);}},120);}
+function send(){const i=document.getElementById('chatin'),m=document.getElementById('msgs');if(!i.value.trim())return;m.insertAdjacentHTML('beforeend',`<div class="msg u">${i.value}</div>`);const q=i.value;i.value='';m.scrollTop=1e9;setTimeout(()=>{m.insertAdjacentHTML('beforeend',`<div class="msg g">Applied “${q}” → <b>Proposal 4</b>. Validator: pass. Preview refreshed on the left; say “undo” to go back.</div>`);m.scrollTop=1e9;},900);}
+function mic(){const b=document.getElementById('mic');b.classList.toggle('rec');if(!b.classList.contains('rec'))return;setTimeout(()=>{b.classList.remove('rec');const m=document.getElementById('msgs');m.insertAdjacentHTML('beforeend',`<div class="msg u v">🎙 “make the header band a little thinner”</div>`);m.scrollTop=1e9;setTimeout(()=>{m.insertAdjacentHTML('beforeend',`<div class="msg g">Header band 12% → 9%. <b>Proposal 4</b> — validator pass.</div>`);m.scrollTop=1e9;},900);},1800);}
+function openEnrich(){const ov=document.getElementById('enrich');ov.classList.add('on');const st=[...document.querySelectorAll('#esteps div')];st.forEach(s=>s.className='');document.getElementById('eresult').style.display='none';document.getElementById('eprog').style.display='flex';let k=0;const txt=['Reading run…','Tagging 172 posts…','Comparing with run #10…','Drawing charts…','Writing insights…','Rebuilding outputs…'];const t=setInterval(()=>{if(k>0)st[k-1].className='done';if(k<st.length){st[k].className='now';document.getElementById('etext').textContent=txt[k];k++;}else{clearInterval(t);document.getElementById('eprog').style.display='none';document.getElementById('eresult').style.display='block';bars('c-en',[{k:'Ganga Aarti',v:61},{k:'Festivals',v:38},{k:'Food',v:47},{k:'Heritage',v:40},{k:'Reels',v:52}],'var(--s1)','k');}},550);}
+function closeEnrich(){document.getElementById('enrich').classList.remove('on');}
+// ---------- boot ----------
+scards();charts();pdropRender();go(location.hash.replace('#','')||'overview');
+</script>
+</body>
+</html>

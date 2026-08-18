@@ -12,7 +12,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import auth, config, report_types, sheets, uploads
+from . import auth, config, projects, report_types, sheets, uploads
 from .jobs import queue, runner, store
 
 router = APIRouter(prefix="/api")
@@ -36,9 +36,14 @@ _KINDS = {"pdf": "application/pdf",
 # Helpers
 # --------------------------------------------------------------------------- #
 def _owned_job(job_id: str, user: str) -> dict:
+    """The job, for any signed-in colleague.
+
+    v3: projects are shared by the team, so a run made by one colleague in a
+    project is visible — and downloadable — to the next one. Signed-in is the
+    gate; a job that does not exist is a 404 like before.
+    """
     job = store.get(job_id)
-    if not job or job["owner"] != user:
-        # Same response for "missing" and "someone else's" — don't leak existence.
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
@@ -52,6 +57,8 @@ def public_job(job: dict) -> dict:
         "id": job["id"],
         "name": job["name"],
         "title": job["title"],
+        "owner": job.get("owner") or "",
+        "project_id": job.get("project_id") or "",
         "report_type": job["report_type"],
         # Label + platform ride along so the UI never has to map a slug itself
         # (an unknown slug — a deleted custom style — still shows something).
@@ -268,10 +275,18 @@ async def submit_job(request: Request,
                      account_col: str = Form(""),
                      dedupe: str = Form(""),
                      report_name: str = Form(...),
-                     report_type: str = Form(...),
+                     # One value per style ticked on the New run page. Several
+                     # styles = several jobs from the same links, one per style
+                     # (each captures on its own today; a shared capture is the
+                     # v3.0-b optimisation). A single value keeps every older
+                     # caller working unchanged.
+                     report_type: List[str] = Form(...),
                      # Optional, defaulting to the one live platform, so every
                      # existing caller keeps working unchanged.
                      platform: str = Form(report_types.DEFAULT_PLATFORM),
+                     # v3: which project the run belongs to. Absent = the
+                     # session's current project.
+                     project_id: str = Form(""),
                      csrf_token: str = Form(...),
                      keep_engagement: str = Form(""),
                      workers: str = Form(""),
@@ -282,43 +297,53 @@ async def submit_job(request: Request,
                      user: str = Depends(auth.require_user_api)):
     auth.verify_csrf(request, csrf_token)
 
-    rt = report_types.get(report_type)
-    if rt is None:
-        raise HTTPException(status_code=400, detail="Unknown report type.")
+    types = [str(t).strip() for t in (report_type or []) if str(t).strip()]
+    types = list(dict.fromkeys(types))            # de-dup, keep order
+    if not types:
+        raise HTTPException(status_code=400, detail="Pick at least one style.")
+    if len(types) > 6:
+        raise HTTPException(status_code=400, detail="At most 6 styles per run.")
+    for t in types:
+        if report_types.get(t) is None:
+            raise HTTPException(status_code=400, detail=f"Unknown report type {t!r}.")
 
-    # The tick boxes are drawn from this style's own outputs, so anything else
+    project = store.project_get(project_id) if project_id else projects.current(request)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    # The tick boxes are drawn from the style's own outputs, so anything else
     # arriving here was not offered. Refused rather than ignored: a job that
     # quietly dropped a requested format would hand back a file the user did
-    # not ask for and say nothing.
+    # not ask for and say nothing. With several styles the `outputs` list is
+    # the union the form collected; each job keeps the ones its style builds
+    # (and, if none apply, everything that style builds — clean_outputs).
     asked = [str(o).strip().lower() for o in (outputs or []) if str(o).strip()]
-    why_not_outputs = report_types.check_outputs(report_type, asked)
-    if why_not_outputs:
-        raise HTTPException(status_code=400, detail=why_not_outputs)
-    want_outputs = report_types.clean_outputs(report_type, asked)
+    if len(types) == 1:
+        why_not_outputs = report_types.check_outputs(types[0], asked)
+        if why_not_outputs:
+            raise HTTPException(status_code=400, detail=why_not_outputs)
 
     # A disabled pill is a hint; this is the gate. Without it a hand-crafted
     # POST naming a platform with no capture engine would create a job that
     # fails deep inside a runner with an error nobody can act on.
-    why_not = report_types.check_runnable(platform, report_type)
-    if why_not:
-        raise HTTPException(status_code=400, detail=why_not)
+    for t in types:
+        why_not = report_types.check_runnable(platform, t)
+        if why_not:
+            raise HTTPException(status_code=400, detail=why_not)
 
     # An unticked checkbox is simply absent from the form body, so anything that
     # arrives means "on". Twitter-only: the influencer capture always keeps the
     # engagement line, so accepting it there would promise a choice that isn't one.
-    keep = rt.allows_keep_engagement and keep_engagement.lower() not in (
-        "", "0", "false", "off")
+    keep_flag = keep_engagement.lower() not in ("", "0", "false", "off")
 
     # Capture speed. Clamped, never trusted: each browser is ~0.5-1 GB, so a
     # hand-crafted POST asking for 50 would be an out-of-memory kill rather than
     # a fast report. Anything unparseable means "server default". Twitter-only,
     # for the same reason as the crop tick — see build_command.
     try:
-        want_workers = int(workers)
+        want_workers_raw = int(workers)
     except ValueError:
-        want_workers = 0
-    want_workers = (max(0, min(want_workers, config.MAX_WORKERS))
-                    if rt.allows_worker_choice else 0)
+        want_workers_raw = 0
 
     # Parse + validate BEFORE a job exists, so a bad input never occupies a slot.
     # Goes through the SAME `_grid_from_request` + `analyse` the preview uses,
@@ -351,27 +376,43 @@ async def submit_job(request: Request,
     upload_name = (source if (pasted or sheet_url.strip())
                    else uploads.safe_upload_name(file.filename))
 
-    job_id = store.create(owner=user, name=stem, title=title,
-                          report_type=report_type, link_count=len(rows),
-                          upload_name=upload_name, keep_engagement=keep,
-                          workers=want_workers, outputs=want_outputs)
-    try:
-        await asyncio.to_thread(runner.build_job_dir, job_id, rows, raw, upload_name)
-    except Exception as e:
-        store.update(job_id, status="failed", phase="Failed",
-                     error=f"Could not prepare the job folder: {e}")
-        return JSONResponse({"detail": f"Could not prepare the job: {e}"},
-                            status_code=500)
+    job_ids = []
+    for t in types:
+        rt = report_types.get(t)
+        keep = rt.allows_keep_engagement and keep_flag
+        want_workers = (max(0, min(want_workers_raw, config.MAX_WORKERS))
+                        if rt.allows_worker_choice else 0)
+        want_outputs = report_types.clean_outputs(t, asked)
+        # Several styles from one input: name each file after its style too,
+        # so two decks from the same run cannot overwrite each other's download.
+        job_stem = stem if len(types) == 1 else uploads.safe_stem(f"{stem} {rt.label}", "Report")
+        job_title = title
+        job_id = store.create(owner=user, name=job_stem, title=job_title,
+                              report_type=t, link_count=len(rows),
+                              upload_name=upload_name, keep_engagement=keep,
+                              workers=want_workers, outputs=want_outputs,
+                              project_id=project["id"])
+        try:
+            await asyncio.to_thread(runner.build_job_dir, job_id, rows, raw, upload_name)
+        except Exception as e:
+            store.update(job_id, status="failed", phase="Failed",
+                         error=f"Could not prepare the job folder: {e}")
+            return JSONResponse({"detail": f"Could not prepare the job: {e}"},
+                                status_code=500)
 
-    store.append_activity(
-        job_id, f"Uploaded '{upload_name}' — {len(rows)} X link(s) accepted.")
+        store.append_activity(
+            job_id, f"Uploaded '{upload_name}' — {len(rows)} link(s) accepted "
+                    f"· project {project['name']} · style {rt.label}.")
 
-    if config.EXECUTION_MODE == "inline":
-        store.update(job_id, phase="Waiting to start")
-    else:
-        queue.submit(job_id)
+        if config.EXECUTION_MODE == "inline":
+            store.update(job_id, phase="Waiting to start")
+        else:
+            queue.submit(job_id)
+        job_ids.append(job_id)
+    job_id = job_ids[0]
 
-    return JSONResponse({"job_id": job_id, "link_count": len(rows),
+    return JSONResponse({"job_id": job_id, "job_ids": job_ids,
+                         "link_count": len(rows), "project_id": project["id"],
                          "execution_mode": config.EXECUTION_MODE}, status_code=202)
 
 
@@ -379,11 +420,16 @@ async def submit_job(request: Request,
 # Status / cancel
 # --------------------------------------------------------------------------- #
 @router.get("/jobs")
-async def job_list(limit: int = 12, user: str = Depends(auth.require_user_api)):
-    """The signed-in user's recent jobs — what the dashboard rail and the
-    History page poll. Same shape per job as the status endpoint."""
+async def job_list(request: Request, limit: int = 12, project: str = "",
+                   user: str = Depends(auth.require_user_api)):
+    """Recent jobs of one project (default: the session's current project) —
+    what the Runs page polls. Same shape per job as the status endpoint."""
     limit = max(1, min(int(limit or 12), 200))
-    return {"jobs": [public_job(j) for j in store.list_for(user, limit=limit)]}
+    proj = store.project_get(project) if project else projects.current(request)
+    if proj is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return {"project_id": proj["id"],
+            "jobs": [public_job(j) for j in store.list_for_project(proj["id"], limit=limit)]}
 
 
 @router.get("/jobs/{job_id}")

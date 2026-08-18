@@ -59,6 +59,29 @@ CREATE TABLE IF NOT EXISTS presets (
 );
 CREATE INDEX IF NOT EXISTS presets_owner ON presets (owner, created_at DESC);
 
+-- v3: a PROJECT is a client / recurring report. It owns which styles print
+-- it, and every job belongs to exactly one project. Projects are shared by the
+-- whole team (owner is who made it, for the record); the dropdown in the left
+-- bar switches which one the pages show.
+CREATE TABLE IF NOT EXISTS projects (
+    id            TEXT PRIMARY KEY,
+    slug          TEXT UNIQUE NOT NULL,
+    name          TEXT NOT NULL,
+    client        TEXT DEFAULT '',
+    emoji         TEXT DEFAULT '',
+    owner         TEXT NOT NULL,
+    settings      TEXT DEFAULT '{}',
+    archived      INTEGER DEFAULT 0,
+    created_at    REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_styles (
+    project_id    TEXT NOT NULL,
+    slug          TEXT NOT NULL,
+    outputs       TEXT DEFAULT '[]',
+    position      INTEGER DEFAULT 0,
+    PRIMARY KEY (project_id, slug)
+);
+
 CREATE TABLE IF NOT EXISTS users (
     username      TEXT PRIMARY KEY,
     pw_hash       TEXT NOT NULL,
@@ -84,9 +107,14 @@ _JSON_FIELDS = ("artifacts", "skipped", "activity", "outputs")
 _ADDED_COLUMNS = {
     "jobs": (("keep_engagement", "INTEGER DEFAULT 0"),
              ("workers", "INTEGER DEFAULT 0"),          # 0 = the server default
-             ("outputs", "TEXT DEFAULT '[]'")),
+             ("outputs", "TEXT DEFAULT '[]'"),
+             ("project_id", "TEXT DEFAULT ''")),          # v3
     "presets": (("outputs", "TEXT DEFAULT '[]'"),),
 }
+
+# Every job made before v3 lands here, so nothing is lost and nothing is
+# orphaned. Created on first boot; cannot be deleted while it holds jobs.
+UNSORTED_SLUG = "unsorted"
 
 
 def _connect():
@@ -122,6 +150,20 @@ def init() -> None:
             "not finish. Please submit it again.', "
             "finished_at=? WHERE status IN ('running','queued')",
             (time.time(),))
+        # v3 migration: an "Unsorted" project for every job that predates
+        # projects. Idempotent — the second boot finds nothing to move.
+        row = conn.execute("SELECT id FROM projects WHERE slug=?",
+                           (UNSORTED_SLUG,)).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO projects (id, slug, name, client, emoji, owner, "
+                "settings, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (uuid.uuid4().hex[:12], UNSORTED_SLUG, "Unsorted (v2 reports)",
+                 "", "🗂️", "system", "{}", time.time()))
+            row = conn.execute("SELECT id FROM projects WHERE slug=?",
+                               (UNSORTED_SLUG,)).fetchone()
+        conn.execute("UPDATE jobs SET project_id=? WHERE project_id='' "
+                     "OR project_id IS NULL", (row["id"],))
 
 
 def _row_to_dict(row) -> dict:
@@ -140,7 +182,7 @@ def _row_to_dict(row) -> dict:
 def create(owner: str, name: str, title: str, report_type: str,
            link_count: int, upload_name: str,
            keep_engagement: bool = False, workers: int = 0,
-           outputs=None) -> str:
+           outputs=None, project_id: str = "") -> str:
     """`workers` = browsers to capture with; 0 means "use the server default".
     `outputs` = the formats ticked on the form; [] means every format the
     style builds."""
@@ -149,11 +191,11 @@ def create(owner: str, name: str, title: str, report_type: str,
         conn.execute(
             "INSERT INTO jobs (id, owner, name, title, report_type, status, "
             "phase, link_count, upload_name, total, keep_engagement, workers, "
-            "outputs, created_at) "
-            "VALUES (?,?,?,?,?,'queued','Waiting for a free capture slot',?,?,?,?,?,?,?)",
+            "outputs, project_id, created_at) "
+            "VALUES (?,?,?,?,?,'queued','Waiting for a free capture slot',?,?,?,?,?,?,?,?)",
             (job_id, owner, name, title, report_type, link_count, upload_name,
              link_count, int(bool(keep_engagement)), max(0, int(workers)),
-             json.dumps(list(outputs or [])), time.time()))
+             json.dumps(list(outputs or [])), project_id or "", time.time()))
     return job_id
 
 
@@ -169,6 +211,23 @@ def list_for(owner: str, limit: int = 30) -> list:
             "SELECT * FROM jobs WHERE owner=? ORDER BY created_at DESC LIMIT ?",
             (owner, limit)).fetchall()
     return [_row_to_dict(r) for r in rows]
+
+
+def list_for_project(project_id: str, limit: int = 200) -> list:
+    """Every job in one project, newest first — projects are shared by the
+    team, so this is not filtered by owner."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE project_id=? ORDER BY created_at DESC "
+            "LIMIT ?", (project_id, limit)).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def count_for_project(project_id: str) -> int:
+    with _connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE project_id=?",
+                           (project_id,)).fetchone()
+    return int(row["n"])
 
 
 def list_all(limit: int = 500) -> list:
@@ -276,6 +335,114 @@ def preset_delete(owner: str, pid: str) -> bool:
         cur = conn.execute("DELETE FROM presets WHERE id=? AND owner=?",
                            (pid, owner))
     return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------- #
+# Projects (v3)
+# --------------------------------------------------------------------------- #
+def _project_row(r) -> dict:
+    d = dict(r)
+    try:
+        d["settings"] = json.loads(d.get("settings") or "{}")
+    except (ValueError, TypeError):
+        d["settings"] = {}
+    d["archived"] = bool(d.get("archived"))
+    return d
+
+
+def project_create(owner: str, slug: str, name: str, client: str = "",
+                   emoji: str = "", settings: dict = None) -> str:
+    pid = uuid.uuid4().hex[:12]
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO projects (id, slug, name, client, emoji, owner, "
+            "settings, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (pid, slug, name[:80], (client or "")[:80], (emoji or "")[:8],
+             owner, json.dumps(settings or {}), time.time()))
+    return pid
+
+
+def project_get(pid: str):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    return _project_row(row) if row else None
+
+
+def project_by_slug(slug: str):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE slug=?", (slug,)).fetchone()
+    return _project_row(row) if row else None
+
+
+def projects_list(include_archived: bool = False) -> list:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM projects " +
+            ("" if include_archived else "WHERE archived=0 ") +
+            "ORDER BY (slug=?) ASC, name COLLATE NOCASE ASC",
+            (UNSORTED_SLUG,)).fetchall()
+    return [_project_row(r) for r in rows]
+
+
+def project_update(pid: str, **fields) -> None:
+    if not fields:
+        return
+    if "settings" in fields and not isinstance(fields["settings"], str):
+        fields["settings"] = json.dumps(fields["settings"])
+    if "archived" in fields:
+        fields["archived"] = int(bool(fields["archived"]))
+    cols = ", ".join(f"{k}=?" for k in fields)
+    with _connect() as conn:
+        conn.execute(f"UPDATE projects SET {cols} WHERE id=?",
+                     (*fields.values(), pid))
+
+
+def project_delete(pid: str) -> bool:
+    """Only an EMPTY project can be deleted; one with jobs is archived
+    instead, so history is never silently lost."""
+    with _connect() as conn:
+        n = conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE project_id=?",
+                         (pid,)).fetchone()["n"]
+        if n:
+            return False
+        conn.execute("DELETE FROM project_styles WHERE project_id=?", (pid,))
+        cur = conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+    return cur.rowcount > 0
+
+
+def project_styles(pid: str) -> list:
+    """[{slug, outputs}] in the project's own order."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT slug, outputs FROM project_styles WHERE project_id=? "
+            "ORDER BY position ASC", (pid,)).fetchall()
+    out = []
+    for r in rows:
+        try:
+            outs = json.loads(r["outputs"] or "[]")
+        except (ValueError, TypeError):
+            outs = []
+        out.append({"slug": r["slug"], "outputs": outs})
+    return out
+
+
+def project_set_styles(pid: str, items: list) -> None:
+    """Replace the project's style list. `items` = [{slug, outputs}]."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM project_styles WHERE project_id=?", (pid,))
+        for i, it in enumerate(items):
+            conn.execute(
+                "INSERT INTO project_styles (project_id, slug, outputs, position) "
+                "VALUES (?,?,?,?)",
+                (pid, it["slug"], json.dumps(list(it.get("outputs") or [])), i))
+
+
+def project_replace_style(pid: str, old_slug: str, new_slug: str) -> None:
+    """Swap one style for another in place (used when a shipped style is
+    copied so a project can give it its own background)."""
+    with _connect() as conn:
+        conn.execute("UPDATE project_styles SET slug=? WHERE project_id=? AND slug=?",
+                     (new_slug, pid, old_slug))
 
 
 # --------------------------------------------------------------------------- #

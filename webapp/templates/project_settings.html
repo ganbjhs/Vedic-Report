@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Settings · {{ project.name }} — VedicReport{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+{% block main_class %} narrow{% endblock %}
+
+{% block content %}
+<h1>Project settings <span class="faint" style="font-weight:500;font-size:16px">· {{ project.emoji }} {{ project.name }}</span></h1>
+<p class="sub">Name and client, plus the defaults the New run page starts from.</p>
+
+<form id="proj-form" class="card" data-pid="{{ project.id }}" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <fieldset><legend>Identity</legend>
+    <div class="fields" style="grid-template-columns:70px 1fr 1fr">
+      <label class="field"><span>Icon</span><input name="emoji" type="text" maxlength="4" value="{{ project.emoji }}" style="text-align:center" {% if project.is_unsorted %}disabled{% endif %}></label>
+      <label class="field"><span>Name</span><input name="name" type="text" maxlength="80" value="{{ project.name }}" required {% if project.is_unsorted %}disabled{% endif %}></label>
+      <label class="field"><span>Client</span><input name="client" type="text" maxlength="80" value="{{ project.client }}" placeholder="optional"></label>
+    </div>
+  </fieldset>
+  <fieldset style="margin-top:14px"><legend>Run defaults <span class="faint">(the New run page starts from these; each run can still change them)</span></legend>
+    {% set st = project.settings %}
+    <div class="fields" style="grid-template-columns:1fr 1fr">
+      <label class="check"><input type="checkbox" name="dedupe" {{ 'checked' if st.get('dedupe', True) else '' }}><span>Remove duplicate posts</span></label>
+      <label class="check"><input type="checkbox" name="keep_engagement" {{ 'checked' if st.get('keep_engagement') else '' }}><span>Keep the engagement line (X styles that allow it)</span></label>
+      <label class="field"><span>Capture speed <span class="faint">(browsers; 0 = server default)</span></span><input name="workers" type="number" min="0" max="{{ max_workers }}" value="{{ st.get('workers', 0) }}"></label>
+      <label class="field"><span>Note <span class="faint">(shown to the team on this page)</span></span><input name="note" type="text" maxlength="200" value="{{ st.get('note', '') }}" placeholder="e.g. sheet lives in the Kashi drive · run on the 14th"></label>
+    </div>
+  </fieldset>
+  <div class="row" style="margin-top:14px">
+    <button type="submit" class="btn primary">Save</button>
+    <span class="small" id="proj-msg"></span>
+    <span class="spacer"></span>
+    {% if not project.is_unsorted %}<button type="button" class="btn sm danger" id="proj-archive">Archive project</button>{% endif %}
+  </div>
+</form>
+
+<div class="card" style="margin-top:14px">
+  <h2 class="card-title">Coming next</h2>
+  <p class="small muted" style="margin:6px 0 0">Sources (Google Sheet that stays in sync, uploads kept as versions), the project API key, schedules and Grok Studio land in the following releases — see <code>docs/v3-plan.md</code>.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}<script>initProjectSettings();</script>{% endblock %}

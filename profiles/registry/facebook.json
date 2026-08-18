@@ -40,5 +40,5 @@
     "links_table": true
   },
 
-  "outputs": ["pdf", "docx"]
+  "outputs": ["pdf", "docx", "pptx"]
 }

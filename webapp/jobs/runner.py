@@ -37,7 +37,8 @@ from .. import config, report_types, x_login
 from . import store
 
 # Code copied into each job's working directory.
-_CODE_ITEMS = ("run.py", "src", "influencer", "profiles", "facebook", "instagram")
+_CODE_ITEMS = ("run.py", "src", "influencer", "profiles", "facebook", "instagram",
+               "metrics")
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store", "reports",
                                  "sessions")
 
@@ -119,6 +120,15 @@ def build_job_dir(job_id: str, rows: list, upload_bytes: bytes,
     (up / uploads.safe_upload_name(upload_name)).write_bytes(upload_bytes)
 
     uploads.write_canonical_xlsx(rows, app / "input.xlsx")
+    # The rows as the reader understood them, kept OUTSIDE app/ so the pipeline
+    # never sees them. `_fetch_metrics` re-reads this, fills in the engagement
+    # numbers X can tell us, and writes input.xlsx again — which is the whole
+    # reason the enrichment needs no change to any builder: a style that prints
+    # a metric column prints the filled-in one exactly as it prints a typed one.
+    try:
+        (jd / "rows.json").write_text(json.dumps(rows), encoding="utf-8")
+    except (OSError, TypeError) as e:                    # rule 17: never silent
+        print(f"[runner] could not save rows.json for {job_id}: {e}", flush=True)
     return jd
 
 
@@ -148,7 +158,7 @@ def _copy_user_profiles(job_id: str, app: Path) -> None:
 # --------------------------------------------------------------------------- #
 def build_command(report_type: str, title: str, date: str,
                   keep_engagement: bool = False, workers: int = 0,
-                  outputs=None) -> list:
+                  outputs=None, fast: bool = False) -> list:
     """The exact CLI invocation, identical in shape to what you run by hand.
 
     `--no-date` is what makes the document header read exactly what the user
@@ -202,6 +212,10 @@ def build_command(report_type: str, title: str, date: str,
            "--workers", str(workers)]
     if keep_engagement and rt.allows_keep_engagement:
         cmd.append("--keep-engagement")
+    # Gated on the capability, never the slug: a profile runner does not take
+    # this switch and would fail the job on an unrecognised argument.
+    if fast and rt.allows_fast:
+        cmd.append("--fast")
     wanted = report_types.clean_outputs(report_type, outputs)
     if not rt.builtin and set(wanted) != set(rt.outputs):
         cmd += ["--outputs", ",".join(wanted)]
@@ -239,6 +253,15 @@ class _Progress:
         self.phase = "Starting the browser"
         self.login_wall = False
         self._last_push = 0.0
+        # A long run used to show "0 / 1232 posts captured" and a phase that did
+        # not move for minutes, because the pipeline's per-link lines are only
+        # printed after capture ENDS and the bar is driven by files on disk. A
+        # healthy 1232-link job is indistinguishable from a hung one for its
+        # first minute, and the reasonable thing to do with a hung job is cancel
+        # it — which is what happened. These two fields drive a heartbeat that
+        # says what is going on while nothing has landed yet.
+        self._capture_started = 0.0
+        self._warmed = False
 
     def note(self, message: str, level: str = "info") -> None:
         store.append_activity(self.job_id, message, level)
@@ -260,6 +283,32 @@ class _Progress:
             self.done = min(count, self.total or count)
             self._push()
 
+    def heartbeat(self) -> None:
+        """Keep the phase line honest between screenshots.
+
+        Called on a timer, not on an event, precisely because the silent stretch
+        is the problem: before the first PNG lands there is no event to hang a
+        message on. Once shots are landing it reports the real rate and a
+        finish estimate from THIS run's measured pace, not from an assumption.
+        """
+        if not self._capture_started:
+            return
+        elapsed = time.time() - self._capture_started
+        if self.done <= 0:
+            if elapsed > 45 and not self._warmed:
+                self._warmed = True
+                self.note("Browsers are up and loading the first posts. On a "
+                          "long list the first screenshots take a minute or so "
+                          "to appear — the job is running.")
+            self.set_phase("Capturing posts — loading the first ones "
+                           f"({int(elapsed)}s)")
+            return
+        rate = self.done / elapsed * 60.0            # posts per minute
+        left = max(0, (self.total or self.done) - self.done)
+        eta = left / rate if rate > 0 else 0
+        self.set_phase(f"Capturing posts — {self.done}/{self.total} · "
+                       f"{rate:.0f}/min · about {_human_minutes(eta)} left")
+
     def line(self, text: str) -> None:
         m = _RE_TOTAL.match(text)
         if m:
@@ -280,6 +329,7 @@ class _Progress:
             return
         m = _RE_WORKERS.match(text)
         if m:
+            self._capture_started = time.time()
             self.set_phase(f"Capturing posts ({m.group(1)} parallel browser(s))")
             return
         m = _RE_RETRY.match(text)
@@ -341,6 +391,14 @@ class _Progress:
         if m:
             self.set_phase("Packaging downloads")
             return
+
+
+def _human_minutes(minutes: float) -> str:
+    if minutes < 1:
+        return "a minute"
+    if minutes < 90:
+        return f"{int(round(minutes))} min"
+    return f"{minutes / 60:.1f} h"
 
 
 def _shot_count(app: Path) -> int:
@@ -426,7 +484,8 @@ def _skipped_from_results(results: list) -> list:
 _REPORT_EXTS = ("pdf", "docx", "pptx")
 
 
-def publish(job_id: str, app: Path, stem: str, wanted=None) -> dict:
+def publish(job_id: str, app: Path, stem: str, wanted=None,
+            metrics_csv: Path = None) -> dict:
     """Move the pipeline's output into out/ under the user's chosen name.
 
     `wanted` — the formats the user ticked. For a profile type the pipeline was
@@ -454,7 +513,190 @@ def publish(job_id: str, app: Path, stem: str, wanted=None) -> dict:
     if _zip_screenshots(app, zip_dest):
         artifacts["zip"] = zip_dest.name
 
+    # The engagement numbers as READ, exact and unrounded — the report shows
+    # X's compact form, and someone will want to add them up.
+    if metrics_csv is not None and Path(metrics_csv).is_file():
+        dest = out / f"{stem}_metrics.csv"
+        shutil.copy2(metrics_csv, dest)
+        artifacts["csv"] = dest.name
+
     return artifacts
+
+
+# --------------------------------------------------------------------------- #
+# Engagement metadata — read the numbers off the posts, before the document
+# --------------------------------------------------------------------------- #
+# What X can tell us -> the sheet's own metric keys (profiles/netlinks.py
+# METRIC_HEADERS). Views, reach and impressions are ONE number on X: the sheet
+# itself heads that column "Reach/views", so all three keys get it rather than
+# forcing a choice the platform does not make.
+_METRIC_MAP = (("likes", ("like",)),
+               ("reposts", ("shares",)),
+               ("replies", ("comments",)),
+               ("views", ("views", "reach", "impressions")))
+
+_RE_M_READING = re.compile(r"^\[metrics\]\s+reading (\d+) X post")
+_RE_M_ONE = re.compile(r"^\[metrics\]\s+(\d+)/(\d+)\s")
+_RE_M_NO_SESSION = re.compile(r"^\[metrics\]\s+NO saved X session")
+_RE_M_UNREAD = re.compile(r"^\[metrics\]\s+(\d+) post\(s\) could not be opened")
+# NOT "had at least one metric …" — that is _RE_METRICS, the influencer
+# report's own line. Two regexes matching one sentence is the 'dropping' vs
+# 'dropped' trap (rule 20) waiting to happen; see profiles/progress.py.
+_RE_M_PARTIAL = re.compile(r"^\[metrics\]\s+(\d+) post\(s\) were missing")
+
+
+def _fetch_metrics(job_id: str, app: Path, prog: "_Progress") -> Path:
+    """Read each X post's engagement numbers and fill in the blanks.
+
+    Runs the reader as its own subprocess in the job's private code copy, for
+    the same reason the capture does (rule 2): it is the pipeline's own code,
+    isolated per job, and killable with the job. Then the numbers are merged
+    into `rows.json` and the canonical sheet is written again.
+
+    ONLY BLANKS ARE FILLED. A number the team typed into the sheet always wins:
+    they read theirs from Insights, ours off a public page, and quietly
+    replacing a hand-checked figure would be the worst kind of helpful.
+
+    Never fatal. A reader that fails costs the report its filled-in metrics, not
+    the report — so every failure is logged and the capture starts regardless.
+    Returns the CSV of what was read, or None.
+    """
+    jd = job_dir(job_id)
+    rows_file = jd / "rows.json"
+    if not rows_file.exists():
+        prog.note("Engagement numbers were requested but this job has no saved "
+                  "row list, so there was nothing to fill in.", "warn")
+        return None
+    try:
+        rows = json.loads(rows_file.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as e:
+        prog.note(f"Engagement numbers skipped — could not read the row list ({e}).",
+                  "warn")
+        return None
+
+    prog.set_phase("Reading engagement numbers from X")
+    cmd = [sys.executable, "-u", "metrics/x_metrics.py", "input.xlsx",
+           "--json", "metrics.json", "--csv", "metrics.csv"]
+    log = log_path(job_id).open("a", encoding="utf-8")
+    log.write("$ " + " ".join(cmd) + "\n\n")
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=str(app), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1, env=env,
+            start_new_session=True)
+    except OSError as e:
+        log.close()
+        prog.note(f"Engagement numbers skipped — could not start the reader ({e}).",
+                  "warn")
+        return None
+    _register(job_id, proc)
+    total = 0
+    try:
+        for raw in proc.stdout:
+            text = raw.rstrip("\n")
+            log.write(raw)
+            m = _RE_M_READING.match(text)
+            if m:
+                total = int(m.group(1))
+                prog.note(f"Reading likes, reposts, replies and views from "
+                          f"{total} X post(s) before building the report.")
+                continue
+            m = _RE_M_ONE.match(text)
+            if m:
+                prog.set_phase(f"Reading engagement numbers ({m.group(1)}/{m.group(2)})")
+                continue
+            if _RE_M_NO_SESSION.match(text):
+                prog.note("No saved X login — engagement numbers were read logged "
+                          "out, so view counts will mostly be unavailable.", "warn")
+                continue
+            m = _RE_M_UNREAD.match(text)
+            if m:
+                prog.note(f"{m.group(1)} post(s) would not open at all, so they "
+                          f"kept whatever the sheet said.", "warn")
+                continue
+            m = _RE_M_PARTIAL.match(text)
+            if m:
+                prog.note(f"{m.group(1)} post(s) had at least one number X did "
+                          f"not show — those cells were left as they were, not "
+                          f"written as 0.", "warn")
+                continue
+        proc.wait()
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        log.close()
+        _unregister(job_id)
+
+    read_file = app / "metrics.json"
+    if not read_file.exists():
+        prog.note("Engagement numbers could not be read — the report will show "
+                  "whatever the sheet already had. See the job log.", "warn")
+        return None
+    try:
+        read = json.loads(read_file.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as e:
+        prog.note(f"Engagement numbers skipped — unreadable result ({e}).", "warn")
+        return None
+
+    filled = _merge_metrics(rows, read)
+    if filled:
+        from .. import uploads
+        try:
+            uploads.write_canonical_xlsx(rows, app / "input.xlsx")
+            rows_file.write_text(json.dumps(rows), encoding="utf-8")
+        except Exception as e:
+            prog.note(f"Read the engagement numbers but could not write them "
+                      f"into the input sheet ({e}) — the report will show what "
+                      f"the sheet already had.", "warn")
+            return app / "metrics.csv"
+        prog.note(f"Filled in {filled} engagement value(s) the sheet had left "
+                  f"blank. Numbers already typed into the sheet were kept.")
+    else:
+        prog.note("No engagement value was missing from the sheet, so nothing "
+                  "was changed. The numbers read from X are in the CSV download.")
+    return app / "metrics.csv"
+
+
+def _merge_metrics(rows: list, read: list) -> int:
+    """Fill blank `sheet_metrics` from what the reader saw. Returns how many.
+
+    Values are written in X's own compact form (984, 1.2K, 45K) because that is
+    how the platform states them and how they fit the metric pills the deck
+    styles draw. The exact integers are never lost — they are in metrics.json
+    and in the CSV download beside the report.
+    """
+    by_link = {}
+    for r in read or []:
+        if (r or {}).get("status") == "ok":
+            by_link[str(r.get("link") or "").strip()] = r
+    if not by_link:
+        return 0
+    filled = 0
+    for row in rows:
+        got = by_link.get(str(row.get("link") or "").strip())
+        if got is None:
+            continue
+        metrics = dict(row.get("sheet_metrics") or {})
+        display = got.get("display") or {}
+        for source_key, sheet_keys in _METRIC_MAP:
+            if got.get(source_key) is None:
+                continue                       # X did not say -> leave the gap
+            value = str(display.get(source_key) or "").strip()
+            if not value or value == "\u2014":
+                continue
+            for key in sheet_keys:
+                if str(metrics.get(key) or "").strip():
+                    continue                   # typed by a human -> untouched
+                metrics[key] = value
+                filled += 1
+        if metrics:
+            row["sheet_metrics"] = metrics
+    return filled
 
 
 # --------------------------------------------------------------------------- #
@@ -510,7 +752,8 @@ def run_job(job_id: str, on_line=None) -> dict:
     outputs = report_types.clean_outputs(job["report_type"],
                                          job.get("outputs") or ())
     cmd = build_command(job["report_type"], job["title"], date, keep_engagement,
-                        int(job.get("workers") or 0), outputs)
+                        int(job.get("workers") or 0), outputs,
+                        bool(job.get("fast_capture")))
 
     store.update(job_id, status="running", started_at=time.time(),
                  phase="Checking the X login", error="")
@@ -548,9 +791,26 @@ def run_job(job_id: str, on_line=None) -> dict:
         elif "Signed in" in message:
             prog.note("Signed in to X automatically (the saved session was "
                       "missing or expired).")
+    # Engagement numbers BEFORE the capture: the merged values go into
+    # input.xlsx, which the pipeline is about to read.
+    metrics_csv = None
+    if bool(job.get("fetch_metrics")):
+        if rt is not None and rt.platform not in ("x", "combined"):
+            prog.note(f"Engagement numbers are read from X only, and this is a "
+                      f"{rt.platform} style — skipped.", "warn")
+        else:
+            try:
+                metrics_csv = _fetch_metrics(job_id, app, prog)
+            except Exception as e:              # rule 17: never silent
+                prog.note(f"Engagement numbers skipped — the reader failed "
+                          f"({e}). The report itself is unaffected.", "warn")
+        if (store.get(job_id) or {}).get("status") == "cancelled":
+            store.update(job_id, finished_at=time.time(), phase="Cancelled")
+            return store.get(job_id)
+
     prog.set_phase("Starting the browser")
 
-    log = log_path(job_id).open("w", encoding="utf-8")
+    log = log_path(job_id).open("a", encoding="utf-8")
     log.write("$ " + " ".join(cmd) + "\n\n")
 
     env = dict(os.environ)
@@ -579,8 +839,15 @@ def run_job(job_id: str, on_line=None) -> dict:
     # Live progress: the per-link result lines only print after capture ends, so
     # we count screenshot files on disk to drive the "captured 12 / 40" bar.
     def _shot_poller():
+        beat = 0
         while proc.poll() is None:
             prog.observe_shots(_shot_count(app))
+            beat += 1
+            if beat % 8 == 0:                 # every ~16s
+                try:
+                    prog.heartbeat()
+                except Exception:
+                    pass
             time.sleep(2)
 
     threading.Thread(target=_watchdog, daemon=True).start()
@@ -607,7 +874,7 @@ def run_job(job_id: str, on_line=None) -> dict:
 
     results = _read_results(app)
     skipped = _skipped_from_results(results)
-    artifacts = publish(job_id, app, stem, outputs)
+    artifacts = publish(job_id, app, stem, outputs, metrics_csv)
     captured = len(results) - len(skipped)
 
     # Success means a DOCUMENT was produced. A failed link still leaves an

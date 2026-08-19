@@ -136,8 +136,18 @@ _ADDED_COLUMNS = {
     "jobs": (("keep_engagement", "INTEGER DEFAULT 0"),
              ("workers", "INTEGER DEFAULT 0"),          # 0 = the server default
              ("outputs", "TEXT DEFAULT '[]'"),
-             ("project_id", "TEXT DEFAULT ''")),          # v3
+             ("project_id", "TEXT DEFAULT ''"),           # v3
+             # Read likes/reposts/replies/views off each X post before the
+             # document is built, and fill in the sheet columns that were left
+             # blank. Off by default: it costs one page load per link and
+             # spends the X account's daily budget (RULEBOOK rule 21).
+             ("fetch_metrics", "INTEGER DEFAULT 0"),
+             # Shorter fixed waits inside the capture (approved edit 6c).
+             ("fast_capture", "INTEGER DEFAULT 0")),
     "presets": (("outputs", "TEXT DEFAULT '[]'"),),
+    # Which of the project's styles THIS source runs. '[]' = all of them, which
+    # is what every source created before this column meant.
+    "sources": (("styles", "TEXT DEFAULT '[]'"),),
 }
 
 # Every job made before v3 lands here, so nothing is lost and nothing is
@@ -210,20 +220,24 @@ def _row_to_dict(row) -> dict:
 def create(owner: str, name: str, title: str, report_type: str,
            link_count: int, upload_name: str,
            keep_engagement: bool = False, workers: int = 0,
-           outputs=None, project_id: str = "") -> str:
+           outputs=None, project_id: str = "",
+           fetch_metrics: bool = False, fast_capture: bool = False) -> str:
     """`workers` = browsers to capture with; 0 means "use the server default".
     `outputs` = the formats ticked on the form; [] means every format the
-    style builds."""
+    style builds. `fetch_metrics` = read each X post's likes / reposts /
+    replies / views before building, and fill in the sheet columns left blank.
+    `fast_capture` = shorten the waits every post pays regardless (edit 6c)."""
     job_id = uuid.uuid4().hex[:16]
     with _connect() as conn:
         conn.execute(
             "INSERT INTO jobs (id, owner, name, title, report_type, status, "
             "phase, link_count, upload_name, total, keep_engagement, workers, "
-            "outputs, project_id, created_at) "
-            "VALUES (?,?,?,?,?,'queued','Waiting for a free capture slot',?,?,?,?,?,?,?,?)",
+            "outputs, project_id, fetch_metrics, fast_capture, created_at) "
+            "VALUES (?,?,?,?,?,'queued','Waiting for a free capture slot',?,?,?,?,?,?,?,?,?,?)",
             (job_id, owner, name, title, report_type, link_count, upload_name,
              link_count, int(bool(keep_engagement)), max(0, int(workers)),
-             json.dumps(list(outputs or [])), project_id or "", time.time()))
+             json.dumps(list(outputs or [])), project_id or "",
+             int(bool(fetch_metrics)), int(bool(fast_capture)), time.time()))
     return job_id
 
 
@@ -478,7 +492,7 @@ def project_replace_style(pid: str, old_slug: str, new_slug: str) -> None:
 # --------------------------------------------------------------------------- #
 def _source_row(r) -> dict:
     d = dict(r)
-    for f in ("last_job_ids", "log"):
+    for f in ("last_job_ids", "log", "styles"):
         try:
             d[f] = json.loads(d.get(f) or "[]")
         except (ValueError, TypeError):
@@ -490,17 +504,24 @@ def _source_row(r) -> dict:
 
 def source_create(project_id: str, url: str, mode: str = "latest", gid: str = "",
                   auto_run: bool = True, label: str = "", created_by: str = "",
-                  kind: str = "sheet", trigger: str = "new_date") -> str:
+                  kind: str = "sheet", trigger: str = "new_date",
+                  styles=None) -> str:
     """`trigger`: 'new_date' = run only when the newest date moves on (a new
-    day tab / a new date block); 'any_change' = run whenever links change."""
+    day tab / a new date block); 'any_change' = run whenever links change.
+
+    `styles`: slugs of the project's styles this source runs with. Empty means
+    every runnable style the project has — the behaviour before the column
+    existed, so an untouched source keeps working exactly as it did.
+    """
     sid = uuid.uuid4().hex[:12]
     with _connect() as conn:
         conn.execute(
             "INSERT INTO sources (id, project_id, kind, label, url, mode, gid, "
-            "auto_run, trigger, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "auto_run, trigger, styles, created_by, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (sid, project_id, kind, (label or "")[:80], url[:600], mode, gid or "",
              int(bool(auto_run)), trigger if trigger in ("new_date", "any_change") else "new_date",
-             created_by, time.time()))
+             json.dumps([str(s) for s in (styles or [])]), created_by, time.time()))
     return sid
 
 
@@ -528,7 +549,7 @@ def sources_all(enabled_only: bool = True) -> list:
 def source_update(sid: str, **fields) -> None:
     if not fields:
         return
-    for f in ("last_job_ids", "log"):
+    for f in ("last_job_ids", "log", "styles"):
         if f in fields and not isinstance(fields[f], str):
             fields[f] = json.dumps(fields[f])
     for f in ("auto_run", "enabled"):

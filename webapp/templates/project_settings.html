@@ -21,7 +21,10 @@
     <div class="fields" style="grid-template-columns:1fr 1fr">
       <label class="check"><input type="checkbox" name="dedupe" {{ 'checked' if st.get('dedupe', True) else '' }}><span>Remove duplicate posts</span></label>
       <label class="check"><input type="checkbox" name="keep_engagement" {{ 'checked' if st.get('keep_engagement') else '' }}><span>Keep the engagement line (X styles that allow it)</span></label>
-      <label class="field"><span>Capture speed <span class="faint">(browsers; 0 = server default)</span></span><input name="workers" type="number" min="0" max="{{ max_workers }}" value="{{ st.get('workers', 0) }}"></label>
+      <label class="check"><input type="checkbox" name="fetch_metrics" {{ 'checked' if st.get('fetch_metrics') else '' }}><span><b>Read engagement numbers from X</b> — likes, reposts, replies and views are read off each post and fill in the sheet columns left blank. A number already typed into the sheet is never overwritten. Costs one extra page load per link.</span></label>
+      <label class="check"><input type="checkbox" name="fast_capture" {{ 'checked' if st.get('fast_capture') else '' }}><span><b>Fast waits</b> — shortens the three pauses every post pays whether or not anything is wrong (network settle, layout settle, pacing). Saves roughly 4 seconds a post; on 1000+ links that is over an hour. Twitter Report only.</span></label>
+      <label class="field"><span>Capture speed <span class="faint">(browsers; 0 = server default of {{ default_workers }})</span></span><input name="workers" type="number" min="0" max="{{ max_workers }}" value="{{ st.get('workers', 0) }}"></label>
+      <div class="small muted" style="grid-column:1/-1;margin-top:-4px">This server has <b>{{ cores }} vCPU</b>{% if available_gb %} and {{ '%.1f'|format(available_gb) }} GB free{% endif %}, so it can really run <b>{{ hardware_max }} browser(s)</b> at once. Asking for more does not make a run faster — the extra browsers take turns on the same core — so the box above will not go past {{ max_workers }}.</div>
       <label class="field"><span>Note <span class="faint">(shown to the team on this page)</span></span><input name="note" type="text" maxlength="200" value="{{ st.get('note', '') }}" placeholder="e.g. sheet lives in the Kashi drive · run on the 14th"></label>
     </div>
   </fieldset>

@@ -428,7 +428,7 @@ function initJobPage(executionMode) {
   const counter = $("counter"), elapsed = $("elapsed"), errBox = $("job-error"), downloads = $("downloads");
   const cancelForm = $("cancel-form"), activity = $("activity"), skippedCard = $("skipped-card");
   const skippedList = $("skipped"), skippedCount = $("skipped-count"), ephemeralNote = $("ephemeral-note");
-  const KINDS = ["pdf", "docx", "pptx", "xlsx", "zip"];
+  const KINDS = ["pdf", "docx", "pptx", "xlsx", "csv", "zip"];
 
   const render = (job) => {
     pill.textContent = job.status; pill.className = `st ${job.status}`;
@@ -1441,6 +1441,7 @@ function initProjectSettings() {
       await api(`/api/projects/${encodeURIComponent(pid)}`, { method: "PATCH", json: {
         name: f.name.value.trim(), client: f.client.value.trim(), emoji: f.emoji.value.trim(),
         settings: { dedupe: f.dedupe.checked, keep_engagement: f.keep_engagement.checked,
+          fetch_metrics: f.fetch_metrics.checked, fast_capture: f.fast_capture.checked,
           workers: +f.workers.value || 0, note: f.note.value.trim() } } });
       say("Saved.", true); setTimeout(() => location.reload(), 500);
     } catch (err) { say(err.message, false); }
@@ -1460,9 +1461,16 @@ function initProjectSources() {
   const list = $("src-list"); if (!list) return;
   const pid = list.dataset.pid;
   let sources = []; try { sources = JSON.parse($("sources-data").textContent) || []; } catch (_) {}
+  let pstyles = []; try { pstyles = JSON.parse($("project-styles-data").textContent) || []; } catch (_) {}
   const base = `/api/projects/${encodeURIComponent(pid)}/sources`;
   const MODE = { latest: "newest date", tab: "one tab", all: "every tab" };
   const when = (t) => (t ? ago(t) : "never");
+  const styleLabel = (slug) => (pstyles.find((x) => x.slug === slug) || {}).label || slug;
+  /* No tick = every style the project has, which is what a source made before
+     the picker existed means. Say so, rather than showing an empty space. */
+  const styleTags = (s) => ((s.styles || []).length
+    ? (s.styles || []).map((x) => `<span class="tag">${esc(styleLabel(x))}</span>`).join(" ")
+    : `<span class="tag">all ${pstyles.length} project style(s)</span>`);
 
   function render() {
     $("src-empty").hidden = !!sources.length;
@@ -1481,6 +1489,7 @@ function initProjectSources() {
           <div class="row" style="gap:6px">
             <button type="button" class="btn sm" data-act="check">Check now</button>
             <button type="button" class="btn sm primary" data-act="run">Run now</button>
+            <button type="button" class="btn sm ghost" data-act="edit">Edit</button>
             <button type="button" class="btn sm ghost" data-act="toggle">${s.auto_run ? "Turn auto-run off" : "Turn auto-run on"}</button>
             <button type="button" class="btn sm ghost danger" data-act="del">Remove</button>
           </div>
@@ -1488,6 +1497,7 @@ function initProjectSources() {
         <table class="kv" style="margin-top:10px">
           <tr><td>Last seen</td><td>${s.last_tab ? "tab <b>" + esc(s.last_tab) + "</b> · " : ""}${s.last_date ? "date <b>" + esc(s.last_date) + "</b> · " : ""}${s.last_count || 0} link(s)</td></tr>
           <tr><td>Checked</td><td>${esc(when(s.last_checked_at))}${s.last_changed_at ? " · last change " + esc(when(s.last_changed_at)) : ""}</td></tr>
+          <tr><td>Prints with</td><td>${styleTags(s)}</td></tr>
           <tr><td>Last runs</td><td>${jobs || '<span class="faint">none yet</span>'}</td></tr>
         </table>
         ${err}
@@ -1500,6 +1510,9 @@ function initProjectSources() {
     const sid = b.closest("[data-sid]").dataset.sid, s = sources.find((x) => x.id === sid);
     b.disabled = true;
     try {
+      if (b.dataset.act === "edit") {
+        b.disabled = false; show(true, s); return;
+      }
       if (b.dataset.act === "del") {
         if (!confirm("Stop watching this sheet? Runs already made stay.")) { b.disabled = false; return; }
         const r = await api(`${base}/${encodeURIComponent(sid)}`, { method: "DELETE" }); sources = r.sources;
@@ -1515,13 +1528,47 @@ function initProjectSources() {
     } catch (err) { alert(err.message); b.disabled = false; }
   });
 
-  /* add dialog */
+  /* add / edit dialog — one form, because the fields are the same ones and a
+     second dialog would drift from this one the first time either changes. */
   const modal = $("src-modal"), form = $("src-form"), msg = $("src-msg"), save = $("src-save"), report = $("src-report");
-  const show = (on) => { modal.hidden = !on; if (on) { form.reset(); report.hidden = true; save.disabled = true; msg.textContent = ""; $("src-tab-wrap").hidden = true; setTimeout(() => form.elements.url.focus(), 30); } };
+  const title = $("src-title");
+  let editing = null;                      // the source being edited, or null
+  const styleBoxes = () => Array.from(form.querySelectorAll('input[name="styles"]'));
+  const pickedStyles = () => styleBoxes().filter((b) => b.checked).map((b) => b.value);
+  const show = (on, src) => {
+    modal.hidden = !on;
+    if (!on) { editing = null; return; }
+    form.reset(); report.hidden = true; msg.textContent = ""; $("src-tab-wrap").hidden = true;
+    editing = src || null;
+    title.textContent = editing ? "Edit this sheet" : "Add a Google Sheet";
+    save.textContent = editing ? "Save changes" : "Save & watch";
+    /* Editing: the sheet was already understood once when it was added, so the
+       form is usable straight away. Adding: look first, save after. */
+    save.disabled = !editing;
+    if (editing) {
+      const f = form.elements;
+      f.url.value = editing.url || "";
+      f.label.value = editing.label || "";
+      f.mode.value = editing.mode || "latest";
+      f.trigger.value = editing.trigger || "new_date";
+      f.auto_run.checked = !!editing.auto_run;
+      const want = new Set(editing.styles || []);
+      styleBoxes().forEach((b) => { b.checked = want.has(b.value); });
+      if (editing.mode === "tab" && editing.gid) {
+        const sel = f.gid;
+        if (!Array.from(sel.options).some((o) => o.value === editing.gid)) {
+          sel.insertAdjacentHTML("beforeend", `<option value="${esc(editing.gid)}">tab ${esc(editing.gid)}</option>`);
+        }
+        sel.value = editing.gid;
+        $("src-tab-wrap").hidden = false;
+      }
+    }
+    setTimeout(() => form.elements.url.focus(), 30);
+  };
   $("src-add-btn").addEventListener("click", () => show(true));
   $("src-close").addEventListener("click", () => show(false));
   modal.addEventListener("click", (e) => { if (e.target === modal) show(false); });
-  form.elements.mode.addEventListener("change", () => { $("src-tab-wrap").hidden = form.elements.mode.value !== "tab"; save.disabled = true; });
+  form.elements.mode.addEventListener("change", () => { $("src-tab-wrap").hidden = form.elements.mode.value !== "tab"; if (!editing) save.disabled = true; });
   const say = (t, ok) => { msg.textContent = t; msg.style.color = ok ? "var(--ok)" : "var(--bad)"; };
   async function inspect() {
     const url = form.elements.url.value.trim(); if (!url) return say("Paste the sheet link first.", false);
@@ -1549,12 +1596,22 @@ function initProjectSources() {
     } catch (err) { say(err.message, false); report.hidden = true; }
   }
   $("src-inspect").addEventListener("click", inspect);
-  form.elements.url.addEventListener("change", () => { report.hidden = true; save.disabled = true; });
+  form.elements.url.addEventListener("change", () => { report.hidden = true; if (!editing) save.disabled = true; });
   form.addEventListener("submit", async (e) => {
     e.preventDefault(); say("Saving…", true); save.disabled = true;
+    const f = form.elements;
+    const body = { url: f.url.value.trim(), mode: f.mode.value,
+      gid: f.mode.value === "tab" ? f.gid.value : "", label: f.label.value.trim(),
+      auto_run: f.auto_run.checked, trigger: f.trigger.value, styles: pickedStyles() };
     try {
-      const r = await api(base, { method: "POST", json: { url: form.elements.url.value.trim(), mode: form.elements.mode.value, gid: form.elements.mode.value === "tab" ? form.elements.gid.value : "", label: form.elements.label.value.trim(), auto_run: form.elements.auto_run.checked, trigger: form.elements.trigger.value } });
-      sources = r.sources; render(); show(false);
+      if (editing) {
+        const r = await api(`${base}/${encodeURIComponent(editing.id)}`, { method: "PATCH", json: body });
+        sources = sources.map((x) => (x.id === editing.id ? r.source : x));
+      } else {
+        const r = await api(base, { method: "POST", json: body });
+        sources = r.sources;
+      }
+      render(); show(false);
     } catch (err) { say(err.message, false); save.disabled = false; }
   });
   render();

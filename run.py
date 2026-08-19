@@ -8,6 +8,7 @@
     python run.py --title "Twitter Report"   # header label (default: "Twitter Report")
     python run.py --no-date                  # header is the title alone, no date
     python run.py --keep-engagement          # keep the like/views line in the shot
+    python run.py --fast                     # shorter fixed waits (approved edit 6c)
     python run.py --headed                   # watch the browser
 
 The report header reads "<title> <date>", e.g. "Twitter Report 25-07-26"; the
@@ -20,7 +21,9 @@ Screenshots are cropped above the engagement bar by default. `--keep-engagement`
 crops below it instead, so the "time · views" line and the reply/repost/like
 counts stay in the picture — on a comment link, the parent's line and the
 comment's own. The switch is not consumed here: it falls through to
-src/run_report.py, which is where capture options belong.
+src/run_report.py, which is where capture options belong. `--fast` falls through
+the same way: it shortens the three waits every post pays whether or not
+anything is wrong (see src/capture/x_capture.py, approved edit 6c).
 
 Under the hood this runs the capture + verification pass (src/run_report.py)
 and then the report builder (src/report_builder.py), writing the .pdf and .docx

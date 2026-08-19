@@ -31,3 +31,6 @@ venv/
 
 # Generated profile thumbnails (derived from profiles/registry)
 webapp/static/profiles/
+
+# Scratch folder for files this sandbox could not delete in place
+_to_delete/

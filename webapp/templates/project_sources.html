@@ -15,9 +15,9 @@
 <div class="ov-empty" id="src-empty" hidden>No sheet is watched yet. Add the workbook link — every tab is read; you choose whether the newest date tab, one tab, or all of them count.</div>
 
 <!-- add / inspect dialog -->
-<div class="modal" id="src-modal" hidden role="dialog" aria-modal="true" aria-label="Add a Google Sheet source">
+<div class="modal" id="src-modal" hidden role="dialog" aria-modal="true" aria-label="Add or edit a Google Sheet source">
   <div class="modal-card" style="width:820px"><button type="button" class="modal-x" id="src-close" aria-label="Close">×</button>
-    <h3 style="margin:0 0 4px">Add a Google Sheet</h3>
+    <h3 style="margin:0 0 4px" id="src-title">Add a Google Sheet</h3>
     <p class="small muted" style="margin:0 0 12px">Share → “Anyone with the link” (viewer is enough). No columns to point at — paste the link and look at what the reader understood before saving.</p>
     <form id="src-form" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -42,6 +42,16 @@
             <option value="any_change">anything changes (new date or new links)</option>
           </select></label>
       </div>
+      <fieldset style="margin-top:12px"><legend>Styles <span class="faint">(this project uses {{ project_style_list | length }})</span></legend>
+        <p class="small muted" style="margin:0 0 8px">One project can use several styles, and one sheet is not always meant for all of them. Tick the ones this sheet should print — <b>tick nothing and every style runs</b>, which is what a sheet added before this option did. Add or remove styles themselves on the <a href="/project/styles">Styles page</a>.</p>
+        <div id="src-styles" class="row" style="gap:10px;flex-wrap:wrap">
+          {% for st in project_style_list %}
+          <label class="check" style="min-width:220px"><input type="checkbox" name="styles" value="{{ st.slug }}" {% if st.missing %}disabled{% endif %}><span>{{ st.label }} <span class="faint">· {{ st.platform }}</span>{% if st.missing %} <span class="tag hot">no longer in the pool</span>{% endif %}</span></label>
+          {% else %}
+          <span class="small faint">This project has no styles yet — pick some on the <a href="/project/styles">Styles page</a>, then come back.</span>
+          {% endfor %}
+        </div>
+      </fieldset>
       <div class="row" style="margin-top:12px">
         <button type="button" class="btn" id="src-inspect">Look at the sheet</button>
         <button type="submit" class="btn primary" id="src-save" disabled>Save &amp; watch</button>
@@ -64,5 +74,6 @@
 
 {% block scripts %}
 <script id="sources-data" type="application/json">{{ sources_list | tojson }}</script>
+<script id="project-styles-data" type="application/json">{{ project_style_list | tojson }}</script>
 <script>initProjectSources();</script>
 {% endblock %}

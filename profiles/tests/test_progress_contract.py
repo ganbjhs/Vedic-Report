@@ -74,6 +74,14 @@ CASES = [
     ("verify",              lambda: emitted(P.verify, 18, 20),        RN._RE_VERIFY,   ("18", "20")),
     ("metrics_missing",     lambda: emitted(P.metrics_missing, 9),    RN._RE_METRICS,  ("9",)),
     ("wrote",               lambda: emitted(P.wrote, "/tmp/a.pdf", 1.3), RN._RE_WROTE, ("/tmp/a.pdf",)),
+    # metrics/x_metrics.py — the engagement reader that runs before the capture
+    ("metrics_reading",     lambda: emitted(P.metrics_reading, 12),    RN._RE_M_READING, ("12",)),
+    ("metrics_one",         lambda: emitted(P.metrics_one, 3, 12, "ok", "45", "6",
+                                            "2", "7.8K", "https://x.com/a/status/1"),
+                                                                      RN._RE_M_ONE, ("3", "12")),
+    ("metrics_no_session",  lambda: emitted(P.metrics_no_session),     RN._RE_M_NO_SESSION, None),
+    ("metrics_unread",      lambda: emitted(P.metrics_unread, 4),      RN._RE_M_UNREAD, ("4",)),
+    ("metrics_partial",     lambda: emitted(P.metrics_partial, 5),     RN._RE_M_PARTIAL, ("5",)),
 ]
 for name, make, regex, groups in CASES:
     check(f"{name} -> {regex.pattern[:34]}...", matches(regex, make(), groups))

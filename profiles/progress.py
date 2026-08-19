@@ -118,3 +118,43 @@ def metrics_missing(count: int) -> str:
 def wrote(path, mb: float) -> str:
     """MUST match _RE_WROTE — it moves the job to 'Packaging downloads'."""
     return _say(f"[report] wrote {path}  ({mb} MB)")
+
+
+# --------------------------------------------------------------------------- #
+# Engagement metadata  (_RE_M_READING, _RE_M_ONE, _RE_M_NO_SESSION,
+#                       _RE_M_UNREAD, _RE_M_PARTIAL)
+#
+# `metrics/x_metrics.py` reads likes / reposts / replies / views off the posts
+# before the document is built. It runs as its own subprocess, so its stdout is
+# the same kind of invisible contract everything above is — and it says so here
+# rather than in its own file, where the contract test could not see it.
+#
+# NOTE the wording of `metrics_partial`. The obvious phrasing, "had at least one
+# metric unavailable", is already `metrics_missing`'s — the influencer report's
+# line — and the two would then be one regex wearing two hats, which is how the
+# 'dropping' vs 'dropped' bug happened. Different fact, different words.
+# --------------------------------------------------------------------------- #
+def metrics_reading(count: int) -> str:
+    """MUST be emitted: it is where the reader's own progress count starts."""
+    return _say(f"[metrics] reading {count} X post(s) for engagement numbers")
+
+
+def metrics_one(n: int, total_: int, status: str, likes: str, reposts: str,
+                replies: str, views: str, link: str) -> str:
+    """One per post, as it is read."""
+    return _say(f"[metrics] {n}/{total_} {status} · {likes} likes · "
+                f"{reposts} reposts · {replies} replies · {views} views · {link}")
+
+
+def metrics_no_session() -> str:
+    return _say("[metrics] NO saved X session — reading logged out, so view "
+                "counts will usually be unavailable")
+
+
+def metrics_unread(count: int) -> str:
+    return _say(f"[metrics] {count} post(s) could not be opened at all")
+
+
+def metrics_partial(count: int) -> str:
+    return _say(f"[metrics] {count} post(s) were missing a number X did not "
+                "show — left blank, never written as 0")

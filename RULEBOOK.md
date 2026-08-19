@@ -58,6 +58,74 @@ without the switch, `_crop_box` runs the same branch it always did and the
 picture is unchanged. The flag rides on the task dict, so `run_chunk`'s pickled
 signature did not move.
 
+**Approved edit 6 — a long list must not spend its time waiting**
+(`src/run_report.py`, `src/_worker.py`, `src/capture/x_capture.py`,
+`src/capture/__init__.py`; `run.py` only in its docstring, since an unknown
+`--flag` already falls through to the runner). Three separate costs, all of
+which only show up at length and all of which are invisible at the twenty-link
+sizes everything here was tested at. A 1232-link run made them impossible to
+miss.
+
+*6a — a shared queue instead of fixed shares.* The list was cut into `workers`
+slices by `n % workers` and each worker process was handed one, up front.
+Workers now pull the next task from one queue instead. Same tasks, same
+dispatch order, same per-link behaviour — only the assignment changed.
+`run_chunk` keeps its exact signature and is still used for the single-worker
+path; `run_queue` is additive.
+
+The obvious reason for this is **wrong, and was measured to be wrong before it
+was written down**. "Heavy links group together in the sheet and land in one
+slice" is false: a stride-`workers` round robin spreads a contiguous run of
+expensive links evenly, and a periodic one evenly too. Over 300 shuffles of a
+1232-link list shaped like a real one (90% ordinary ~8s, 8% media-heavy ~15s,
+2% dead/throttled ~60s) on 4 workers, the queue removes a **mean of 4.2%** of
+the wall clock — best 10.6%, worst nothing. That is not worth an edit here.
+
+This is: with **one browser running 1.6x slow, the queue removes a mean of
+30.8%.** A fixed slice is decided before anything is known about how fast each
+browser will actually run, and they do not run equally — a browser that hits an
+X backoff, or that the OS deschedules because the box is oversubscribed, keeps
+its whole remaining share while the others sit finished. On a 1-vCPU server that
+contention is the normal case. The queue cannot make a slow browser fast; it
+stops a slow browser from deciding when everyone else goes home.
+
+It also closes a hole that predates it: `failed_idx` was built from the results
+that came BACK, so a link whose worker died mid-capture had no result, was
+therefore not in the failed set, and was dropped from the report without ever
+being retried. It is now built from the TASKS — the same set as before for any
+run in which nothing crashes.
+
+*6b — the recovery passes stop being single-file.* The retry and quality passes
+each ran every task through ONE browser, sequentially. The retry pass says why
+in its own comment — it recovers "transient timeouts from heavy parallelism",
+so being calmer than the main pass IS the recovery — and that intent is kept:
+the passes run at HALF the main width, never at full width, and a list shorter
+than `_RECOVERY_MIN_TASKS` (40) still runs exactly as it did, one browser, in
+order. But "one browser" and "calmer than the main pass" are not the same
+thing, and at length the difference is half-hours: 15% of 1232 links is 185
+posts, and 185 posts through one browser is over half an hour tacked on after
+the main pass has already finished.
+
+*6c — `--fast`, default off.* Three waits are paid on every post whether or not
+anything is wrong: the `networkidle` settle, the post-media layout settle, and
+the pacing sleep at the end of `capture()`. The first cannot even succeed —
+the comment beside it says X long-polls and never idles — so it burns its full
+3.5s every time, and the real gate is the `_ALL_MEDIA_READY` wait immediately
+after it. Together they spend ~5.5s per post doing nothing; over 1232 posts
+that is more than an hour and a half of browser time. `--fast` puts the three
+on a shorter budget (~1.9s). It is NOT a quality trade in the way the others
+here are — the timeouts it shortens are floors, not ceilings; `_SELECTOR_TIMEOUT`,
+`_MEDIA_TIMEOUT` and the `goto` budget are ceilings and are untouched, because
+those end the moment the thing arrives and shortening them would only lose slow
+posts. The pacing sleep is shortened and never removed: it is what keeps a long
+run from reading as a scraper. Default `fast=False` takes the identical path
+through the identical numbers, so an unchanged invocation is unchanged.
+
+Cannot be done from outside `src/`: the assignment of links to browsers, the
+width of the recovery passes and the wait budgets are all chosen inside the
+runner and the capture, and only the capture holds the page. Every new
+parameter defaults to the old behaviour.
+
 **Approved edit 3 — `run.py --no-date`** (mirrored in
 `influencer/run_influencer.py`). The web app needs the document header to read
 exactly what the user typed, and `run.py` composes `"<title> <date>"` internally
@@ -103,6 +171,8 @@ line: an idea that was wrong once will look attractive again.
 | **Trusting `frame_ok`, `status="ok"` or `[verify] N/N clean`** as evidence a run was good | All 80 shots across four benchmark runs reported `frame_ok=True`, `overlay=False`, `status="ok"` and `[verify] 20/20` — while shots were visibly missing their parent post, and one showed a loading spinner instead of a video | Rule 3, without exception: **open the images and the documents and look**. A green status only proves the code did not raise |
 | **"Fixing" the absolute paths in `reports/results.json`** | They look like a portability bug and are not. Rule 2 copies the code into the job dir, so `ROOT` resolves inside the job and the paths are self-consistent | Leave them. A consumer **inside** the job subprocess may trust them; a consumer in the **webapp** must glob or rebase, as `publish()` and `_zip_screenshots()` already do |
 | **Running more than ~300 captures a day on one X account** | Measured: after ~320 the same 60-link set went from 0 to 18 retries, 1 to 8 recaptures, produced 598x80 frames, and parent loss hit 38/60 (63%). Nothing raised an error | Rule 21. Rest the account, and treat any run with an unusual retry count as inadmissible rather than as a result |
+| **Raising `--workers` to make a big run finish sooner, without checking the box** | Measured on the 1-vCPU / 4 GB production VPS: 1232 links at 4 browsers produced **0 screenshots in 2m29s**. `MAX_WORKERS` defaulted to the constant 4 on every machine, so the form offered four browsers to one core and they took turns on it. The config comment beside `MAX_WORKERS` had predicted exactly this and was not wired to anything | `config._hardware_ceiling()` — cores + 1 (a capture waits on the network with the CPU idle, so one more than cores fills the gaps; two more only adds context switching), capped by free RAM at ~1.2 GB per browser. Shown on Project settings so the number is visible before a run, not after |
+| **Reading "0 / N captured" as a hung job** | The per-link result lines only print after capture ENDS, and the bar counts PNGs on disk, so a healthy 1232-link job looks identical to a dead one for its first minute — and the reasonable thing to do with a dead job is cancel it, which is what happened | `_Progress.heartbeat()`, on a timer rather than an event: before the first PNG it reports elapsed time and says the job is alive; after it, the measured posts/min and a finish estimate from THIS run's pace |
 | **Averaging a healthy run with a degraded one** | The two zero-cost diagnostic passes were 6.7% and 63.3%. Their mean, 35%, describes neither and would have been reported as the bug's rate | Report the conditions separately, or discard the degraded run and re-measure |
 | **Cropping a capture to a tile aspect** (`fit: "crop-top"` in a profile) | Caught by eye on the first `contact-sheet` render: a master is *parent + reply*, and a 1:1 crop kept the parent and threw the reply away. That is rule 20's bug re-created at the presentation layer, where no capture-side gate can see it | **Pad, never crop.** `contact-sheet` uses `fit: "pad"` at 4:5. The `crop-to-aspect` op still exists because a profile may legitimately want it for non-evidence imagery, but no shipped profile uses it |
 

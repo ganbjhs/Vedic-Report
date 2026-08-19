@@ -248,6 +248,12 @@ async def project_sources_page(request: Request, user: str = Depends(auth.requir
         request, "project_sources.html",
         _shell(request, user, "sources",
                sources_list=[sources.public(s) for s in store.sources_for(project["id"])],
+               # The styles a source may be pointed at are the project's own —
+               # the picker and the API boundary read the same list, so a source
+               # can never claim a style the project does not use.
+               project_style_list=[{"slug": s["slug"], "label": s["label"],
+                                    "platform": s["platform"], "missing": s["missing"]}
+                                   for s in projects.styles_of(project)],
                sync_minutes=config.SHEET_SYNC_MINUTES))
 
 
@@ -255,7 +261,10 @@ async def project_sources_page(request: Request, user: str = Depends(auth.requir
 async def project_settings_page(request: Request, user: str = Depends(auth.require_user)):
     return templates.TemplateResponse(
         request, "project_settings.html",
-        _shell(request, user, "psettings", max_workers=config.MAX_WORKERS))
+        _shell(request, user, "psettings", max_workers=config.MAX_WORKERS,
+               default_workers=config.CAPTURE_WORKERS, cores=config.CORES,
+               available_gb=config.AVAILABLE_GB,
+               hardware_max=config.HARDWARE_MAX_WORKERS))
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)

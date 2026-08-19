@@ -12,6 +12,7 @@ Usage:
     python src/run_report.py links.xlsx
     python src/run_report.py -                      # paste links, Ctrl-D
     python src/run_report.py --workers 6            # more parallelism
+    python src/run_report.py --fast                 # shorter fixed waits
     python src/run_report.py --headed               # watch the browser
     python src/run_report.py --keep-engagement      # keep the like/views line
 
@@ -23,6 +24,7 @@ The X login comes from sessions/x_state.json — create it once with:
     python src/save_sessions.py x
 """
 import json
+import multiprocessing
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -39,6 +41,30 @@ SHOTS = OUT / "screenshots"
 DEFAULT_WORKERS = 3
 MIN_SHOT_BYTES = 1024   # a valid PNG screenshot is comfortably larger than this
 
+# APPROVED EDIT 6b — the recovery passes stop being single-file.
+#
+# Both passes were written to run in ONE browser, sequentially, and the comment
+# on the retry pass says why: it recovers "transient timeouts from heavy
+# parallelism", so going slower than the main pass IS the recovery. That intent
+# is kept — the passes still run at a FRACTION of the main width, never at full
+# width — but "one browser" and "calmer than the main pass" are not the same
+# thing, and on a long list the difference is measured in half-hours: 15% of
+# 1232 links is 185 posts, and 185 posts through one browser is over half an
+# hour after the main pass has already finished.
+#
+# Below this many links a pass stays exactly as it was — single browser, in
+# order. That is the case the original wording was written for and the case
+# where a second browser buys nothing worth the risk.
+_RECOVERY_MIN_TASKS = 40
+_RECOVERY_WIDTH = 0.5          # of the main pass's worker count, rounded down
+
+
+def _recovery_workers(n_tasks: int, workers: int) -> int:
+    """How many browsers a recovery pass may use. 1 for a short list."""
+    if n_tasks < _RECOVERY_MIN_TASKS or workers <= 1:
+        return 1
+    return max(1, min(int(workers * _RECOVERY_WIDTH), n_tasks))
+
 CTX_KWARGS = {
     "viewport": {"width": 1280, "height": 1600},
     "locale": "en-IN",
@@ -54,6 +80,70 @@ def _arg_value(argv, flag, default):
         if i + 1 < len(argv):
             return argv[i + 1]
     return default
+
+
+def run_tasks(tasks, workers, headless, state):
+    """Capture `tasks` across `workers` browsers. APPROVED EDIT 6a.
+
+    Was: the list was cut into `workers` fixed slices by `n % workers` up front
+    and each worker process was handed one. Now: one queue, every worker pulls
+    the next task, so the run ends when the WORK ends rather than when the
+    unluckiest slice ends. Same tasks, same dispatch order, same per-link
+    behaviour — only the assignment changes.
+
+    MEASURED, because the obvious justification for this is wrong. "A sheet that
+    groups its heavy accounts together loads them all into one slice" sounds
+    right and is false: a stride-`workers` round robin spreads a contiguous
+    block of expensive links *evenly*, and it spreads a periodic one evenly too.
+    Simulated over 300 shuffles of a 1232-link list shaped like a real one (90%
+    ordinary ~8s, 8% media-heavy ~15s, 2% dead/throttled ~60s), 4 workers:
+
+        fixed split   mean 51.6 min      shared queue  mean 49.4 min
+        wall clock removed: mean 4.2%, best 10.6%, worst 0.0%
+
+    Four percent is not why this changed. This is why:
+
+        one browser running 1.6x slow -> wall clock removed: mean 30.8%
+
+    A fixed slice is decided before anything is known about how fast each
+    browser will actually run, and they do not run equally: a browser that hits
+    an X backoff, or that the OS deschedules because the box is oversubscribed,
+    keeps its entire remaining share while the others sit finished and idle.
+    On a 1-vCPU server that contention is the normal case, not the unlucky one.
+    The queue cannot fix a slow browser; it stops a slow browser from deciding
+    when everyone else goes home.
+
+    One browser per worker for its whole life, as before — launching Chromium
+    costs seconds, which is what makes pulling one task at a time worth doing.
+
+    A worker that dies takes only its own in-flight task with it: it returns
+    what it had captured, and the links it never reached come back through the
+    retry pass (see `failed_idx` in main, which is built from the TASKS rather
+    than from the results for exactly this reason).
+    """
+    workers = max(1, min(workers, len(tasks)))
+    if workers == 1:
+        return _worker.run_chunk(tasks, headless, state, CTX_KWARGS, SRC)
+
+    manager = multiprocessing.Manager()
+    queue = manager.Queue()
+    for t in tasks:
+        queue.put(t)
+    for _ in range(workers):
+        queue.put(None)                       # one sentinel per worker
+
+    collected = []
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(_worker.run_queue, queue, headless, state,
+                             CTX_KWARGS, SRC)
+                   for _ in range(workers)]
+        for fut in futures:
+            try:
+                collected.extend(fut.result())
+            except Exception as e:            # rule 17: never silent
+                print(f"[runner] a capture worker died: {e} — its links will "
+                      f"come back through the retry pass")
+    return collected
 
 
 def resolve_source(argv) -> str:
@@ -83,7 +173,7 @@ def x_storage_state():
     return {"cookies": d.get("cookies", []), "origins": d.get("origins", [])}
 
 
-def build_tasks(rows, keep_engagement: bool = False) -> list:
+def build_tasks(rows, keep_engagement: bool = False, fast: bool = False) -> list:
     tasks = []
     for i, row in enumerate(rows, 1):
         capture_url = (row.get("link") or "").strip()
@@ -99,6 +189,9 @@ def build_tasks(rows, keep_engagement: bool = False) -> list:
             "category": row.get("category", "Uncategorized"),
             "shot": str(shot),
             "keep_engagement": keep_engagement,
+            # Rides on the task dict for the same reason keep_engagement does:
+            # `run_chunk`'s pickled signature must not move (rule 1).
+            "fast": fast,
         })
     return tasks
 
@@ -173,43 +266,42 @@ def main() -> None:
     headless = "--headed" not in argv
     workers = int(_arg_value(argv, "--workers", DEFAULT_WORKERS))
     keep_engagement = "--keep-engagement" in argv
+    fast = "--fast" in argv
 
     rows = input_loader.load(resolve_source(argv))
-    tasks = build_tasks(rows, keep_engagement)
+    tasks = build_tasks(rows, keep_engagement, fast)
     print(f"[runner] {len(tasks)} X link(s) loaded")
     if keep_engagement:
         print("[runner] keeping the engagement line (likes / views) in frame")
+    if fast:
+        print("[runner] fast waits on — shorter network settle and pacing")
     if not tasks:
         print("[runner] nothing to capture"); return
 
     state = x_storage_state()
     workers = max(1, min(workers, len(tasks)))
+    print(f"[runner] capturing with {workers} parallel worker(s)...")
 
-    chunks = [[] for _ in range(workers)]
-    for n, t in enumerate(tasks):
-        chunks[n % workers].append(t)
-    chunks = [c for c in chunks if c]
-    print(f"[runner] capturing with {len(chunks)} parallel worker(s)...")
-
-    collected = []
-    if len(chunks) == 1:
-        collected = _worker.run_chunk(chunks[0], headless, state, CTX_KWARGS, SRC)
-    else:
-        with ProcessPoolExecutor(max_workers=len(chunks)) as ex:
-            futures = [ex.submit(_worker.run_chunk, c, headless, state, CTX_KWARGS, SRC)
-                       for c in chunks]
-            for fut in futures:
-                collected.extend(fut.result())
+    collected = run_tasks(tasks, workers, headless, state)
 
     # retry pass: re-attempt anything without a clean screenshot once,
     # sequentially (recovers transient timeouts from heavy parallelism).
     by_idx = {r["idx"]: r for r in collected}
-    failed_idx = {r["idx"] for r in collected if not _shot_ok(r)}
+    # Every task WITHOUT a clean shot — not merely every result that reported
+    # one. Those differ when a worker dies mid-task: that link comes back with
+    # no result at all, so a set built from `collected` would not contain it and
+    # it would be dropped silently instead of retried. Same set as before for
+    # every run in which nothing crashes.
+    failed_idx = {t["idx"] for t in tasks if not _shot_ok(by_idx.get(t["idx"], {}))}
     if failed_idx:
         retry_tasks = [t for t in tasks if t["idx"] in failed_idx]
-        print(f"[runner] retrying {len(retry_tasks)} link(s) sequentially...")
+        rw = _recovery_workers(len(retry_tasks), workers)
+        print(f"[runner] retrying {len(retry_tasks)} link(s) sequentially..."
+              if rw == 1 else
+              f"[runner] retrying {len(retry_tasks)} link(s) sequentially "
+              f"across {rw} worker(s)...")
         recovered = 0
-        for r in _worker.run_chunk(retry_tasks, headless, state, CTX_KWARGS, SRC):
+        for r in run_tasks(retry_tasks, rw, headless, state):
             if _shot_ok(r) or not _shot_ok(by_idx.get(r["idx"], {})):
                 if _shot_ok(r) and not _shot_ok(by_idx.get(r["idx"], {})):
                     recovered += 1
@@ -228,7 +320,8 @@ def main() -> None:
         # recapture overwrites the same file, so always take the fresh attempt
         # and count how many now pass the quality check.
         fixed = 0
-        for r in _worker.run_chunk(poor_tasks, headless, state, CTX_KWARGS, SRC):
+        for r in run_tasks(poor_tasks, _recovery_workers(len(poor_tasks), workers),
+                           headless, state):
             by_idx[r["idx"]] = r
             if _quality_ok(r):
                 fixed += 1

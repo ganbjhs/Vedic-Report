@@ -101,6 +101,39 @@ _BOTTOM_PAD = 10      # breathing room below the action bar when it is KEPT
 _MEDIA_TIMEOUT = 10000    # max ms to wait for the tweet's <img>s to fully decode
 _IDLE_TIMEOUT = 3500      # short cap for network settle (X long-polls, never idles)
 
+# APPROVED EDIT 6c — the same three waits, on a shorter budget, when the caller
+# asks for it. DEFAULT-OFF: with `fast=False` every number below is the one that
+# was here before, so an unchanged invocation takes the identical path.
+#
+# Why these three and not the others. `_SELECTOR_TIMEOUT`, `_MEDIA_TIMEOUT` and
+# the goto budget are CEILINGS — they end the moment the thing arrives, so a
+# healthy post never pays them and shortening them only loses slow posts. These
+# three are FLOORS, paid in full on every post whether or not anything is wrong:
+#
+#   * networkidle — the comment two lines up says it: X long-polls and never
+#     idles, so this wait cannot succeed and always burns its whole budget. It
+#     is a nudge, and the real gate is _ALL_MEDIA_READY immediately after it.
+#   * the post-media settle — a fixed layout pause.
+#   * the pacing sleep at the end of capture() — deliberate, and the reason it
+#     stays non-zero here: it is what keeps a long run from reading as a
+#     scraper to X. Fast mode shortens it; nothing turns it off.
+#
+# On a 1232-link run the default numbers spend ~5.5s per post doing nothing but
+# waiting — over an hour and a half of browser time. Fast mode spends ~1.9s.
+_FAST_IDLE_TIMEOUT = 1000
+_FAST_SETTLE_MS = 250
+_SETTLE_MS = 500
+_PACE_SECONDS = (1.0, 2.0)
+_FAST_PACE_SECONDS = (0.3, 0.7)
+
+
+def _budget(fast: bool) -> dict:
+    """The three wait numbers this capture will use."""
+    if fast:
+        return {"idle": _FAST_IDLE_TIMEOUT, "settle": _FAST_SETTLE_MS,
+                "pace": _FAST_PACE_SECONDS}
+    return {"idle": _IDLE_TIMEOUT, "settle": _SETTLE_MS, "pace": _PACE_SECONDS}
+
 # How many ancestor posts to keep above a reply. 1 = "the parent", which is what
 # the report asks for; raising it walks further up a long thread and makes a
 # correspondingly taller image.
@@ -525,7 +558,7 @@ def _frame_covers(clip, tweet, top_el, expect_parent: bool = False) -> bool:
     return True
 
 
-def _wait_rendered(page, tweet, lo: int = 0, hi: int = 0) -> None:
+def _wait_rendered(page, tweet, lo: int = 0, hi: int = 0, budget: dict = None) -> None:
     """Block until the captured articles' images are loaded (bounded, best-effort).
 
     Scrolls the tweet into view to trigger lazy loading, waits for the network
@@ -539,15 +572,16 @@ def _wait_rendered(page, tweet, lo: int = 0, hi: int = 0) -> None:
     # Short network settle (X long-polls and never truly idles, so this is only
     # a nudge); the real gate is every <img> reporting fully decoded, which
     # returns as soon as the media is ready rather than burning the full budget.
+    budget = budget or _budget(False)
     try:
-        page.wait_for_load_state("networkidle", timeout=_IDLE_TIMEOUT)
+        page.wait_for_load_state("networkidle", timeout=budget["idle"])
     except Exception:
         pass
     try:
         page.wait_for_function(_ALL_MEDIA_READY, arg=[lo, hi], timeout=_MEDIA_TIMEOUT)
     except Exception:
         pass
-    page.wait_for_timeout(500)   # brief settle for layout after the last image
+    page.wait_for_timeout(budget["settle"])  # brief settle for layout after the last image
 
 
 def _visible_text(page) -> str:
@@ -718,11 +752,17 @@ def _screenshot_clip(page, clip, shot_path) -> None:
     page.screenshot(path=str(shot_path), clip=doc_clip, full_page=True)
 
 
-def capture(page, url: str, shot_path: Path, keep_engagement: bool = False) -> dict:
+def capture(page, url: str, shot_path: Path, keep_engagement: bool = False,
+            fast: bool = False) -> dict:
     """Capture one X post. Returns a result dict; never raises for content issues.
 
     `keep_engagement` keeps every captured post's like/views line in the frame
-    (see the module docstring); the default crops them all out."""
+    (see the module docstring); the default crops them all out.
+
+    `fast` shortens the three waits that are paid on every post whether or not
+    anything is wrong — see `_budget`. Default False, which is byte-for-byte the
+    behaviour this function had before the option existed."""
+    budget = _budget(fast)
     result = {"url": url, "status": "ok", "handle": "", "screenshot": None,
               "text": "", "overlay": False, "frame_ok": True,
               "parent_lost": False}
@@ -786,7 +826,7 @@ def capture(page, url: str, shot_path: Path, keep_engagement: bool = False) -> d
     age_gated = age_gated or any(overlays.article_age_gated(articles.nth(i))
                                  for i in range(first, idx + 1))
 
-    _wait_rendered(page, tweet, first, idx)     # don't shoot until media has loaded
+    _wait_rendered(page, tweet, first, idx, budget)  # don't shoot until media has loaded
     result["handle"] = _read_handle(tweet)
 
     def _shoot():
@@ -830,7 +870,7 @@ def capture(page, url: str, shot_path: Path, keep_engagement: bool = False) -> d
         page.wait_for_timeout(2000)
         for i in range(first, idx + 1):
             _reveal_sensitive(page, articles.nth(i))
-        _wait_rendered(page, tweet, first, idx)
+        _wait_rendered(page, tweet, first, idx, budget)
         covers, covered = _shoot()
     result["screenshot"] = str(shot_path)
     result["frame_ok"] = bool(covers)
@@ -845,5 +885,5 @@ def capture(page, url: str, shot_path: Path, keep_engagement: bool = False) -> d
     except Exception:
         pass
 
-    time.sleep(random.uniform(1.0, 2.0))        # human-like pacing
+    time.sleep(random.uniform(*budget["pace"]))   # human-like pacing
     return result

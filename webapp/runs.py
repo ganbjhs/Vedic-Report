@@ -18,12 +18,19 @@ class RunError(ValueError):
 def create_run(project: dict, rows: list, raw: bytes, upload_name: str,
                report_name: str, types: list = None, outputs=None,
                keep_engagement: bool = False, workers: int = 0,
-               user: str = "auto", note: str = "", notes: list = None) -> list:
+               user: str = "auto", note: str = "", notes: list = None,
+               fetch_metrics: bool = False, fast_capture: bool = False) -> list:
     """Create + queue one job per style. Returns the job ids.
 
     `types` — style slugs; None means every runnable style of the project.
     `outputs` — the union of formats asked for; each job keeps the ones its
     style builds (or everything it builds when none apply).
+
+    `fetch_metrics` — read each X post's likes / reposts / replies / views off
+    the post itself before the document is built, and fill in the sheet's metric
+    columns that were left blank. Only X and combined styles can use it; for
+    anything else the flag is dropped here rather than carried into a job that
+    could never act on it.
     """
     if not rows:
         raise RunError("No links to run.")
@@ -56,11 +63,14 @@ def create_run(project: dict, rows: list, raw: bytes, upload_name: str,
         chosen = asked or (by_slug.get(t, {}).get("outputs") or [])
         want_outputs = report_types.clean_outputs(t, chosen)
         job_stem = stem if len(types) == 1 else uploads.safe_stem(f"{stem} {rt.label}", "Report")
+        want_metrics = bool(fetch_metrics) and rt.platform in ("x", "combined")
+        want_fast = bool(fast_capture) and rt.allows_fast
         job_id = store.create(owner=user, name=job_stem, title=title,
                               report_type=t, link_count=len(rows),
                               upload_name=upload_name, keep_engagement=keep,
                               workers=want_workers, outputs=want_outputs,
-                              project_id=project["id"])
+                              project_id=project["id"],
+                              fetch_metrics=want_metrics, fast_capture=want_fast)
         try:
             runner.build_job_dir(job_id, rows, raw, upload_name)
         except Exception as e:

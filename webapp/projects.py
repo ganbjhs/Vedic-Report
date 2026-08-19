@@ -22,8 +22,8 @@ SESSION_KEY = "project_id"
 
 # Per-project defaults kept in `projects.settings` (JSON). Everything optional;
 # anything unknown is dropped on save so a stray key can never confuse a form.
-SETTING_KEYS = ("dedupe", "keep_engagement", "workers", "report_name_pattern",
-                "note")
+SETTING_KEYS = ("dedupe", "keep_engagement", "fetch_metrics", "fast_capture",
+                "workers", "report_name_pattern", "note")
 
 
 def slugify(name: str) -> str:
@@ -52,7 +52,7 @@ def clean_settings(raw: dict) -> dict:
         if k not in raw:
             continue
         v = raw[k]
-        if k in ("dedupe", "keep_engagement"):
+        if k in ("dedupe", "keep_engagement", "fetch_metrics", "fast_capture"):
             out[k] = bool(v)
         elif k == "workers":
             try:

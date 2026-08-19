@@ -23,11 +23,35 @@ _STOP = threading.Event()
 _THREAD = None
 
 
-def _platform_for(project: dict) -> str:
-    """The platform the project's styles capture from. If they disagree, use
-    'combined' when it is one of them, else the first style's."""
+def styles_for(project: dict, src: dict) -> list:
+    """The project styles THIS source runs, as style dicts.
+
+    One project can use several styles, and one sheet is not always meant for
+    all of them — the Kashi deck and the plain Twitter report come off different
+    sheets even inside one project. `src["styles"]` is that choice; empty means
+    every runnable style, which is what every source created before the column
+    existed meant, so nothing changes for them.
+
+    A slug that has since been removed from the project (or from the pool) is
+    dropped here rather than raising: the Sources page shows the picked styles
+    against the project's own list, and a run that quietly used a style the
+    project no longer has would be a worse surprise than one style fewer.
+    """
     from . import projects
-    plats = [s["platform"] for s in projects.runnable_styles(project)]
+    runnable = projects.runnable_styles(project)
+    picked = [str(x) for x in (src.get("styles") or [])]
+    if not picked:
+        return runnable
+    chosen = [s for s in runnable if s["slug"] in picked]
+    return chosen or runnable
+
+
+def _platform_for(project: dict, src: dict = None) -> str:
+    """The platform the styles capture from. If they disagree, use 'combined'
+    when it is one of them, else the first style's."""
+    from . import projects
+    styles = styles_for(project, src) if src else projects.runnable_styles(project)
+    plats = [s["platform"] for s in styles]
     if not plats:
         return "combined"
     if "combined" in plats or len(set(plats)) > 1:
@@ -42,7 +66,7 @@ def read_source(src: dict) -> dict:
         raise ValueError("The project of this source no longer exists.")
     u = smartsheet.read(src["url"], mode=src.get("mode") or "latest",
                         gid=src.get("gid") or None)
-    platform = _platform_for(proj)
+    platform = _platform_for(proj, src)
     want_dedupe = bool((proj.get("settings") or {}).get("dedupe", True))
     report = uploads.analyse(u["grid"], want_dedupe, platform)
     u["analysis"] = report
@@ -108,7 +132,10 @@ def check_source(sid: str, force_run: bool = False, user: str = "auto") -> dict:
                 proj, rows, raw=("\n".join(r.get("link", "") for r in rows)).encode("utf-8"),
                 upload_name=u.get("source_label") or "Google Sheet",
                 report_name=_run_name(proj, u), user=user,
+                types=[s["slug"] for s in styles_for(proj, src)] or None,
                 keep_engagement=bool((proj.get("settings") or {}).get("keep_engagement")),
+                fetch_metrics=bool((proj.get("settings") or {}).get("fetch_metrics")),
+                fast_capture=bool((proj.get("settings") or {}).get("fast_capture")),
                 workers=int((proj.get("settings") or {}).get("workers") or 0),
                 note="Auto-run from sheet source" if not force_run else "Run from sheet source",
                 notes=list(u.get("notes") or []))
@@ -179,6 +206,7 @@ def stop_scheduler() -> None:
 
 def public(src: dict) -> dict:
     return {k: src.get(k) for k in (
-        "id", "project_id", "kind", "label", "url", "mode", "gid", "auto_run", "trigger", "enabled",
+        "id", "project_id", "kind", "label", "url", "mode", "gid", "auto_run",
+        "trigger", "styles", "enabled",
         "last_date", "last_tab", "last_count", "last_checked_at", "last_changed_at",
         "last_error", "last_job_ids", "log", "created_by", "created_at")}

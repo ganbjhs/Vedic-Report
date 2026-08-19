@@ -125,6 +125,11 @@ class ReportType:
     # True for a designed-page (Canva) template style — edited in the template
     # designer, not the numeric one.
     template: bool = False
+    # True when this style's entrypoint understands `--fast` (approved edit 6c).
+    # A capability, not a slug test, for the reason this whole file exists: the
+    # profile runners do not take the switch, and passing it to one would fail
+    # the job on an unrecognised argument rather than merely be ignored.
+    allows_fast: bool = False
     # Which network this style captures from. Everything today is X; a style is
     # offered only under its own platform, so the Style step never shows a card
     # that cannot run.
@@ -139,7 +144,8 @@ _BUILTINS = (
     ReportType(
         slug="twitter", label="Twitter Report",
         argv=("run.py",), worker_pool="capture",
-        allows_worker_choice=True, allows_keep_engagement=True, builtin=True,
+        allows_worker_choice=True, allows_keep_engagement=True,
+        allows_fast=True, builtin=True,
         caption="Letter · 1 post per page",
         description="Clean tweet screenshots with the engagement bar cropped "
                     "out. One post per page, plus a links table.",

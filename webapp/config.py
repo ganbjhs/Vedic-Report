@@ -135,7 +135,71 @@ CAPTURE_WORKERS = max(1, _int("WORKERS", _int("CAPTURE_WORKERS", 3)))
 # side by side, and the wall-clock barely moves while the RAM cost is real.
 # Raise this when you add vCPUs, not before. RAM is the second limit:
 # MAX_CONCURRENT_JOBS x MAX_WORKERS browsers at ~0.5-1 GB each.
-MAX_WORKERS = max(CAPTURE_WORKERS, _int("MAX_WORKERS", 4))
+def _cores() -> int:
+    """vCPUs this process may actually use, honouring a container's cpu quota.
+
+    `os.cpu_count()` reports the HOST's cores inside Docker, which on a shared
+    VPS is a number the container will never get. cgroup v2 states the real
+    quota, so it is read first."""
+    try:
+        raw = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if raw[0] != "max":
+            return max(1, int(int(raw[0]) / int(raw[1])))
+    except Exception:
+        pass
+    try:                                        # cgroup v1
+        quota = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text())
+        period = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text())
+        if quota > 0 and period > 0:
+            return max(1, quota // period)
+    except Exception:
+        pass
+    return max(1, os.cpu_count() or 1)
+
+
+def _available_gb() -> float:
+    """RAM this box can still hand out, in GB. 0.0 when it cannot be read."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) / (1024 * 1024)
+    except Exception:
+        pass
+    return 0.0
+
+
+CORES = _cores()
+AVAILABLE_GB = _available_gb()
+
+# The honest ceiling for this box, and the reason the "Capture speed" picker
+# stopped offering 4 browsers on a 1-vCPU server.
+#
+# THIS IS WHY A 1232-LINK RUN SHOWED 0 CAPTURED. The old default was the
+# constant 4, on every machine, so the form offered four browsers to a 1-core
+# VPS and the four Chromiums took turns on that one core — which is exactly what
+# the comment above predicted, and which looks from the outside like a hang
+# rather than like contention.
+#
+# Cores + 1, not cores: a capture spends real time waiting on the network (the
+# page load, the media settle, the pacing sleep) with the CPU idle, so one
+# browser more than there are cores fills those gaps. Two more does not; it just
+# adds context switching to a core that is already the bottleneck.
+#
+# RAM is the second gate at ~1.2 GB per browser, and the floor is 1 — a box that
+# cannot be measured still runs one browser rather than zero.
+def _hardware_ceiling() -> int:
+    by_cpu = CORES + 1
+    by_ram = int(AVAILABLE_GB / 1.2) if AVAILABLE_GB else by_cpu
+    return max(1, min(by_cpu, by_ram))
+
+
+HARDWARE_MAX_WORKERS = _hardware_ceiling()
+
+# An explicit MAX_WORKERS in the environment still wins — the hardware number is
+# a better DEFAULT, not a cap on someone who has measured their own box. It is
+# reported on the Server settings page either way, so an override that is too
+# ambitious for the hardware is visible rather than mysterious.
+MAX_WORKERS = max(CAPTURE_WORKERS, _int("MAX_WORKERS", 0) or HARDWARE_MAX_WORKERS)
 
 # The Influencer report defaults to one browser: it looks up each author's
 # follower count once and caches it, but that cache lives in the worker PROCESS,
@@ -247,6 +311,14 @@ def public_settings() -> dict:
         "Execution mode": EXECUTION_MODE,
         "Default browsers per job (WORKERS)": CAPTURE_WORKERS,
         "Capture speed ceiling (MAX_WORKERS)": MAX_WORKERS,
+        "This box": (f"{CORES} vCPU" +
+                     (f", {AVAILABLE_GB:.1f} GB free" if AVAILABLE_GB else "")),
+        "Browsers this box can really run": (
+            f"{HARDWARE_MAX_WORKERS}" +
+            ("" if MAX_WORKERS <= HARDWARE_MAX_WORKERS else
+             f" — MAX_WORKERS is set to {MAX_WORKERS}, which is above it; "
+             f"the extra browsers will take turns on the same core(s) and the "
+             f"run will not get faster")),
         "Influencer report browsers (INFLUENCER_WORKERS)": INFLUENCER_WORKERS,
         "Reports running at once (MAX_CONCURRENT_JOBS)": MAX_CONCURRENT_JOBS,
         "Links per report (MAX_LINKS)": MAX_LINKS or "unlimited",

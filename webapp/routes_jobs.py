@@ -30,7 +30,10 @@ _KINDS = {"pdf": "application/pdf",
                   "presentationml.presentation",
           "xlsx": "application/vnd.openxmlformats-officedocument."
                   "spreadsheetml.sheet",
-          "zip": "application/zip"}
+          "zip": "application/zip",
+          # The engagement numbers read off the posts, exact — not a report
+          # format, so it is never filtered by the user's format choice.
+          "csv": "text/csv"}
 
 
 # --------------------------------------------------------------------------- #
@@ -404,6 +407,11 @@ async def submit_job(request: Request,
         job_ids = await runs.create_run_async(
             project, rows, raw, upload_name, report_name, types=types, outputs=asked,
             keep_engagement=keep_flag, workers=want_workers_raw, user=user,
+            # Not a tick box on this form: reading the numbers is a property of
+            # the report the project wants, not of one submission, and it is set
+            # once on Project settings.
+            fetch_metrics=bool((project.get("settings") or {}).get("fetch_metrics")),
+            fast_capture=bool((project.get("settings") or {}).get("fast_capture")),
             note="Started from New run",
             notes=list(_SHEET_INFO.get("notes") or []) if sheet_url.strip() else None)
     except runs.RunError as e:

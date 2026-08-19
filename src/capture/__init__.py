@@ -7,13 +7,15 @@ x_capture.capture(page, url, shot_path) -> result dict
 (status / handle / screenshot / text). The dispatcher just stamps the platform.
 
 `keep_engagement` is passed straight through: False (the default) crops the
-like/views line out, True keeps it — see x_capture's docstring.
+like/views line out, True keeps it — see x_capture's docstring. `fast` is passed
+through the same way (approved edit 6c) and defaults to the behaviour that was
+here before it existed.
 """
 from . import x_capture
 
 
 def capture(page, url, shot_path, platform: str = "x",
-            keep_engagement: bool = False) -> dict:
-    result = x_capture.capture(page, url, shot_path, keep_engagement)
+            keep_engagement: bool = False, fast: bool = False) -> dict:
+    result = x_capture.capture(page, url, shot_path, keep_engagement, fast)
     result["platform"] = "x"
     return result

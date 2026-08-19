@@ -206,9 +206,9 @@ def _meta_object(meta: str) -> dict:
     return m
 
 
-async def _page_files(post, cover, summary, end) -> dict:
+async def _page_files(post, cover, summary, end, grid=None) -> dict:
     files = {}
-    for kind, up in (("post", post), ("cover", cover), ("summary", summary), ("end", end)):
+    for kind, up in (("post", post), ("cover", cover), ("summary", summary), ("end", end), ("grid", grid)):
         if up is not None and getattr(up, "filename", ""):
             files[kind] = await up.read()
     return files
@@ -221,6 +221,7 @@ async def save_template_style(request: Request,
                               cover: UploadFile = File(None),
                               summary: UploadFile = File(None),
                               end: UploadFile = File(None),
+                              grid: UploadFile = File(None),
                               fonts: list[UploadFile] = File(None),
                               overwrite: str = Form(""),
                               csrf_token: str = Form(...),
@@ -228,7 +229,7 @@ async def save_template_style(request: Request,
     """A designed-page (Canva) template: page PNGs + the slots drawn on them."""
     auth.verify_csrf(request, csrf_token)
     m = _meta_object(meta)
-    files = await _page_files(post, cover, summary, end)
+    files = await _page_files(post, cover, summary, end, grid)
     files["fonts"] = [(up.filename, await up.read()) for up in (fonts or [])
                       if getattr(up, "filename", "")]
     try:
@@ -274,6 +275,7 @@ async def preview_template_page(request: Request,
                                 cover: UploadFile = File(None),
                                 summary: UploadFile = File(None),
                                 end: UploadFile = File(None),
+                                grid: UploadFile = File(None),
                                 fonts: list[UploadFile] = File(None),
                                 csrf_token: str = Form(...),
                                 user: str = Depends(auth.require_designer)):
@@ -281,7 +283,7 @@ async def preview_template_page(request: Request,
     and a fixture screenshot — the same drawing rules `tpl_builder` uses."""
     auth.verify_csrf(request, csrf_token)
     m = _meta_object(meta)
-    uploaded = await _page_files(post, cover, summary, end)
+    uploaded = await _page_files(post, cover, summary, end, grid)
     with tempfile.TemporaryDirectory() as td:
         paths, font_paths = {}, {}
         for kind, data in uploaded.items():
@@ -317,7 +319,7 @@ async def preview_template_page(request: Request,
 @router.get("/styles/{slug}/asset/{kind}")
 async def style_asset(slug: str, kind: str, user: str = Depends(auth.require_user_api)):
     """The designed page image of a template style (for the editor + gallery)."""
-    if kind not in ("post", "cover", "summary", "end") or not styles._SLUG.match(slug or ""):
+    if kind not in ("post", "cover", "summary", "end", "grid") or not styles._SLUG.match(slug or ""):
         raise HTTPException(status_code=404, detail="No such asset")
     p = styles.asset_dir(slug) / f"{kind}.png"
     if not p.is_file():                       # shipped template styles keep theirs in the repo

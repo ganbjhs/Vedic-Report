@@ -54,6 +54,7 @@
     <label class="field"><span>Paper <span class="faint">(auto from image)</span></span><select id="t-paper"><option value="16:9">16:9 slide</option><option value="4:3">4:3 slide</option><option value="a4">A4</option><option value="letter">Letter</option></select></label>
     <label class="field"><span>Orientation</span><select id="t-orient"><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select></label>
     <label class="field"><span>Screenshot in its box</span><select id="t-fit"><option value="fit">Fit — whole post, may leave space</option><option value="cover">Cover — fill the box, crop the bottom of long posts</option></select></label>
+    <label class="field"><span>Comments grid <span class="faint">(sections whose name matches go many-per-page)</span></span><span class="row" style="gap:6px"><input id="t-grid-match" type="text" placeholder="e.g. counter|comment" style="width:160px"><input id="t-grid-cols" type="number" min="1" max="8" value="4" style="width:56px" title="columns"><input id="t-grid-rows" type="number" min="1" max="6" value="2" style="width:56px" title="rows"></span></label>
     <span class="check" style="align-self:end"><span class="faint small">Outputs: PDF + PPTX <span title="Every slot stays a movable object in PowerPoint, Keynote or Google Slides.">(editable deck)</span></span></span>
   </div>
 
@@ -62,6 +63,7 @@
     <button type="button" class="tab" data-tpage="cover" role="tab">Cover <span class="tag" id="t-has-cover">optional</span></button>
     <button type="button" class="tab" data-tpage="summary" role="tab">Summary <span class="tag" id="t-has-summary">optional</span></button>
     <button type="button" class="tab" data-tpage="end" role="tab">End page <span class="tag" id="t-has-end">optional</span></button>
+    <button type="button" class="tab" data-tpage="grid" role="tab">Comments grid <span class="tag" id="t-has-grid">optional</span></button>
     <button type="button" class="btn sm" id="t-preset" title="Put the Combined-report slots on this page: screenshot, logo, handle, section, date, Post i / Top N, metric pills, LINK">Place standard slots</button>
     <span class="spacer"></span>
     <label class="btn sm">Upload page image <input type="file" id="t-file" accept="image/png,image/jpeg" hidden></label>
@@ -84,7 +86,7 @@
       <div><span class="tag" id="t-perpage">no screenshot slot yet</span></div>
       <b>Text</b>
       <div class="chips">
-        {% for f, l in [('handle','Handle name'),('section','Section'),('date','Date'),('title','Report title'),('post_no','Post i'),('post_total','Top N Posts'),('post_total_n','N Posts'),('platform','Platform name'),('page','Page no.'),('post_link','Post URL'),('link','LINK button text')] %}
+        {% for f, l in [('handle','Handle name'),('section','Section'),('date','Date'),('title','Report title'),('post_no','Post i'),('post_total','Top N Posts'),('post_total_n','N Posts'),('platform','Platform name'),('page','Page no.'),('post_link','Post URL'),('link','LINK button text'),('static','Fixed words (uses Label)')] %}
         <button type="button" class="tag" style="cursor:pointer" data-add-text="{{ f }}">{{ l }}</button>{% endfor %}
       </div>
       <b>Metric values <span class="faint" style="text-transform:none;letter-spacing:0">(from the sheet columns)</span></b>
@@ -114,6 +116,7 @@
             <label class="check" style="align-self:end"><input id="tp-bold" type="checkbox"><span>Bold</span></label>
             <label class="field"><span>Label before value <span class="faint">(e.g. "Like ")</span></span><input id="tp-label" type="text" maxlength="30" placeholder="none"></label>
             <label class="field"><span>Pill <span class="faint">(rounded box behind the text)</span></span><span class="row" style="gap:6px"><input id="tp-pill-on" type="checkbox"><input id="tp-pill" type="color" value="#E8571C"></span></label>
+            <label class="field"><span>Two-tone <span class="faint">(label part colour)</span></span><span class="row" style="gap:6px"><input id="tp-pill2-on" type="checkbox"><input id="tp-pill2" type="color" value="#555555"></span></label>
           </div>
           <div class="hint">A metric slot with a label + pill prints “Like 676” in a pill — and prints nothing at all when the sheet has no such value, so no empty pill is ever left behind.</div>
         </div>

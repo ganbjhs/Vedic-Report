@@ -737,7 +737,7 @@ function initTemplateDesigner() {
   const LABELS = { title: "Report title", date: "Date", page: "Page no.", pages: "Pages", index: "#", account_name: "Account", post_link: "Post URL", category: "Category", metrics: "Metrics",
     handle: "Handle name", section: "Section", post_no: "Post 1", post_total: "Top 9 Posts", post_total_n: "9 Posts", platform: "Platform", link: "LINK",
     "metric.like": "Like →", "metric.impressions": "Impressions →", "metric.views": "Views →", "metric.reach": "Reach →", "metric.comments": "Comments →", "metric.shares": "Shares →", "metric.followers": "Followers →" };
-  const PAGE_KINDS = ["post", "cover", "summary", "end"];
+  const PAGE_KINDS = ["post", "cover", "summary", "end", "grid"];
   // Same numbers the server renders at: slides at 144 dpi (16:9 -> 1920x1080),
   // paper at 150. Shown so a designer picks the right Canva page size.
   const PAPER_IN = { "16:9": [7.5, 13.3333], "4:3": [7.5, 10], a4: [8.2677, 11.6929], letter: [8.5, 11] };
@@ -914,6 +914,7 @@ function initTemplateDesigner() {
       renderFontOptions(); $("tp-font").value = it.font || "Helvetica";
       $("tp-label").value = it.label || "";
       $("tp-pill-on").checked = !!it.pill; $("tp-pill").value = it.pill || "#E8571C";
+      $("tp-pill2-on").checked = !!it.pill2; $("tp-pill2").value = it.pill2 || "#555555";
     }
   }
   /* numeric X / Y / W / H, in % — typed instead of dragged when a value has to
@@ -946,6 +947,9 @@ function initTemplateDesigner() {
   $("tp-label").addEventListener("input", () => { if (sel) { sel.label = $("tp-label").value; render(); } });
   $("tp-pill-on").addEventListener("change", () => { if (sel) { sel.pill = $("tp-pill-on").checked ? $("tp-pill").value : ""; render(); } });
   $("tp-pill").addEventListener("input", () => { if (sel && $("tp-pill-on").checked) { sel.pill = $("tp-pill").value; render(); } });
+  $("tp-pill2-on").addEventListener("change", () => { if (sel) { sel.pill2 = $("tp-pill2-on").checked ? $("tp-pill2").value : ""; if (sel.pill2 && !sel.pill) { sel.pill = $("tp-pill").value; $("tp-pill-on").checked = true; } render(); } });
+  $("tp-pill2").addEventListener("input", () => { if (sel && $("tp-pill2-on").checked) { sel.pill2 = $("tp-pill2").value; render(); } });
+  if ($("t-grid-match")) ["t-grid-match", "t-grid-cols", "t-grid-rows"].forEach((id) => $(id).addEventListener("input", () => { setSaveable(); schedulePreview(); }));
   if ($("t-fit")) $("t-fit").addEventListener("change", () => { setSaveable(); schedulePreview(0); });
   document.querySelectorAll("[data-preset-text]").forEach((b) => b.addEventListener("click", () => {
     if (!sel || sel.kind !== "text") return;
@@ -1106,11 +1110,13 @@ function initTemplateDesigner() {
       summary_box: summary ? box(summary) : null,
       fonts: fonts.map((f) => f.name),
       fit: $("t-fit") ? $("t-fit").value : "fit",
+      grid: ($("t-grid-match") && $("t-grid-match").value.trim()) ? { match: $("t-grid-match").value.trim(), cols: +$("t-grid-cols").value || 4, rows: +$("t-grid-rows").value || 2 } : null,
       text: items.filter((it) => it.kind === "text").map((it) => Object.assign(
         { field: it.field, size_pt: it.size, color: it.color, align: it.align, page: it.page, bold: !!it.bold }, box(it),
         it.font && it.font !== "Helvetica" ? { font: it.font } : {},
         it.label ? { label: it.label } : {},
-        it.pill ? { pill: it.pill } : {})),
+        it.pill ? { pill: it.pill } : {},
+        it.pill2 ? { pill2: it.pill2 } : {})),
     };
     if (copyFrom) meta.copy_from = copyFrom;    // borrow the art we did not replace
     return meta;
@@ -1241,8 +1247,9 @@ function initTemplateDesigner() {
       (tpl.slots || []).forEach((s) => items.push({ id: nextId++, kind: "slot", page: "post", ...s }));
       (tpl.logos || []).forEach((s) => items.push({ id: nextId++, kind: "logo", page: "post", ...s }));
       if (tpl.summary_box) items.push({ id: nextId++, kind: "summary", page: "summary", ...tpl.summary_box });
-      (tpl.text || []).forEach((t) => items.push({ id: nextId++, kind: "text", page: t.page || "post", field: t.field, x: t.x, y: t.y, w: t.w, h: t.h, size: t.size_pt || 10, color: t.color || "#111111", align: t.align || "left", bold: !!t.bold, font: t.font || "Helvetica", label: t.label || "", pill: t.pill || "" }));
+      (tpl.text || []).forEach((t) => items.push({ id: nextId++, kind: "text", page: t.page || "post", field: t.field, x: t.x, y: t.y, w: t.w, h: t.h, size: t.size_pt || 10, color: t.color || "#111111", align: t.align || "left", bold: !!t.bold, font: t.font || "Helvetica", label: t.label || "", pill: t.pill || "", pill2: t.pill2 || "" }));
       if ($("t-fit")) $("t-fit").value = tpl.fit || "fit";
+      if ($("t-grid-match")) { $("t-grid-match").value = (tpl.grid || {}).match || ""; $("t-grid-cols").value = (tpl.grid || {}).cols || 4; $("t-grid-rows").value = (tpl.grid || {}).rows || 2; }
       $("t-banner").hidden = !asCopy;
       $("t-banner-src").textContent = asCopy ? `Everything from “${p.label}” is here — slots, logo, summary box and text.` : "";
       renderFonts(); syncKitNote(); showPage("post");

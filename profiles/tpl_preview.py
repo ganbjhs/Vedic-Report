@@ -165,9 +165,12 @@ def _trim(draw, value, font, max_w):
 
 
 def _draw_text(draw, profile, t, value, W, H, ppp, fonts=None):
+    if t.get("field") == "static":
+        value = (t.get("label") or "").strip()
     if not value:
         return
-    if t.get("label"):
+    raw_value = value
+    if t.get("label") and t.get("field") != "static":
         value = t["label"].strip() if t.get("field") == "link" else f"{t['label']}{value}"
     size_px = float(t.get("size_pt", 10)) * ppp
     font = _text_font(profile, t, size_px, fonts)
@@ -176,6 +179,20 @@ def _draw_text(draw, profile, t, value, W, H, ppp, fonts=None):
         # same pill rule as tpl_builder: rounded box over the slot, text centred
         ph = max(float(t.get("h", 0)) * H, size_px * 1.6)
         py = t["y"] * H
+        if t.get("pill2"):
+            lab = (t.get("label") or "").strip()
+            val = "" if t.get("field") == "static" else str(raw_value).strip()
+            lw = w * 0.58 if val else w
+            draw.rounded_rectangle([x, py, x + lw, py + ph], radius=ph / 2, fill=t["pill2"])
+            draw.text((x + lw / 2, py + ph / 2), _trim(draw, lab, font, lw - ph * 0.6), font=font,
+                      fill=tpl_builder._pill_ink({"pill": t["pill2"], "color": t.get("color")}), anchor="mm")
+            if val:
+                vx = x + lw + ph * 0.15
+                vw = w - lw - ph * 0.15
+                draw.rounded_rectangle([vx, py, vx + vw, py + ph], radius=ph / 2, fill=t["pill"])
+                draw.text((vx + vw / 2, py + ph / 2), _trim(draw, val, font, vw - ph * 0.5), font=font,
+                          fill=tpl_builder._pill_ink({"pill": t["pill"]}), anchor="mm")
+            return
         draw.rounded_rectangle([x, py, x + w, py + ph], radius=ph / 2, fill=t["pill"])
         value = _trim(draw, str(value), font, w - ph * 0.6)
         draw.text((x + w / 2, py + ph / 2), value, font=font,
@@ -388,6 +405,20 @@ def page_png(profile, kind="post", assets=None, fonts=None, shot=None) -> bytes:
                                 round(lg["y"] * H + (bh - lo.height) / 2)), lo)
         ctx = tpl_builder._post_ctx(base_ctx, r, 1, SAMPLE["post_no"],
                                     SAMPLE["post_total"])
+    elif kind == "grid":
+        ctx = {**base_ctx, "page": 0, "post_link": "", "metrics_dict": {},
+               "category": "Counter Comments", "section": "Counter Comments"}
+        spec = tpl_builder._grid_spec(profile) or dict(tpl_builder._GRID_DEFAULTS)
+        master = shot or sample_shot()
+        pw_in, ph_in = registry.page_inches(profile["page"])
+        scale = W / (pw_in * 72.0)
+        for (cx, cy, cw, ch) in tpl_builder._grid_cells(spec, pw_in * 72.0, ph_in * 72.0):
+            s_ = min(cw * scale / master.width, ch * scale / master.height)
+            im = master.convert("RGB").resize((max(1, round(master.width * s_)), max(1, round(master.height * s_))), Image.LANCZOS)
+            page.paste(im, (round(cx * scale), round(cy * scale)))
+            if spec.get("border"):
+                d.rectangle([cx * scale, cy * scale, cx * scale + im.width, cy * scale + im.height],
+                            outline=spec["border"], width=max(1, round(0.8 * scale)))
     else:
         ctx = {**base_ctx, "page": 0, "post_link": "", "metrics_dict": {}}
         if kind == "summary":

@@ -111,9 +111,15 @@ _TOP = {"schema", "slug", "label", "description", "extends", "platform",
 # `fit` (v3): "fit" = the whole screenshot inside its slot (default, never
 # crops evidence); "cover" = fill the slot edge to edge, cropping the BOTTOM
 # of a post that is taller than the slot — a designed look, chosen knowingly.
-_TEMPLATE_KEYS = {"pages", "slots", "text", "logos", "summary_box", "fonts", "fit"}
+_TEMPLATE_KEYS = {"pages", "slots", "text", "logos", "summary_box", "fonts", "fit", "grid"}
+# template.grid = {"match": "<regex on section>", "box": {x,y,w,h}, "cols": 4,
+#                  "rows": 2, "gap": 0.012, "border": "#111111"}
+_GRID_KEYS = {"match", "box", "cols", "rows", "gap", "border"}
 _TEMPLATE_FITS = ("fit", "cover")
-_TEMPLATE_PAGES = {"post", "cover", "end", "summary"}
+# "grid" (v3): a page that holds MANY small screenshots in a grid under a
+# heading — how counter-comment screenshots are presented. Which sections go
+# there is decided by `template.grid.match` (a regex on the section name).
+_TEMPLATE_PAGES = {"post", "cover", "end", "summary", "grid"}
 # Text slots. `metric.<key>` prints that metric's VALUE (from the sheet columns
 # or a capture engine); `post_no` / `post_total` count within the post's section;
 # `link` prints the word LINK as a hyperlink (the button art is in the design).
@@ -122,18 +128,22 @@ _TEMPLATE_PAGES = {"post", "cover", "end", "summary"}
 # read "Top / Top 9 Posts".
 _METRIC_KEYS = ("like", "impressions", "views", "reach", "comments", "shares",
                 "followers", "reactions")
+# `static` (v3): prints its `label` and nothing else — "Social Media Report",
+# "Handle Name" — so fixed words live in the style, not in the page art.
 _TEXT_FIELDS = {"title", "date", "page", "pages", "index", "account_name",
                 "post_link", "category", "metrics", "section", "handle",
-                "post_no", "post_total", "post_total_n", "link", "platform"} | {
-                    f"metric.{k}" for k in _METRIC_KEYS}
+                "post_no", "post_total", "post_total_n", "link", "platform",
+                "static"} | {f"metric.{k}" for k in _METRIC_KEYS}
 # `label` (v3): printed before the value ("Like " + "676") — and only when the
 # value exists, so a metric the sheet does not have leaves no orphan label.
 # `pill` (v3): "#RRGGBB" — a rounded pill of that colour is drawn behind the
 # text (again only when there is a value), the text centred in it. Together
 # they replace pill art baked into a page image, which could not go away when
 # a metric was missing.
+# `pill2` (v3): a second colour — the LABEL part of the pill is drawn in
+# pill2 and the value part in pill (the two-tone "Likes | 361" look).
 _TEXT_KEYS = {"field", "x", "y", "w", "h", "size_pt", "color", "align", "page",
-              "bold", "font", "label", "pill"}
+              "bold", "font", "label", "pill", "pill2"}
 _SLOT_KEYS = {"x", "y", "w", "h"}
 
 # The one font every renderer has without an upload. A text slot naming
@@ -662,6 +672,28 @@ def _validate_template(p: dict, slug: str) -> None:
             _num(sb.get(k), f"template.summary_box.{k}", slug, 0.05, 1)
     if tpl.get("fit", "fit") not in _TEMPLATE_FITS:
         raise ProfileError(f"{slug}: template.fit must be one of {_TEMPLATE_FITS}")
+    grid = tpl.get("grid")
+    if grid is not None:
+        if not isinstance(grid, dict) or set(grid) - _GRID_KEYS:
+            raise ProfileError(f"{slug}: template.grid keys must be within {sorted(_GRID_KEYS)}")
+        if not isinstance(grid.get("match"), str) or not grid["match"]:
+            raise ProfileError(f"{slug}: template.grid.match must be a regex on the section name")
+        try:
+            re.compile(grid["match"], re.I)
+        except re.error as e:
+            raise ProfileError(f"{slug}: template.grid.match is not a valid regex ({e})")
+        box = grid.get("box") or {}
+        if not isinstance(box, dict) or set(box) - _SLOT_KEYS:
+            raise ProfileError(f"{slug}: template.grid.box must have only x, y, w, h")
+        for k in ("x", "y"):
+            _num(box.get(k, 0), f"template.grid.box.{k}", slug, 0, 1)
+        for k in ("w", "h"):
+            _num(box.get(k, 1), f"template.grid.box.{k}", slug, 0.1, 1)
+        _num(grid.get("cols", 4), "template.grid.cols", slug, 1, 8)
+        _num(grid.get("rows", 2), "template.grid.rows", slug, 1, 6)
+        _num(grid.get("gap", 0.012), "template.grid.gap", slug, 0, 0.1)
+        if grid.get("border") is not None and not (isinstance(grid["border"], str) and _HEX.match(grid["border"])):
+            raise ProfileError(f"{slug}: template.grid.border must be #RRGGBB")
     fonts = tpl.get("fonts")
     if fonts is not None:
         if not isinstance(fonts, list) or len(fonts) > MAX_FONTS:
@@ -702,3 +734,7 @@ def _validate_template(p: dict, slug: str) -> None:
             raise ProfileError(f"{slug}: template.text[{i}].label must be a short string")
         if t.get("pill") is not None and not (isinstance(t["pill"], str) and _HEX.match(t["pill"])):
             raise ProfileError(f"{slug}: template.text[{i}].pill must be #RRGGBB")
+        if t.get("pill2") is not None and not (isinstance(t["pill2"], str) and _HEX.match(t["pill2"])):
+            raise ProfileError(f"{slug}: template.text[{i}].pill2 must be #RRGGBB")
+        if t.get("field") == "static" and not t.get("label"):
+            raise ProfileError(f"{slug}: template.text[{i}] is static text but has no label")

@@ -169,6 +169,7 @@ async def replace_style_pages(pid: str, slug: str, request: Request,
                               cover: UploadFile = File(None),
                               summary: UploadFile = File(None),
                               end: UploadFile = File(None),
+                              grid: UploadFile = File(None),
                               csrf_token: str = Form(...),
                               user: str = Depends(auth.require_user_api)):
     """Replace the page art (background) of a designed-page style — the slots
@@ -179,7 +180,7 @@ async def replace_style_pages(pid: str, slug: str, request: Request,
     if slug not in {s["slug"] for s in store.project_styles(pid)}:
         raise HTTPException(status_code=404, detail="That style is not in this project.")
     files = {}
-    for kind, up in (("post", post), ("cover", cover), ("summary", summary), ("end", end)):
+    for kind, up in (("post", post), ("cover", cover), ("summary", summary), ("end", end), ("grid", grid)):
         if up is not None and getattr(up, "filename", ""):
             files[kind] = await up.read()
     try:

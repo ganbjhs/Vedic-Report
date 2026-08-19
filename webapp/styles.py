@@ -239,6 +239,7 @@ def _meta_from_template(raw: dict, label: str, slug: str) -> dict:
             "slots": tpl.get("slots") or [], "text": tpl.get("text") or [],
             "logos": tpl.get("logos") or [], "summary_box": tpl.get("summary_box"),
             "fonts": tpl.get("fonts") or [], "fit": tpl.get("fit") or "fit",
+            "grid": tpl.get("grid"),
             "radius_pt": (raw.get("image") or {}).get("radius_pt") or 0,
             "description": raw.get("description") or "",
             "keep_engagement": (raw.get("capture") or {}).get("keep_engagement", True)}
@@ -418,7 +419,7 @@ def _store_page(slug: str, kind: str, data: bytes) -> str:
     return name
 
 
-PAGE_KINDS = ("post", "cover", "summary", "end")
+PAGE_KINDS = ("post", "cover", "summary", "end", "grid")
 
 
 def _template_profile(meta: dict, slug: str, label: str, pages: dict,
@@ -470,6 +471,8 @@ def _template_profile(meta: dict, slug: str, label: str, pages: dict,
     if fit not in ("fit", "cover"):
         raise StyleError("Screenshot fit must be 'fit' or 'cover'.")
     tpl["fit"] = fit
+    if meta.get("grid"):
+        tpl["grid"] = meta["grid"]              # validated by the registry
     aspect, image_fit = None, "fit"
     if fit == "cover" and slots:
         s0 = slots[0]

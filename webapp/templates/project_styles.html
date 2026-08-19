@@ -92,7 +92,7 @@
     <form id="pg-form" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <div class="fields" style="grid-template-columns:1fr 1fr">
-        {% for k, l in [('post','Post page (one per post)'),('cover','Cover'),('summary','Summary'),('end','End page')] %}
+        {% for k, l in [('post','Post page (one per post)'),('cover','Cover'),('summary','Summary'),('grid','Comments grid page'),('end','End page')] %}
         <label class="field"><span>{{ l }}</span><span class="row" style="gap:6px"><label class="btn sm">Choose image <input type="file" name="{{ k }}" accept="image/png,image/jpeg" hidden></label><span class="small faint" data-pgname="{{ k }}"></span></span></label>
         {% endfor %}
       </div>

@@ -87,12 +87,98 @@ def _field_value(field, ctx):
 def _text_value(t, ctx):
     """The string a text slot prints: field value, with `label` in front when
     there is a value. Empty → the slot (and its pill) is not drawn at all."""
+    if t["field"] == "static":
+        return (t.get("label") or "").strip()
     value = _field_value(t["field"], ctx)
     if not value:
         return ""
     if t["field"] == "link" and t.get("label"):
         return t["label"].strip()            # "Open post", not "Open post LINK"
     return f"{t.get('label') or ''}{value}"
+
+
+def _pill_parts(t, ctx):
+    """(label_text, value_text) for a TWO-TONE pill (pill2 + pill). The label
+    part is the slot's label; the value part is the field value (or the word
+    LINK for a link slot). Both empty → draw nothing."""
+    if t["field"] == "static":
+        return (t.get("label") or "").strip(), ""
+    value = _field_value(t["field"], ctx)
+    if not value:
+        return "", ""
+    return (t.get("label") or "").strip(), value.strip()
+
+
+_GRID_DEFAULTS = {"box": {"x": 0.02, "y": 0.17, "w": 0.96, "h": 0.80},
+                  "cols": 4, "rows": 2, "gap": 0.012, "border": "#222222"}
+
+
+def _grid_spec(profile):
+    g = (profile.get("template") or {}).get("grid")
+    if not g:
+        return None
+    out = dict(_GRID_DEFAULTS)
+    out.update({k: v for k, v in g.items() if v is not None})
+    out["box"] = {**_GRID_DEFAULTS["box"], **(g.get("box") or {})}
+    return out
+
+
+def _is_grid_section(profile, r):
+    g = (profile.get("template") or {}).get("grid")
+    if not g:
+        return False
+    return bool(re.search(g["match"], str(r.get("category") or ""), re.I))
+
+
+def _grid_cells(spec, W, H):
+    """Cell rectangles (x, y_top, w, h) in points for one grid page."""
+    box, cols, rows, gap = spec["box"], int(spec["cols"]), int(spec["rows"]), float(spec["gap"])
+    bx, by, bw, bh = box["x"] * W, box["y"] * H, box["w"] * W, box["h"] * H
+    gx, gy = gap * W, gap * H
+    cw = (bw - gx * (cols - 1)) / cols
+    ch = (bh - gy * (rows - 1)) / rows
+    return [(bx + c * (cw + gx), by + r * (ch + gy), cw, ch)
+            for r in range(rows) for c in range(cols)]
+
+
+def _grid_pages(items, spec):
+    """[(section, [(r, img, place), ...]), ...] — one entry per grid PAGE,
+    keeping each section on its own page(s)."""
+    per = int(spec["cols"]) * int(spec["rows"])
+    # group by section (stable: first-seen section order, sheet order inside)
+    order = []
+    for r, _, _ in items:
+        sec = str(r.get("category") or "")
+        if sec not in order:
+            order.append(sec)
+    items = sorted(items, key=lambda x: order.index(str(x[0].get("category") or "")))
+    out, cur, bucket = [], None, []
+    for r, img, pl in items:
+        sec = str(r.get("category") or "")
+        if sec != cur or len(bucket) >= per:
+            if bucket:
+                out.append((cur, bucket))
+            cur, bucket = sec, []
+        bucket.append((r, img, pl))
+    if bucket:
+        out.append((cur, bucket))
+    return out
+
+
+def _grid_image(r, composed):
+    """The raw screenshot for a grid cell (a comment is short; the cover-cropped
+    composite would pad it to the slot's tall shape), else the composite."""
+    raw = r.get("screenshot")
+    return raw if raw and Path(raw).exists() else composed
+
+
+def _fit_in(img_path, x, y, w, h):
+    """Top-left anchored fit of an image file inside (x, y, w, h) points."""
+    from PIL import Image
+    with Image.open(img_path) as im:
+        iw, ih = im.size
+    s = min(w / iw, h / ih)
+    return x, y, iw * s, ih * s
 
 
 def _pill_box(t, W, H):
@@ -355,8 +441,7 @@ def build_pdf(results, images, places, profile, title, out):
     c = pdfcanvas.Canvas(str(out), pagesize=(W, H))
     c.setTitle(title)
     date = datetime.date.today().strftime("%d-%m-%Y")
-    pages = _pages(results, (images, places))
-    n_pages = len(pages)
+    n_pages = 0
 
     def paint_bg(kind):
         bg = _bg(profile, kind) or _bg(profile, "post")
@@ -378,9 +463,27 @@ def build_pdf(results, images, places, profile, title, out):
         if t.get("pill"):
             # a rounded pill behind the text, text centred in it (v3)
             px, py, pw_, ph_ = _pill_box(t, W, H)
+            y = H - py - ph_ / 2 - size * 0.35
+            if t.get("pill2"):
+                # two-tone: label pill (pill2) | value pill (pill), 58/42
+                lab, val = _pill_parts(t, ctx)
+                lw = pw_ * 0.58 if val else pw_
+                c.setFillColor(colors.HexColor(t["pill2"]))
+                c.roundRect(px, H - py - ph_, lw, ph_, ph_ / 2, stroke=0, fill=1)
+                c.setFillColor(colors.HexColor(_pill_ink({"pill": t["pill2"], "color": t.get("color")})))
+                c.drawCentredString(px + lw / 2, y, _trim(lab, font, size, lw - ph_ * 0.6))
+                if val:
+                    vx = px + lw + ph_ * 0.15
+                    vw = pw_ - lw - ph_ * 0.15
+                    c.setFillColor(colors.HexColor(t["pill"]))
+                    c.roundRect(vx, H - py - ph_, vw, ph_, ph_ / 2, stroke=0, fill=1)
+                    c.setFillColor(colors.HexColor(_pill_ink({"pill": t["pill"]})))
+                    c.drawCentredString(vx + vw / 2, y, _trim(val, font, size, vw - ph_ * 0.5))
+                    if t["field"] in ("post_link", "link") and ctx.get("post_link"):
+                        c.linkURL(ctx["post_link"], (vx, H - py - ph_, vx + vw, H - py), relative=0)
+                return
             c.setFillColor(colors.HexColor(t["pill"]))
             c.roundRect(px, H - py - ph_, pw_, ph_, ph_ / 2, stroke=0, fill=1)
-            y = H - py - ph_ / 2 - size * 0.35
             c.setFillColor(colors.HexColor(_pill_ink(t)))
             value = _trim(value, font, size, w - ph_ * 0.6)
             c.drawCentredString(x + w / 2, y, value)
@@ -400,8 +503,19 @@ def build_pdf(results, images, places, profile, title, out):
             c.linkURL(ctx["post_link"], (x, y - 2, x + w, y + size), relative=0)
 
     base_ctx = {"title": title, "date": date, "pages": n_pages}
-    sections, per_post = _sections(results)
     tpl = profile["template"]
+    # v3: sections that match template.grid.match (counter comments) are laid
+    # out MANY per page after the post pages; the rest are one-per-page as
+    # before. Numbering (Post i / Top N) counts within the normal ones only.
+    gspec = _grid_spec(profile)
+    normal = [(r, img, pl) for r, img, pl in zip(results, images, places)
+              if not _is_grid_section(profile, r)]
+    gridded = [(r, img, pl) for r, img, pl in zip(results, images, places)
+               if _is_grid_section(profile, r)]
+    pages = _pages([x[0] for x in normal], ([x[1] for x in normal], [x[2] for x in normal]))
+    n_pages = len(pages)
+    base_ctx["pages"] = n_pages
+    sections, per_post = _sections([x[0] for x in normal])
 
     if _bg(profile, "cover"):
         paint_bg("cover")
@@ -466,6 +580,30 @@ def build_pdf(results, images, places, profile, title, out):
     # nobody clicked on a page that did not belong to the design. The style's
     # own closing art still prints; `content.links_table` no longer draws
     # anything for a template style (2.4.0).
+    # v3: grid pages — counter-comment screenshots, many per page, under the
+    # section's name. The "grid" page art if the style has one, else the post
+    # art; the heading and anything else comes from text slots on page "grid".
+    if gridded and gspec:
+        cells = _grid_cells(gspec, W, H)
+        for sec, items_ in _grid_pages(gridded, gspec):
+            paint_bg("grid")
+            gctx = {**base_ctx, "page": n_pages, "category": sec, "section": sec,
+                    "post_link": "", "metrics_dict": {}}
+            for t in _text_items(profile, "grid"):
+                draw_text(t, gctx)
+            for (r, img, pl), (cx, cy, cw, ch) in zip(items_, cells):
+                img = _grid_image(r, img)
+                fx, fy, fw, fh = _fit_in(img, cx, cy, cw, ch)
+                c.drawImage(img, fx, H - fy - fh, width=fw, height=fh, mask="auto")
+                if gspec.get("border"):
+                    c.setStrokeColor(colors.HexColor(gspec["border"]))
+                    c.setLineWidth(0.8)
+                    c.rect(fx, H - fy - fh, fw, fh, stroke=1, fill=0)
+                link = (r.get("post_link") or r.get("url") or "")
+                if link:
+                    c.linkURL(link, (fx, H - fy - fh, fx + fw, H - fy), relative=0)
+            c.showPage()
+
     if _bg(profile, "end"):
         paint_bg("end")
         for t in _text_items(profile, "end"):
@@ -586,11 +724,16 @@ def build_pptx(results, images, places, profile, title, out):
     blank = prs.slide_layouts[6]                 # the empty layout
 
     date = datetime.date.today().strftime("%d-%m-%Y")
-    pages = _pages(results, (images, places))
-    n_pages = len(pages)
     fonts = register_fonts(profile)              # reportlab, for measuring only
     faces = face_names(profile)
     tpl = profile["template"]
+    gspec = _grid_spec(profile)
+    normal = [(r, img, pl) for r, img, pl in zip(results, images, places)
+              if not _is_grid_section(profile, r)]
+    gridded = [(r, img, pl) for r, img, pl in zip(results, images, places)
+               if _is_grid_section(profile, r)]
+    pages = _pages([x[0] for x in normal], ([x[1] for x in normal], [x[2] for x in normal]))
+    n_pages = len(pages)
 
     def new_slide(kind):
         """A slide with its page art already at the back — the background is the
@@ -619,31 +762,43 @@ def build_pptx(results, images, places, profile, title, out):
             # object to move, recolour or retype in PowerPoint (v3)
             from pptx.enum.shapes import MSO_SHAPE
             px, py, pw_, ph_ = _pill_box(t, W, H)
-            value = _trim(value, _drawable(value, _pdf_font(t, fonts)), size, t["w"] * W - ph_ * 0.6)
-            shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Pt(px), Pt(py), Pt(pw_), Pt(ph_))
-            shp.adjustments[0] = 0.5
-            shp.fill.solid()
-            shp.fill.fore_color.rgb = _rgb(t["pill"])
-            shp.line.fill.background()
-            shp.shadow.inherit = False
-            tf = shp.text_frame
-            tf.word_wrap = False
-            tf.auto_size = MSO_AUTO_SIZE.NONE
-            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-            tf.margin_left = tf.margin_right = Pt(ph_ * 0.3)
-            tf.margin_top = tf.margin_bottom = 0
-            para = tf.paragraphs[0]
-            para.alignment = PP_ALIGN.CENTER
-            run = para.add_run()
-            run.text = value
-            run.font.name = faces.get(t.get("font") or "") or _PPTX_DEFAULT_FACE
-            run.font.size = Pt(size)
-            run.font.bold = bool(t.get("bold"))
-            run.font.color.rgb = _rgb(_pill_ink(t))
-            if t["field"] in ("post_link", "link") and ctx.get("post_link"):
-                run.hyperlink.address = ctx["post_link"]
-                run.font.underline = False        # the pill IS the button
-            return shp
+
+            def pill_shape(x0, w0, fill, text_, ink, link=None):
+                shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Pt(x0), Pt(py), Pt(w0), Pt(ph_))
+                shp.adjustments[0] = 0.5
+                shp.fill.solid()
+                shp.fill.fore_color.rgb = _rgb(fill)
+                shp.line.fill.background()
+                shp.shadow.inherit = False
+                tf = shp.text_frame
+                tf.word_wrap = False
+                tf.auto_size = MSO_AUTO_SIZE.NONE
+                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                tf.margin_left = tf.margin_right = Pt(ph_ * 0.3)
+                tf.margin_top = tf.margin_bottom = 0
+                para = tf.paragraphs[0]
+                para.alignment = PP_ALIGN.CENTER
+                run = para.add_run()
+                run.text = _trim(text_, _drawable(text_, _pdf_font(t, fonts)), size, w0 - ph_ * 0.6)
+                run.font.name = faces.get(t.get("font") or "") or _PPTX_DEFAULT_FACE
+                run.font.size = Pt(size)
+                run.font.bold = bool(t.get("bold"))
+                run.font.color.rgb = _rgb(ink)
+                if link:
+                    run.hyperlink.address = link
+                    run.font.underline = False        # the pill IS the button
+                return shp
+
+            link = ctx.get("post_link") if t["field"] in ("post_link", "link") else None
+            if t.get("pill2"):
+                lab, val = _pill_parts(t, ctx)
+                lw = pw_ * 0.58 if val else pw_
+                pill_shape(px, lw, t["pill2"], lab, _pill_ink({"pill": t["pill2"], "color": t.get("color")}))
+                if val:
+                    vx = px + lw + ph_ * 0.15
+                    pill_shape(vx, pw_ - lw - ph_ * 0.15, t["pill"], val, _pill_ink({"pill": t["pill"]}), link)
+                return
+            return pill_shape(px, pw_, t["pill"], value, _pill_ink(t), link)
         value = _trim(value, _drawable(value, _pdf_font(t, fonts)), size,
                       t["w"] * W)
         box = slide.shapes.add_textbox(Pt(t["x"] * W),
@@ -730,6 +885,26 @@ def build_pptx(results, images, places, profile, title, out):
                             lg["w"] * W, lg["h"] * H)
         for t in _text_items(profile, "post"):
             draw_text(slide, t, ctx)
+
+    # v3: grid pages (counter comments), same cells as the PDF
+    if gridded and gspec:
+        cells = _grid_cells(gspec, W, H)
+        for sec, items_ in _grid_pages(gridded, gspec):
+            slide = new_slide("grid")
+            gctx = {**base_ctx, "page": n_pages, "category": sec, "section": sec,
+                    "post_link": "", "metrics_dict": {}}
+            for t in _text_items(profile, "grid"):
+                draw_text(slide, t, gctx)
+            for (r, img, pl), (cx, cy, cw, ch) in zip(items_, cells):
+                img = _grid_image(r, img)
+                fx, fy, fw, fh = _fit_in(img, cx, cy, cw, ch)
+                pic = slide.shapes.add_picture(img, Pt(fx), Pt(fy), Pt(fw), Pt(fh))
+                if gspec.get("border"):
+                    pic.line.color.rgb = _rgb(gspec["border"])
+                    pic.line.width = Pt(0.8)
+                link = (r.get("post_link") or r.get("url") or "")
+                if link:
+                    pic.click_action.hyperlink.address = link
 
     # Same ending as the PDF: the style's closing art if it has one, and no
     # trailing links list (2.4.0 — every post carries its own LINK).

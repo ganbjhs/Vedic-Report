@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "slug": "kashi-deck-16x9",
+  "label": "Kashi deck (16:9)",
+  "platform": "combined",
+  "description": "The Kashi daily deck, rebuilt on the team's own page art (no text baked in): cover, summary table of sections, one page per post with platform logo, Handle Name, Social Media Report, date, Top N Posts, two-tone metric pills that appear only for the metrics the sheet has (Likes, Video views, Post Reach, Impressions, ReTweets), a LINK button and the screenshot filling its frame; then counter-comment sections as screenshot grids under a green band; a closing links page.",
+  "capture": {
+    "engine": "combined",
+    "device_scale_factor": 1,
+    "viewport": {"width": 1280, "height": 2000},
+    "keep_engagement": true,
+    "workers": null
+  },
+  "image": {"max_in": [3.36, 5.06], "aspect": "3360:5060", "fit": "cover", "background": "#FFFFFF",
+            "radius_pt": 6, "border": null, "shadow": null, "watermark": null},
+  "page": {"size": "16:9", "orientation": "landscape", "grid": [1, 1], "margins_in": [0.4, 0.4, 0.4, 0.4]},
+  "content": {"cover": false, "header": null, "footer": null, "per_post_fields": [], "metrics": null, "links_table": false},
+  "template": {
+    "fit": "cover",
+    "pages": {"post": "post.png", "cover": "cover.png", "summary": "summary.png", "grid": "grid.png", "end": "end.png"},
+    "slots": [{"x": 0.691, "y": 0.32, "w": 0.252, "h": 0.675}],
+    "logos": [{"x": 0.682, "y": 0.15, "w": 0.10, "h": 0.175}],
+    "summary_box": {"x": 0.355, "y": 0.46, "w": 0.62, "h": 0.50},
+    "grid": {"match": "counter|comment", "box": {"x": 0.015, "y": 0.17, "w": 0.97, "h": 0.80}, "cols": 4, "rows": 2, "gap": 0.012, "border": "#222222"},
+    "text": [
+      {"field": "static",     "label": "Handle Name", "x": 0.02, "y": 0.245, "w": 0.36, "h": 0.035, "size_pt": 13, "color": "#3D3D3D", "align": "center", "page": "post"},
+      {"field": "handle",     "x": 0.02, "y": 0.278, "w": 0.36, "h": 0.065, "size_pt": 26, "color": "#FC4F06", "align": "center", "page": "post", "bold": true},
+      {"field": "static",     "label": "Social Media Report", "x": 0.02, "y": 0.345, "w": 0.36, "h": 0.035, "size_pt": 14, "color": "#231F20", "align": "center", "page": "post"},
+      {"field": "date",       "x": 0.02, "y": 0.385, "w": 0.36, "h": 0.035, "size_pt": 13, "color": "#F15323", "align": "center", "page": "post"},
+      {"field": "post_total", "x": 0.805, "y": 0.175, "w": 0.17, "h": 0.035, "size_pt": 14, "color": "#231F20", "align": "left", "page": "post"},
+      {"field": "post_no",    "x": 0.805, "y": 0.20,  "w": 0.18, "h": 0.09,  "size_pt": 40, "color": "#231F20", "align": "left", "page": "post", "bold": true},
+      {"field": "post_total", "x": 0.175, "y": 0.60,  "w": 0.15, "h": 0.075, "size_pt": 16, "align": "center", "page": "post", "bold": true, "pill": "#FF5A1F"},
+      {"field": "metric.like",        "label": "Likes",       "x": 0.345, "y": 0.455, "w": 0.33, "h": 0.06, "size_pt": 18, "align": "center", "page": "post", "bold": true, "pill": "#FF5A1F", "pill2": "#555555"},
+      {"field": "metric.views",       "label": "Video views", "x": 0.345, "y": 0.535, "w": 0.33, "h": 0.06, "size_pt": 18, "align": "center", "page": "post", "bold": true, "pill": "#FF5A1F", "pill2": "#555555"},
+      {"field": "metric.reach",       "label": "Post Reach",  "x": 0.345, "y": 0.615, "w": 0.33, "h": 0.06, "size_pt": 18, "align": "center", "page": "post", "bold": true, "pill": "#FF5A1F", "pill2": "#555555"},
+      {"field": "metric.impressions", "label": "Impressions", "x": 0.345, "y": 0.695, "w": 0.33, "h": 0.06, "size_pt": 18, "align": "center", "page": "post", "bold": true, "pill": "#FF5A1F", "pill2": "#555555"},
+      {"field": "metric.shares",      "label": "ReTweets",    "x": 0.345, "y": 0.775, "w": 0.33, "h": 0.06, "size_pt": 18, "align": "center", "page": "post", "bold": true, "pill": "#FF5A1F", "pill2": "#555555"},
+      {"field": "link",       "label": "Post Link",   "x": 0.345, "y": 0.855, "w": 0.33, "h": 0.06, "size_pt": 18, "align": "center", "page": "post", "bold": true, "pill": "#FF5A1F", "pill2": "#555555"},
+      {"field": "title",      "x": 0.06, "y": 0.47, "w": 0.52, "h": 0.14, "size_pt": 56, "color": "#FC4F06", "align": "left", "page": "cover", "bold": true},
+      {"field": "date",       "x": 0.22, "y": 0.68, "w": 0.40, "h": 0.09, "size_pt": 34, "color": "#046F03", "align": "left", "page": "cover", "bold": true},
+      {"field": "static",     "label": "Summary", "x": 0.02, "y": 0.27, "w": 0.36, "h": 0.07, "size_pt": 34, "color": "#FC4F06", "align": "center", "page": "summary", "bold": true},
+      {"field": "static",     "label": "Social Media Report", "x": 0.02, "y": 0.345, "w": 0.36, "h": 0.035, "size_pt": 14, "color": "#231F20", "align": "center", "page": "summary"},
+      {"field": "date",       "x": 0.02, "y": 0.385, "w": 0.36, "h": 0.035, "size_pt": 13, "color": "#F15323", "align": "center", "page": "summary"},
+      {"field": "section",    "x": 0.02, "y": 0.095, "w": 0.96, "h": 0.06, "size_pt": 26, "color": "#FFFFFF", "align": "center", "page": "grid", "bold": true},
+      {"field": "title",      "x": 0.02, "y": 0.34, "w": 0.28, "h": 0.06, "size_pt": 22, "color": "#FC4F06", "align": "center", "page": "end", "bold": true}
+    ]
+  },
+  "outputs": ["pdf", "pptx"]
+}

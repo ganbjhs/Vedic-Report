@@ -240,6 +240,17 @@ Test: `profiles/tests/test_projects.py`.
 | Facebook **reels**: `/reel/<id>` retried on `/watch/?v=` then the public video plugin before "unavailable" | `facebook/fb_capture.py` (`_reel_alternatives`, `_capture_plugin`) |
 | Sheet-reader notes ("unnamed number column…") also land in each job's activity log | `runs.create_run(notes=…)` |
 
+## 4d. Kashi deck (v3.0-c) — two-tone pills, static text, comment grid pages, FB comment capture
+
+| Piece | Where |
+|---|---|
+| Text slot `pill2` (#RRGGBB): two-tone pill — grey label half + coloured value half ("Likes │ 676"), PDF/PPTX/preview alike. Empty value → nothing drawn | `registry._TEXT_KEYS`, `tpl_builder._pill_parts`, `tpl_preview` |
+| Text field `static` — fixed words the template prints ("Social Media Report", "Top {n} Posts") | `registry._TEXT_FIELDS`, `tpl_builder._text_value` |
+| `template.grid` {match, box, cols, rows, gap, border} + page kind `grid`: sections whose name matches (`counter|comment`) are taken OUT of the per-post pages and laid as a grid of raw screenshots, N per page, under the grid art | `registry._GRID_KEYS/_TEMPLATE_PAGES`, `tpl_builder._grid_*`, `styles._template_profile`, `PAGE_KINDS` |
+| **Kashi deck (16:9)** — built from the client's layout-*.png art (no text): cover · summary table · post page (handle, Social Media Report, date, platform logo, Top N / Post i, Likes/Post Reach/Video views/ReTweets two-tone pills, LINK pill, cover screenshot) · comments grid · links end page | `profiles/registry/kashi-deck-16x9.json` + `assets/kashi-deck-16x9/` |
+| FB comment permalinks (`…?comment_id=…`) captured as the comment itself (best-effort, logged-out) ; `netlinks.normalize_fb_url` keeps `comment_id` | `facebook/fb_capture.py _capture_comment` |
+| Replace-background modal + designer know the grid page | `project_styles.html`, `templates/styles.html`, `app.js` |
+
 ## 5. Front-end model (for a redesign)
 
 Shell: top bar (brand · theme · avatar menu) · left nav (New report N,

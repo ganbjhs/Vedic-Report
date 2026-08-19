@@ -68,7 +68,11 @@ def normalize_fb_url(url: str) -> str:
     u = re.sub(r"^https?://(m|mbasic|web)\.facebook\.com", "https://www.facebook.com", u, flags=re.I)
     u = re.sub(r"^https?://facebook\.com", "https://www.facebook.com", u, flags=re.I)
     if "?" in u and "fbid=" not in u and "story_fbid=" not in u and "v=" not in u:
-        u = u.split("?", 1)[0]          # /posts/<id>?__cft__=… → /posts/<id>
+        # /posts/<id>?__cft__=… → /posts/<id>; but a COMMENT permalink keeps
+        # its comment_id — that is the thing the capture frames (v3).
+        base, q = u.split("?", 1)
+        m = re.search(r"(?:^|&)(comment_id=\d+)", q)
+        u = base + (f"?{m.group(1)}" if m else "")
     return u
 
 

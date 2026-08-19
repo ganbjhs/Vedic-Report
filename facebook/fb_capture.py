@@ -443,6 +443,44 @@ def capture(page, url: str, shot_path, keep_engagement: bool = True) -> dict:
     return res
 
 
+def _capture_comment(page, article, comment_id: str, shot_path, res: dict):
+    """Frame one comment by its id. Facebook renders each comment as a nested
+    div[role=article] holding a permalink with ?comment_id=<id>; the smallest
+    such article that contains the link is the comment itself."""
+    try:
+        for _ in range(4):                       # comments load lazily; nudge
+            node = page.locator(f'div[role="article"]:has(a[href*="comment_id={comment_id}"])')
+            n = node.count()
+            if n:
+                break
+            page.mouse.wheel(0, 900)
+            page.wait_for_timeout(600)
+        if not n:
+            return None
+        target = node.nth(n - 1)                 # innermost match
+        target.scroll_into_view_if_needed(timeout=3000)
+        page.wait_for_timeout(400)
+        dismiss(page)
+        box = target.bounding_box()
+        if not box or box["height"] < 40:
+            return None
+        clip = {"x": max(0, box["x"] - 6), "y": max(0, box["y"] - 6),
+                "width": min(box["width"] + 12, 1200), "height": min(box["height"] + 12, 3000)}
+        shot_path.parent.mkdir(parents=True, exist_ok=True)
+        _screenshot_clip(page, clip, shot_path)
+        res.update({"screenshot": str(shot_path), "status": "ok", "frame_ok": True,
+                    "cut": "comment", "overlay": overlay_present(page)})
+        try:
+            res["handle"] = (target.locator('a[role="link"]').first.inner_text(timeout=600) or "").strip()[:60]
+            res["text"] = target.inner_text(timeout=800)[:500]
+        except Exception:
+            pass
+        return res
+    except Exception as e:
+        print(f"[fb] comment capture failed: {e}", flush=True)
+        return None
+
+
 def _capture_once(page, url: str, shot_path, keep_engagement: bool = True) -> dict:
     res = {"url": url, "status": "error", "handle": "", "screenshot": None,
            "text": "", "overlay": False, "frame_ok": True, "parent_lost": False}
@@ -471,6 +509,14 @@ def _capture_once(page, url: str, shot_path, keep_engagement: bool = True) -> di
         article.scroll_into_view_if_needed(timeout=3000)
     except Exception:
         pass
+    # v3: a COMMENT permalink (…?comment_id=<id>) frames that one comment —
+    # the team's counter-comments — rather than the post it sits under.
+    cm = re.search(r"[?&]comment_id=(\d+)", url)
+    if cm:
+        shot = _capture_comment(page, article, cm.group(1), shot_path, res)
+        if shot is not None:
+            return shot
+        print(f"[fb] comment {cm.group(1)} not found on the page — framing the post", flush=True)
     _expand_see_more(page, article)
     _wait_media(page, article)
     dismiss(page)                                   # media settling can bring a sheet back

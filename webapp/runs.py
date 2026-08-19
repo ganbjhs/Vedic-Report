@@ -18,7 +18,7 @@ class RunError(ValueError):
 def create_run(project: dict, rows: list, raw: bytes, upload_name: str,
                report_name: str, types: list = None, outputs=None,
                keep_engagement: bool = False, workers: int = 0,
-               user: str = "auto", note: str = "") -> list:
+               user: str = "auto", note: str = "", notes: list = None) -> list:
     """Create + queue one job per style. Returns the job ids.
 
     `types` — style slugs; None means every runnable style of the project.
@@ -70,6 +70,11 @@ def create_run(project: dict, rows: list, raw: bytes, upload_name: str,
         store.append_activity(
             job_id, f"{note or 'Started'} — {len(rows)} link(s) from '{upload_name}' · "
                     f"project {project['name']} · style {rt.label}.")
+        # What the sheet reader noticed (an unnamed number column, say) is
+        # said HERE too, where the person looks when the report is missing a
+        # metric — not only in a preview they may have scrolled past.
+        for n in (notes or []):
+            store.append_activity(job_id, f"Sheet reader: {n}", "warn")
         if config.EXECUTION_MODE == "inline":
             store.update(job_id, phase="Waiting to start")
         else:

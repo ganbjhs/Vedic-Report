@@ -163,6 +163,34 @@ async def set_project_styles(pid: str, request: Request,
     return {"ok": True, "project": projects.public(_project(pid))}
 
 
+@router.post("/{pid}/styles/{slug}/pages")
+async def replace_style_pages(pid: str, slug: str, request: Request,
+                              post: UploadFile = File(None),
+                              cover: UploadFile = File(None),
+                              summary: UploadFile = File(None),
+                              end: UploadFile = File(None),
+                              csrf_token: str = Form(...),
+                              user: str = Depends(auth.require_user_api)):
+    """Replace the page art (background) of a designed-page style — the slots
+    stay exactly where they are. A shipped style is copied into the project
+    first, so the original stays as it was for everyone else."""
+    auth.verify_csrf(request, csrf_token)
+    p = _project(pid)
+    if slug not in {s["slug"] for s in store.project_styles(pid)}:
+        raise HTTPException(status_code=404, detail="That style is not in this project.")
+    files = {}
+    for kind, up in (("post", post), ("cover", cover), ("summary", summary), ("end", end)):
+        if up is not None and getattr(up, "filename", ""):
+            files[kind] = await up.read()
+    try:
+        target = styles.replace_page_art(slug, p, files)
+    except styles.StyleError as e:
+        return JSONResponse({"ok": False, "detail": str(e)}, status_code=400)
+    if target != slug:
+        store.project_replace_style(pid, slug, target)
+    return {"ok": True, "slug": target, "project": projects.public(_project(pid))}
+
+
 @router.post("/{pid}/styles/{slug}/background")
 async def set_style_background(pid: str, slug: str, request: Request,
                                color: str = Form(""),

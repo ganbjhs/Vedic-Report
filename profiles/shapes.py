@@ -74,6 +74,21 @@ def crop_to_aspect(im, aspect: float, anchor="top"):
     return im.crop((0, top, w, top + new_h))
 
 
+def cover_top(im, aspect: float, bg="#FFFFFF"):
+    """Fill a box of `aspect` (w/h) from the TOP: full width always; a taller
+    post loses its bottom, a shorter one gets `bg` below it. Never crops the
+    sides — a reply's parent, the author line and the text stay whole."""
+    from PIL import Image
+    w, h = im.size
+    target_h = int(round(w / aspect))
+    if h >= target_h:
+        return im.crop((0, 0, w, target_h))
+    canvas = Image.new("RGBA", (w, target_h), bg)
+    src = _rgba(im)
+    canvas.paste(src, (0, 0), src)
+    return canvas
+
+
 # --------------------------------------------------------------------------- #
 # Decoration
 # --------------------------------------------------------------------------- #
@@ -193,6 +208,8 @@ def compose(im, spec: dict, placement_w_in: float = None):
         out = pad_to_aspect(out, aspect, bg)
     elif aspect and fit_mode == "crop-top":
         out = crop_to_aspect(out, aspect, anchor="top")
+    elif aspect and fit_mode == "cover":
+        out = cover_top(out, aspect, bg)
 
     radius_px = (spec.get("radius_pt") or 0) * scale
     if radius_px >= 0.5:

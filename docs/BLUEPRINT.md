@@ -228,6 +228,18 @@ Test: `profiles/tests/test_projects.py`.
 | Fetch guards unchanged; `sheets.fetch_text(allow_html=True)` added for the htmlview page | `webapp/sheets.py` |
 | Tests | `profiles/tests/test_smartsheet.py` (the real workbook's four shapes) |
 
+## 4c. Report look (v3.0-b) — pills, cover fit, clean template, background swap, FB reels
+
+| Piece | Where |
+|---|---|
+| Text slot `label` + `pill` (#RRGGBB): "Like 676" drawn in a rounded pill by the APP — only when the value exists, so a metric the sheet lacks leaves nothing behind. Same rule in PDF, PPTX (a real rounded shape carrying the text) and the PIL preview | `registry._TEXT_KEYS`, `tpl_builder._text_value/_pill_box/_pill_ink`, `tpl_preview._draw_text` |
+| `template.fit` = fit / cover; cover = full width, crop the BOTTOM of a tall post, pad below a short one — never crops sideways (`shapes.cover_top`, `image.fit="cover"`, aspect from the first slot) | `registry.FITS`, `shapes.compose`, `styles._template_profile` |
+| **Combined clean (16:9)** — PIL-drawn page art with NO baked text; logo · handle · date · Post i · metric pills · "Open post" button · cover-fit screenshot; cover + summary | `profiles/registry/combined-clean-16x9.json` + `assets/combined-clean-16x9/` |
+| Designer: Screenshot fit select, per-text Label + Pill; "Place standard slots" now lays out the clean design | `templates/styles.html`, `app.js initTemplateDesigner` |
+| **Replace background** of a designed-page style per project (page art swap, slots stay) — forks a shipped style into the project first | `styles.replace_page_art`, `POST /api/projects/{pid}/styles/{slug}/pages`, `project_styles.html` |
+| Facebook **reels**: `/reel/<id>` retried on `/watch/?v=` then the public video plugin before "unavailable" | `facebook/fb_capture.py` (`_reel_alternatives`, `_capture_plugin`) |
+| Sheet-reader notes ("unnamed number column…") also land in each job's activity log | `runs.create_run(notes=…)` |
+
 ## 5. Front-end model (for a redesign)
 
 Shell: top bar (brand · theme · avatar menu) · left nav (New report N,

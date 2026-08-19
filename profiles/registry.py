@@ -80,7 +80,10 @@ PAGE_SIZES = {"letter": (8.5, 11.0), "a4": (8.2677, 11.6929),
 OUTPUTS = ("pdf", "docx", "pptx")
 TEMPLATE_OUTPUTS = ("pdf", "pptx")
 NUMERIC_OUTPUTS = ("pdf", "docx", "pptx")
-FITS = ("fit", "pad", "crop-top")
+# "cover" (v3): fill the box like CSS object-fit: cover, but never crop
+# sideways — scale to the box width, crop the BOTTOM of a taller post, pad
+# below a shorter one. Evidence is never cut off at the sides.
+FITS = ("fit", "pad", "crop-top", "cover")
 
 # Every key any section may contain. Anything else raises.
 _ALLOWED = {
@@ -105,7 +108,11 @@ _TOP = {"schema", "slug", "label", "description", "extends", "platform",
 # the background is painted, screenshots are fitted (never cropped) into the
 # image slots in reading order, and text slots print report fields. When
 # `template` is present it replaces the grid: posts per page = image slots.
-_TEMPLATE_KEYS = {"pages", "slots", "text", "logos", "summary_box", "fonts"}
+# `fit` (v3): "fit" = the whole screenshot inside its slot (default, never
+# crops evidence); "cover" = fill the slot edge to edge, cropping the BOTTOM
+# of a post that is taller than the slot — a designed look, chosen knowingly.
+_TEMPLATE_KEYS = {"pages", "slots", "text", "logos", "summary_box", "fonts", "fit"}
+_TEMPLATE_FITS = ("fit", "cover")
 _TEMPLATE_PAGES = {"post", "cover", "end", "summary"}
 # Text slots. `metric.<key>` prints that metric's VALUE (from the sheet columns
 # or a capture engine); `post_no` / `post_total` count within the post's section;
@@ -119,8 +126,14 @@ _TEXT_FIELDS = {"title", "date", "page", "pages", "index", "account_name",
                 "post_link", "category", "metrics", "section", "handle",
                 "post_no", "post_total", "post_total_n", "link", "platform"} | {
                     f"metric.{k}" for k in _METRIC_KEYS}
+# `label` (v3): printed before the value ("Like " + "676") — and only when the
+# value exists, so a metric the sheet does not have leaves no orphan label.
+# `pill` (v3): "#RRGGBB" — a rounded pill of that colour is drawn behind the
+# text (again only when there is a value), the text centred in it. Together
+# they replace pill art baked into a page image, which could not go away when
+# a metric was missing.
 _TEXT_KEYS = {"field", "x", "y", "w", "h", "size_pt", "color", "align", "page",
-              "bold", "font"}
+              "bold", "font", "label", "pill"}
 _SLOT_KEYS = {"x", "y", "w", "h"}
 
 # The one font every renderer has without an upload. A text slot naming
@@ -454,7 +467,7 @@ def validate(p: dict) -> dict:
     if img.get("fit", "fit") not in FITS:
         raise ProfileError(f"{slug}: image.fit must be one of {FITS}, "
                            f"got {img.get('fit')!r}")
-    if img.get("aspect") is None and img.get("fit") in ("pad", "crop-top"):
+    if img.get("aspect") is None and img.get("fit") in ("pad", "crop-top", "cover"):
         raise ProfileError(f"{slug}: image.fit={img['fit']!r} needs an aspect "
                            "to pad or crop to")
     _num(img.get("radius_pt", 0), "image.radius_pt", slug, 0)
@@ -647,6 +660,8 @@ def _validate_template(p: dict, slug: str) -> None:
             _num(sb.get(k), f"template.summary_box.{k}", slug, 0, 1)
         for k in ("w", "h"):
             _num(sb.get(k), f"template.summary_box.{k}", slug, 0.05, 1)
+    if tpl.get("fit", "fit") not in _TEMPLATE_FITS:
+        raise ProfileError(f"{slug}: template.fit must be one of {_TEMPLATE_FITS}")
     fonts = tpl.get("fonts")
     if fonts is not None:
         if not isinstance(fonts, list) or len(fonts) > MAX_FONTS:
@@ -683,3 +698,7 @@ def _validate_template(p: dict, slug: str) -> None:
             raise ProfileError(f"{slug}: template.text[{i}].page must be post/cover/end/all")
         if t.get("align", "left") not in ("left", "center", "right"):
             raise ProfileError(f"{slug}: template.text[{i}].align must be left/center/right")
+        if t.get("label") is not None and (not isinstance(t["label"], str) or len(t["label"]) > 30):
+            raise ProfileError(f"{slug}: template.text[{i}].label must be a short string")
+        if t.get("pill") is not None and not (isinstance(t["pill"], str) and _HEX.match(t["pill"])):
+            raise ProfileError(f"{slug}: template.text[{i}].pill must be #RRGGBB")

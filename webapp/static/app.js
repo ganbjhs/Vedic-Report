@@ -838,24 +838,30 @@ function initTemplateDesigner() {
     if (items.some((it) => it.kind === "summary")) return setStatus("There is already a summary table box.");
     add("summary", null, { x: 0.36, y: 0.45, w: 0.6, h: 0.5 });
   });
-  // The Kashi-style layout in one click; nudge afterwards.
+  // The standard layout in one click; nudge afterwards. v3: no section
+  // heading over the handle, metric PILLS drawn by the app (label + value,
+  // only when the sheet has that metric), a proper LINK button, screenshot
+  // filling its box ("cover").
   $("t-preset").addEventListener("click", () => {
     if (!pages.post) return setStatus("Upload the post page first.");
     showPage("post"); items = items.filter((it) => it.page !== "post" && it.kind !== "slot" && it.kind !== "logo");
-    const T = (field, x, y, w, h, size, color, align, bold) => items.push({ id: nextId++, kind: "text", page: "post", field, x, y, w, h, size, color, align, bold });
-    items.push({ id: nextId++, kind: "slot", page: "post", x: 0.695, y: 0.31, w: 0.255, h: 0.66 });
-    items.push({ id: nextId++, kind: "logo", page: "post", x: 0.69, y: 0.145, w: 0.075, h: 0.135 });
-    T("section", 0.08, 0.135, 0.32, 0.04, 11, "#3d3d3d", "center", false);
-    T("handle", 0.06, 0.175, 0.36, 0.06, 22, "#e8571c", "center", true);
-    T("date", 0.10, 0.255, 0.28, 0.04, 11, "#e8571c", "center", false);
-    T("post_total", 0.80, 0.165, 0.16, 0.04, 12, "#333333", "left", false);
-    T("post_no", 0.80, 0.195, 0.16, 0.08, 30, "#111111", "left", true);
-    T("metric.like", 0.555, 0.482, 0.11, 0.04, 18, "#ffffff", "center", true);
-    T("metric.impressions", 0.555, 0.562, 0.11, 0.04, 18, "#ffffff", "center", true);
-    T("metric.views", 0.555, 0.642, 0.11, 0.04, 18, "#ffffff", "center", true);
-    T("link", 0.555, 0.722, 0.11, 0.04, 16, "#ffffff", "center", true);
-    T("post_total", 0.18, 0.68, 0.14, 0.05, 14, "#ffffff", "center", true);
-    render(); setStatus("Standard slots placed. Drag any box to match your art; ⌫ deletes the selected one.");
+    const T = (field, x, y, w, h, size, color, align, bold, extra) => items.push(Object.assign({ id: nextId++, kind: "text", page: "post", field, x, y, w, h, size, color, align, bold }, extra || {}));
+    items.push({ id: nextId++, kind: "slot", page: "post", x: 0.62, y: 0.12, w: 0.33, h: 0.78 });
+    items.push({ id: nextId++, kind: "logo", page: "post", x: 0.06, y: 0.12, w: 0.07, h: 0.12 });
+    T("handle", 0.15, 0.13, 0.42, 0.07, 22, "#1B2440", "left", true);
+    T("date", 0.15, 0.215, 0.30, 0.04, 11, "#5B6472", "left", false);
+    T("post_no", 0.06, 0.32, 0.22, 0.09, 30, "#111111", "left", true);
+    T("post_total", 0.06, 0.41, 0.30, 0.04, 12, "#5B6472", "left", false);
+    const P = "#E8571C";
+    T("metric.like", 0.06, 0.52, 0.22, 0.06, 13, "", "center", true, { label: "Like  ", pill: P });
+    T("metric.impressions", 0.30, 0.52, 0.26, 0.06, 13, "", "center", true, { label: "Impressions  ", pill: P });
+    T("metric.views", 0.06, 0.60, 0.22, 0.06, 13, "", "center", true, { label: "Views  ", pill: P });
+    T("metric.reach", 0.30, 0.60, 0.26, 0.06, 13, "", "center", true, { label: "Reach  ", pill: P });
+    T("metric.comments", 0.06, 0.68, 0.22, 0.06, 13, "", "center", true, { label: "Comments  ", pill: P });
+    T("metric.shares", 0.30, 0.68, 0.26, 0.06, 13, "", "center", true, { label: "Shares  ", pill: P });
+    T("link", 0.06, 0.80, 0.22, 0.07, 14, "", "center", true, { label: "Open post  ", pill: "#1B2440" });
+    if ($("t-fit")) $("t-fit").value = "cover";
+    render(); setStatus("Standard slots placed: handle, date, Post i, metric pills (only the metrics your sheet has will print), an Open post button. Drag any box; ⌫ deletes.");
   });
   document.querySelectorAll("[data-add-text]").forEach((b) => b.addEventListener("click", () => {
     if (!pages[cur]) return setStatus("Upload this page's image first.");
@@ -883,7 +889,7 @@ function initTemplateDesigner() {
       } else if (it.kind === "summary") {
         d.innerHTML = `<span class="lbl">Summary table (sections → counts)</span>`;
       } else {
-        d.innerHTML = `<span class="lbl" style="font-weight:${it.bold ? 700 : 400};text-align:${it.align};color:${it.color}">${esc(LABELS[it.field] || it.field)}</span>`;
+        d.innerHTML = `<span class="lbl" style="font-weight:${it.bold ? 700 : 400};text-align:${it.pill ? "center" : it.align};color:${it.pill ? "#fff" : it.color};${it.pill ? `background:${it.pill};border-radius:999px;padding:0 8px` : ""}">${esc((it.label || "") + (LABELS[it.field] || it.field))}</span>`;
       }
       d.innerHTML += `<i class="h"></i>`;
       layer.append(d);
@@ -906,6 +912,8 @@ function initTemplateDesigner() {
       $("tp-size").value = it.size; $("tp-color").value = it.color;
       $("tp-align").value = it.align; $("tp-bold").checked = !!it.bold;
       renderFontOptions(); $("tp-font").value = it.font || "Helvetica";
+      $("tp-label").value = it.label || "";
+      $("tp-pill-on").checked = !!it.pill; $("tp-pill").value = it.pill || "#E8571C";
     }
   }
   /* numeric X / Y / W / H, in % — typed instead of dragged when a value has to
@@ -935,6 +943,10 @@ function initTemplateDesigner() {
   $("tp-align").addEventListener("change", () => { if (sel) { sel.align = $("tp-align").value; render(); } });
   $("tp-bold").addEventListener("change", () => { if (sel) { sel.bold = $("tp-bold").checked; render(); } });
   $("tp-font").addEventListener("change", () => { if (sel) { sel.font = $("tp-font").value; render(); } });
+  $("tp-label").addEventListener("input", () => { if (sel) { sel.label = $("tp-label").value; render(); } });
+  $("tp-pill-on").addEventListener("change", () => { if (sel) { sel.pill = $("tp-pill-on").checked ? $("tp-pill").value : ""; render(); } });
+  $("tp-pill").addEventListener("input", () => { if (sel && $("tp-pill-on").checked) { sel.pill = $("tp-pill").value; render(); } });
+  if ($("t-fit")) $("t-fit").addEventListener("change", () => { setSaveable(); schedulePreview(0); });
   document.querySelectorAll("[data-preset-text]").forEach((b) => b.addEventListener("click", () => {
     if (!sel || sel.kind !== "text") return;
     Object.assign(sel, TEXT_PRESETS[b.dataset.presetText]);
@@ -1093,9 +1105,12 @@ function initTemplateDesigner() {
       logos: items.filter((it) => it.kind === "logo").map(box),
       summary_box: summary ? box(summary) : null,
       fonts: fonts.map((f) => f.name),
+      fit: $("t-fit") ? $("t-fit").value : "fit",
       text: items.filter((it) => it.kind === "text").map((it) => Object.assign(
         { field: it.field, size_pt: it.size, color: it.color, align: it.align, page: it.page, bold: !!it.bold }, box(it),
-        it.font && it.font !== "Helvetica" ? { font: it.font } : {})),
+        it.font && it.font !== "Helvetica" ? { font: it.font } : {},
+        it.label ? { label: it.label } : {},
+        it.pill ? { pill: it.pill } : {})),
     };
     if (copyFrom) meta.copy_from = copyFrom;    // borrow the art we did not replace
     return meta;
@@ -1226,7 +1241,8 @@ function initTemplateDesigner() {
       (tpl.slots || []).forEach((s) => items.push({ id: nextId++, kind: "slot", page: "post", ...s }));
       (tpl.logos || []).forEach((s) => items.push({ id: nextId++, kind: "logo", page: "post", ...s }));
       if (tpl.summary_box) items.push({ id: nextId++, kind: "summary", page: "summary", ...tpl.summary_box });
-      (tpl.text || []).forEach((t) => items.push({ id: nextId++, kind: "text", page: t.page || "post", field: t.field, x: t.x, y: t.y, w: t.w, h: t.h, size: t.size_pt || 10, color: t.color || "#111111", align: t.align || "left", bold: !!t.bold, font: t.font || "Helvetica" }));
+      (tpl.text || []).forEach((t) => items.push({ id: nextId++, kind: "text", page: t.page || "post", field: t.field, x: t.x, y: t.y, w: t.w, h: t.h, size: t.size_pt || 10, color: t.color || "#111111", align: t.align || "left", bold: !!t.bold, font: t.font || "Helvetica", label: t.label || "", pill: t.pill || "" }));
+      if ($("t-fit")) $("t-fit").value = tpl.fit || "fit";
       $("t-banner").hidden = !asCopy;
       $("t-banner-src").textContent = asCopy ? `Everything from “${p.label}” is here — slots, logo, summary box and text.` : "";
       renderFonts(); syncKitNote(); showPage("post");
@@ -1368,6 +1384,38 @@ function initProjectStyles() {
   form.addEventListener("submit", (e) => { e.preventDefault(); sendBg(false); });
   $("bg-remove").addEventListener("click", () => sendBg(true));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeBg(); });
+
+  /* replace page art of a designed-page (template) style */
+  const pgModal = $("pg-modal"), pgForm = $("pg-form"), pgMsg = $("pg-msg");
+  let pgSlug = "";
+  const closePg = () => { pgModal.hidden = true; };
+  grid.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-pages]"); if (!b) return;
+    e.stopPropagation();
+    const c = b.closest(".pick");
+    if (!c.classList.contains("on")) { c.classList.add("on"); c.querySelectorAll("[data-outs] input").forEach((i) => { i.checked = true; }); refresh(); }
+    api(`/api/projects/${encodeURIComponent(pid)}/styles`, { method: "PUT", json: { styles: payload() } })
+      .then((r) => { project = r.project || project; pgSlug = c.dataset.slug; $("pg-title").textContent = c.dataset.label; pgForm.reset(); pgForm.querySelectorAll("[data-pgname]").forEach((x) => { x.textContent = ""; }); pgMsg.textContent = ""; pgModal.hidden = false; })
+      .catch((err) => say(err.message, "bad"));
+  });
+  $("pg-close").addEventListener("click", closePg);
+  pgModal.addEventListener("click", (e) => { if (e.target === pgModal) closePg(); });
+  pgForm.querySelectorAll("input[type=file]").forEach((i) => i.addEventListener("change", () => { const n = pgForm.querySelector(`[data-pgname="${i.name}"]`); if (n) n.textContent = i.files[0] ? i.files[0].name : ""; }));
+  pgForm.addEventListener("submit", async (e) => {
+    e.preventDefault(); pgMsg.textContent = "Applying…"; pgMsg.style.color = "";
+    const body = new FormData(); body.append("csrf_token", CSRF());
+    let any = false;
+    pgForm.querySelectorAll("input[type=file]").forEach((i) => { if (i.files[0]) { body.append(i.name, i.files[0], `${i.name}.png`); any = true; } });
+    if (!any) { pgMsg.textContent = "Choose at least one page image."; pgMsg.style.color = "var(--bad)"; return; }
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(pid)}/styles/${encodeURIComponent(pgSlug)}/pages`, { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.detail || `Failed (${res.status})`);
+      pgMsg.textContent = data.slug !== pgSlug ? "Applied — a copy with your art now belongs to this project. Reloading…" : "Applied. Reloading…";
+      pgMsg.style.color = "var(--ok)";
+      setTimeout(() => location.reload(), 700);
+    } catch (err) { pgMsg.textContent = err.message; pgMsg.style.color = "var(--bad)"; }
+  });
 
   refresh();
 }

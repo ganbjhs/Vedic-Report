@@ -53,6 +53,7 @@
       <option value="instagram">Instagram</option></select></label>
     <label class="field"><span>Paper <span class="faint">(auto from image)</span></span><select id="t-paper"><option value="16:9">16:9 slide</option><option value="4:3">4:3 slide</option><option value="a4">A4</option><option value="letter">Letter</option></select></label>
     <label class="field"><span>Orientation</span><select id="t-orient"><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select></label>
+    <label class="field"><span>Screenshot in its box</span><select id="t-fit"><option value="fit">Fit — whole post, may leave space</option><option value="cover">Cover — fill the box, crop the bottom of long posts</option></select></label>
     <span class="check" style="align-self:end"><span class="faint small">Outputs: PDF + PPTX <span title="Every slot stays a movable object in PowerPoint, Keynote or Google Slides.">(editable deck)</span></span></span>
   </div>
 
@@ -111,7 +112,10 @@
             <label class="field"><span>Align</span><select id="tp-align"><option>left</option><option>center</option><option>right</option></select></label>
             <label class="field"><span>Font</span><select id="tp-font"><option value="Helvetica">Helvetica</option></select></label>
             <label class="check" style="align-self:end"><input id="tp-bold" type="checkbox"><span>Bold</span></label>
+            <label class="field"><span>Label before value <span class="faint">(e.g. "Like ")</span></span><input id="tp-label" type="text" maxlength="30" placeholder="none"></label>
+            <label class="field"><span>Pill <span class="faint">(rounded box behind the text)</span></span><span class="row" style="gap:6px"><input id="tp-pill-on" type="checkbox"><input id="tp-pill" type="color" value="#E8571C"></span></label>
           </div>
+          <div class="hint">A metric slot with a label + pill prints “Like 676” in a pill — and prints nothing at all when the sheet has no such value, so no empty pill is ever left behind.</div>
         </div>
         <div class="row" style="gap:6px">
           <button type="button" class="btn sm" id="tp-dup" title="Ctrl/⌘ + D">Duplicate</button>

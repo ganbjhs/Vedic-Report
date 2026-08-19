@@ -110,7 +110,8 @@ def check_source(sid: str, force_run: bool = False, user: str = "auto") -> dict:
                 report_name=_run_name(proj, u), user=user,
                 keep_engagement=bool((proj.get("settings") or {}).get("keep_engagement")),
                 workers=int((proj.get("settings") or {}).get("workers") or 0),
-                note="Auto-run from sheet source" if not force_run else "Run from sheet source")
+                note="Auto-run from sheet source" if not force_run else "Run from sheet source",
+                notes=list(u.get("notes") or []))
             fields["last_job_ids"] = job_ids
             store.source_log(sid, f"Started {len(job_ids)} run(s): {', '.join(job_ids)}.")
         except runs.RunError as e:

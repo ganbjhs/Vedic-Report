@@ -167,9 +167,20 @@ def _trim(draw, value, font, max_w):
 def _draw_text(draw, profile, t, value, W, H, ppp, fonts=None):
     if not value:
         return
+    if t.get("label"):
+        value = t["label"].strip() if t.get("field") == "link" else f"{t['label']}{value}"
     size_px = float(t.get("size_pt", 10)) * ppp
     font = _text_font(profile, t, size_px, fonts)
     x, w = t["x"] * W, t["w"] * W
+    if t.get("pill"):
+        # same pill rule as tpl_builder: rounded box over the slot, text centred
+        ph = max(float(t.get("h", 0)) * H, size_px * 1.6)
+        py = t["y"] * H
+        draw.rounded_rectangle([x, py, x + w, py + ph], radius=ph / 2, fill=t["pill"])
+        value = _trim(draw, str(value), font, w - ph * 0.6)
+        draw.text((x + w / 2, py + ph / 2), value, font=font,
+                  fill=tpl_builder._pill_ink(t), anchor="mm")
+        return
     # reportlab puts the baseline `size` below the slot's top edge
     # (`y = H - t.y*H - size`); this is that same line in top-left coordinates.
     baseline = t["y"] * H + size_px

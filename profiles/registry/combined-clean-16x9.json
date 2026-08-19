@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "slug": "combined-clean-16x9",
+  "label": "Combined clean (16:9)",
+  "platform": "combined",
+  "description": "One report from X, Facebook and Instagram links together, on clean landscape 16:9 pages: cover, summary table of sections, then one page per post — platform logo, handle, date, Post i of N, metric pills that appear only for the metrics your sheet has (Like, Impressions, Views, Reach, Comments, Shares), an Open post button, and the screenshot filling its box. Nothing is baked into the page art, so every value is real. Give it your own background from the project's Styles page.",
+  "capture": {
+    "engine": "combined",
+    "device_scale_factor": 1,
+    "viewport": {"width": 1280, "height": 2000},
+    "keep_engagement": true,
+    "workers": null
+  },
+  "image": {"max_in": [4.54, 6.0], "aspect": "4533:6000", "fit": "cover", "background": "#FFFFFF",
+            "radius_pt": 8, "border": null, "shadow": null, "watermark": null},
+  "page": {"size": "16:9", "orientation": "landscape", "grid": [1, 1], "margins_in": [0.4, 0.4, 0.4, 0.4]},
+  "content": {"cover": false, "header": null, "footer": null, "per_post_fields": [], "metrics": null, "links_table": false},
+  "template": {
+    "fit": "cover",
+    "pages": {"post": "post.png", "cover": "cover.png", "summary": "summary.png"},
+    "slots": [{"x": 0.615, "y": 0.11, "w": 0.34, "h": 0.80}],
+    "logos": [{"x": 0.06, "y": 0.10, "w": 0.07, "h": 0.125}],
+    "summary_box": {"x": 0.37, "y": 0.30, "w": 0.56, "h": 0.55},
+    "text": [
+      {"field": "handle",     "x": 0.15, "y": 0.11,  "w": 0.42, "h": 0.07, "size_pt": 24, "color": "#1B2440", "align": "left", "page": "post", "bold": true},
+      {"field": "date",       "x": 0.15, "y": 0.20,  "w": 0.30, "h": 0.04, "size_pt": 12, "color": "#5B6472", "align": "left", "page": "post"},
+      {"field": "post_no",    "x": 0.06, "y": 0.32,  "w": 0.24, "h": 0.09, "size_pt": 32, "color": "#111111", "align": "left", "page": "post", "bold": true},
+      {"field": "post_total", "x": 0.06, "y": 0.415, "w": 0.30, "h": 0.04, "size_pt": 12, "color": "#5B6472", "align": "left", "page": "post"},
+      {"field": "metric.like",        "x": 0.06, "y": 0.52, "w": 0.22, "h": 0.06, "size_pt": 13, "align": "center", "page": "post", "bold": true, "label": "Like  ", "pill": "#E8571C"},
+      {"field": "metric.impressions", "x": 0.30, "y": 0.52, "w": 0.26, "h": 0.06, "size_pt": 13, "align": "center", "page": "post", "bold": true, "label": "Impressions  ", "pill": "#E8571C"},
+      {"field": "metric.views",       "x": 0.06, "y": 0.60, "w": 0.22, "h": 0.06, "size_pt": 13, "align": "center", "page": "post", "bold": true, "label": "Views  ", "pill": "#E8571C"},
+      {"field": "metric.reach",       "x": 0.30, "y": 0.60, "w": 0.26, "h": 0.06, "size_pt": 13, "align": "center", "page": "post", "bold": true, "label": "Reach  ", "pill": "#E8571C"},
+      {"field": "metric.comments",    "x": 0.06, "y": 0.68, "w": 0.22, "h": 0.06, "size_pt": 13, "align": "center", "page": "post", "bold": true, "label": "Comments  ", "pill": "#E8571C"},
+      {"field": "metric.shares",      "x": 0.30, "y": 0.68, "w": 0.26, "h": 0.06, "size_pt": 13, "align": "center", "page": "post", "bold": true, "label": "Shares  ", "pill": "#E8571C"},
+      {"field": "link",       "x": 0.06, "y": 0.80,  "w": 0.22, "h": 0.07, "size_pt": 14, "align": "center", "page": "post", "bold": true, "label": "Open post  ", "pill": "#1B2440"},
+      {"field": "title",      "x": 0.11, "y": 0.37,  "w": 0.50, "h": 0.14, "size_pt": 34, "color": "#1B2440", "align": "left", "page": "cover", "bold": true},
+      {"field": "date",       "x": 0.11, "y": 0.65,  "w": 0.40, "h": 0.07, "size_pt": 22, "color": "#E8571C", "align": "left", "page": "cover", "bold": true},
+      {"field": "title",      "x": 0.06, "y": 0.16,  "w": 0.26, "h": 0.10, "size_pt": 22, "color": "#1B2440", "align": "left", "page": "summary", "bold": true},
+      {"field": "date",       "x": 0.06, "y": 0.28,  "w": 0.26, "h": 0.05, "size_pt": 13, "color": "#5B6472", "align": "left", "page": "summary"}
+    ]
+  },
+  "outputs": ["pdf", "pptx"]
+}

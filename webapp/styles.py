@@ -226,6 +226,57 @@ def fork_for_project(src_slug: str, project: dict) -> str:
     return slug
 
 
+def _meta_from_template(raw: dict, label: str, slug: str) -> dict:
+    """The designer `meta` that reproduces a stored template style — so a
+    page-art swap goes through the same `save_template` a designer's save does."""
+    tpl = raw.get("template") or {}
+    page = raw.get("page") or {}
+    base = raw.get("extends") or {"combined": "combined-16x9", "instagram": "instagram",
+                                  "facebook": "facebook", "influencer": "influencer",
+                                  "x": "twitter"}.get(((raw.get("capture") or {}).get("engine") or "x"), "twitter")
+    return {"label": label, "slug": slug, "base": base,
+            "paper": str(page.get("size") or "16:9"), "orientation": page.get("orientation") or "landscape",
+            "slots": tpl.get("slots") or [], "text": tpl.get("text") or [],
+            "logos": tpl.get("logos") or [], "summary_box": tpl.get("summary_box"),
+            "fonts": tpl.get("fonts") or [], "fit": tpl.get("fit") or "fit",
+            "radius_pt": (raw.get("image") or {}).get("radius_pt") or 0,
+            "description": raw.get("description") or "",
+            "keep_engagement": (raw.get("capture") or {}).get("keep_engagement", True)}
+
+
+def replace_page_art(src_slug: str, project: dict, files: dict) -> str:
+    """v3: swap the BACKGROUND (page art) of a designed-page style, keeping
+    every slot where it is. `files` = {"post"|"cover"|"summary"|"end": bytes}
+    (only the pages given are replaced). A shipped style is first copied into
+    a project-owned one — same rule as `fork_for_project`. Returns the slug."""
+    if not _SLUG.match(src_slug or ""):
+        raise StyleError("Unknown style.")
+    try:
+        src = registry.load(src_slug)
+    except registry.ProfileError as e:
+        raise StyleError(str(e)) from e
+    if not src.get("template"):
+        raise StyleError("That style has no page art — use the colour/image background instead.")
+    if not any(files.get(k) for k in PAGE_KINDS):
+        raise StyleError("Choose at least one page image to replace.")
+    if _path(src_slug).exists() and src_slug not in reserved_slugs():
+        # already a user style: replace pages in place
+        raw = json.loads(_path(src_slug).read_text())
+        meta = _meta_from_template(raw, raw.get("label") or src["label"], src_slug)
+        save_template(meta, files, overwrite=True)
+        return src_slug
+    slug = f"{src_slug[:24]}-{project['slug'][:14]}".strip("-")[:40]
+    if not _SLUG.match(slug):
+        slug = f"{src_slug[:20]}-{project['id'][:8]}"
+    exists = _path(slug).exists()
+    raw = json.loads(_path(slug).read_text()) if exists else src
+    meta = _meta_from_template(raw, (raw.get("label") if exists else f"{src['label']} — {project['name']}")[:60], slug)
+    if not exists:
+        meta["copy_from"] = src_slug            # keep the pages we did not replace
+    save_template(meta, files, overwrite=exists)
+    return slug
+
+
 def preview_png(raw: dict, width: int = 240) -> bytes:
     """A thumbnail of an UNSAVED style, drawn by the same code that draws the
     dashboard cards — so what the designer shows is what the page will be."""
@@ -411,12 +462,27 @@ def _template_profile(meta: dict, slug: str, label: str, pages: dict,
         tpl["summary_box"] = summary_box
     if fonts:
         tpl["fonts"] = list(fonts)
+    # v3: "cover" fills the slot edge to edge (crop at the bottom) instead of
+    # fitting the whole post inside it. Expressed through the image spec the
+    # renderers already honour: crop-top to the FIRST slot's aspect, so the
+    # composed image is exactly the slot's shape and `layout.placements` fills it.
+    fit = str(meta.get("fit") or "fit")
+    if fit not in ("fit", "cover"):
+        raise StyleError("Screenshot fit must be 'fit' or 'cover'.")
+    tpl["fit"] = fit
+    aspect, image_fit = None, "fit"
+    if fit == "cover" and slots:
+        s0 = slots[0]
+        aw, ah = float(s0.get("w", 0.5)) * pw, float(s0.get("h", 0.5)) * ph
+        if aw > 0 and ah > 0:
+            aspect = f"{round(aw * 1000)}:{round(ah * 1000)}"
+            image_fit = "cover"
     return {
         "schema": 1, "slug": slug, "label": label, "extends": base,
         "description": str(meta.get("description") or f"Designed page template on {paper.upper()}."),
         "capture": {"keep_engagement": bool(meta.get("keep_engagement", base_p["capture"].get("keep_engagement")))}
                    if base_p["capture"]["engine"] in ("x", "combined") else {},
-        "image": {"max_in": [round(max_w, 3), round(max_h, 3)], "aspect": None, "fit": "fit",
+        "image": {"max_in": [round(max_w, 3), round(max_h, 3)], "aspect": aspect, "fit": image_fit,
                   "background": "#FFFFFF", "radius_pt": float(meta.get("radius_pt") or 0),
                   "border": None, "shadow": None},
         "page": {"size": paper, "orientation": orient, "grid": [1, 1],

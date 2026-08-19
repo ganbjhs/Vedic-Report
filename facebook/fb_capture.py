@@ -356,7 +356,94 @@ def _screenshot_clip(page, clip, shot_path) -> None:
                     clip=dict(clip, x=clip["x"] + sx, y=clip["y"] + sy))
 
 
+_REEL_RE = re.compile(r"facebook\.com/(?:reel|reels)/(\d+)", re.I)
+
+
+def _reel_alternatives(url: str) -> list:
+    """Other addresses of the same reel a logged-out visitor may get.
+
+    A `/reel/<id>` page shows "This content isn't available right now" to a
+    logged-out desktop visitor far more often than a post permalink does (the
+    reels viewer is login-gated in most regions), while the SAME video is served
+    on its /watch page and, most reliably of all, by Facebook's public video
+    plugin — the embed every website uses, which renders logged-out for any
+    public video with its poster frame, page name and text. Tried in that
+    order; the first one that renders is the one that gets screenshotted.
+    """
+    m = _REEL_RE.search(url)
+    if not m:
+        return []
+    vid = m.group(1)
+    from urllib.parse import quote
+    canonical = f"https://www.facebook.com/reel/{vid}"
+    return [
+        f"https://www.facebook.com/watch/?v={vid}",
+        "https://www.facebook.com/plugins/video.php?href=" + quote(canonical, safe="")
+        + "&show_text=true&width=560&height=720",
+    ]
+
+
+def _capture_plugin(page, url: str, shot_path, res: dict) -> dict:
+    """Screenshot the public video-plugin page (no article/dialogs there)."""
+    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    page.wait_for_timeout(2500)
+    body = _body_text(page)
+    if any(p in body[:2000] for p in _GONE_PHRASES) or "log in" in body[:400].lower():
+        return res
+    for sel in ('[data-testid="fbVideoPlugin"]', ".fb_content", "#content", "body"):
+        loc = page.locator(sel).first
+        try:
+            box = loc.bounding_box() if loc.count() else None
+        except Exception:
+            box = None
+        if box and box["height"] >= 120 and box["width"] >= 200:
+            _wait_media(page, loc)
+            clip = {"x": box["x"], "y": box["y"], "width": box["width"],
+                    "height": max(60, min(box["height"], 6000))}
+            shot_path.parent.mkdir(parents=True, exist_ok=True)
+            _screenshot_clip(page, clip, shot_path)
+            res["screenshot"] = str(shot_path)
+            res["status"] = "ok"
+            res["frame_ok"] = True
+            res["cut"] = "video_plugin"
+            try:
+                res["handle"] = (loc.locator("a[href*='facebook.com/']").first
+                                 .inner_text(timeout=600).strip())[:60]
+            except Exception:
+                pass
+            try:
+                res["text"] = loc.inner_text(timeout=800)[:500]
+            except Exception:
+                pass
+            return res
+    return res
+
+
 def capture(page, url: str, shot_path, keep_engagement: bool = True) -> dict:
+    """One Facebook post. A /reel/ link that a logged-out visitor cannot see is
+    retried on its /watch page and then on the public video plugin — see
+    `_reel_alternatives` — before it is reported unavailable."""
+    res = _capture_once(page, url, shot_path, keep_engagement)
+    if res["status"] in ("not_found", "login_wall") and _REEL_RE.search(url):
+        for alt in _reel_alternatives(url):
+            try:
+                if "/plugins/video.php" in alt:
+                    r2 = _capture_plugin(page, alt, Path(shot_path),
+                                         dict(res, status="not_found"))
+                else:
+                    r2 = _capture_once(page, alt, shot_path, keep_engagement)
+            except Exception as e:                       # rule 17: say so, try the next
+                print(f"[fb] reel fallback {alt} failed: {e}", flush=True)
+                continue
+            if r2["status"] == "ok":
+                r2["url"] = url                            # the report prints the sheet's link
+                r2["via"] = alt
+                print(f"[fb] reel rendered via {alt.split('?')[0]}", flush=True)
+                return r2
+    return res
+
+
+def _capture_once(page, url: str, shot_path, keep_engagement: bool = True) -> dict:
     res = {"url": url, "status": "error", "handle": "", "screenshot": None,
            "text": "", "overlay": False, "frame_ok": True, "parent_lost": False}
     shot_path = Path(shot_path)

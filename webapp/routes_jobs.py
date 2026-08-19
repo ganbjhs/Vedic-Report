@@ -404,7 +404,8 @@ async def submit_job(request: Request,
         job_ids = await runs.create_run_async(
             project, rows, raw, upload_name, report_name, types=types, outputs=asked,
             keep_engagement=keep_flag, workers=want_workers_raw, user=user,
-            note="Started from New run")
+            note="Started from New run",
+            notes=list(_SHEET_INFO.get("notes") or []) if sheet_url.strip() else None)
     except runs.RunError as e:
         return JSONResponse({"detail": str(e)}, status_code=400)
     job_id = job_ids[0]

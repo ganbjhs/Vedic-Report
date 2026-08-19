@@ -84,6 +84,32 @@ def _field_value(field, ctx):
     return "" if v is None else str(v)
 
 
+def _text_value(t, ctx):
+    """The string a text slot prints: field value, with `label` in front when
+    there is a value. Empty → the slot (and its pill) is not drawn at all."""
+    value = _field_value(t["field"], ctx)
+    if not value:
+        return ""
+    if t["field"] == "link" and t.get("label"):
+        return t["label"].strip()            # "Open post", not "Open post LINK"
+    return f"{t.get('label') or ''}{value}"
+
+
+def _pill_box(t, W, H):
+    """(x, y_top, w, h) of a text slot's pill in top-left points."""
+    return t["x"] * W, t["y"] * H, t["w"] * W, max(float(t.get("h", 0)) * H, float(t.get("size_pt", 10)) * 1.6)
+
+
+def _pill_ink(t):
+    """Text on a pill: the slot's colour, or white on a dark pill / near-black
+    on a light one when the slot did not say."""
+    if t.get("color"):
+        return t["color"]
+    v = (t.get("pill") or "#000000").lstrip("#")
+    r, g, b = (int(v[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    return "#FFFFFF" if 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.55 else "#111111"
+
+
 def _metrics_of(r):
     """Sheet columns first (typed by the team from Insights), then whatever a
     capture engine read (influencer). Keys: like, impressions, views, reach…"""
@@ -340,7 +366,7 @@ def build_pdf(results, images, places, profile, title, out):
     fonts = register_fonts(profile)
 
     def draw_text(t, ctx):
-        value = _field_value(t["field"], ctx)
+        value = _text_value(t, ctx)
         if not value:
             return
         size = float(t.get("size_pt", 10))
@@ -348,8 +374,20 @@ def build_pdf(results, images, places, profile, title, out):
         # Page name may be Devanagari where the style asked for Helvetica.
         font = _drawable(value, _pdf_font(t, fonts))
         c.setFont(font, size)
-        c.setFillColor(colors.HexColor(t.get("color") or "#111111"))
         x, y, w = t["x"] * W, H - t["y"] * H - size, t["w"] * W
+        if t.get("pill"):
+            # a rounded pill behind the text, text centred in it (v3)
+            px, py, pw_, ph_ = _pill_box(t, W, H)
+            c.setFillColor(colors.HexColor(t["pill"]))
+            c.roundRect(px, H - py - ph_, pw_, ph_, ph_ / 2, stroke=0, fill=1)
+            y = H - py - ph_ / 2 - size * 0.35
+            c.setFillColor(colors.HexColor(_pill_ink(t)))
+            value = _trim(value, font, size, w - ph_ * 0.6)
+            c.drawCentredString(x + w / 2, y, value)
+            if t["field"] in ("post_link", "link") and ctx.get("post_link"):
+                c.linkURL(ctx["post_link"], (px, H - py - ph_, px + pw_, H - py), relative=0)
+            return
+        c.setFillColor(colors.HexColor(t.get("color") or "#111111"))
         # trim to the slot width — measured in the font it will print in
         value = _trim(value, font, size, w)
         if t.get("align") == "center":
@@ -568,7 +606,7 @@ def build_pptx(results, images, places, profile, title, out):
         return slide.shapes.add_picture(img, Pt(x), Pt(y), Pt(w), Pt(h))
 
     def draw_text(slide, t, ctx):
-        value = _field_value(t["field"], ctx)
+        value = _text_value(t, ctx)
         if not value:
             return
         size = float(t.get("size_pt", 10))
@@ -576,6 +614,36 @@ def build_pptx(results, images, places, profile, title, out):
         # trim the same value to the same characters. The SLIDE keeps the text
         # as text, so a non-Latin string needs no font swap here — PowerPoint
         # falls back per glyph where reportlab's WinAnsi Helvetica cannot.
+        if t.get("pill"):
+            # the pill is a real rounded rectangle carrying the text — one
+            # object to move, recolour or retype in PowerPoint (v3)
+            from pptx.enum.shapes import MSO_SHAPE
+            px, py, pw_, ph_ = _pill_box(t, W, H)
+            value = _trim(value, _drawable(value, _pdf_font(t, fonts)), size, t["w"] * W - ph_ * 0.6)
+            shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Pt(px), Pt(py), Pt(pw_), Pt(ph_))
+            shp.adjustments[0] = 0.5
+            shp.fill.solid()
+            shp.fill.fore_color.rgb = _rgb(t["pill"])
+            shp.line.fill.background()
+            shp.shadow.inherit = False
+            tf = shp.text_frame
+            tf.word_wrap = False
+            tf.auto_size = MSO_AUTO_SIZE.NONE
+            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            tf.margin_left = tf.margin_right = Pt(ph_ * 0.3)
+            tf.margin_top = tf.margin_bottom = 0
+            para = tf.paragraphs[0]
+            para.alignment = PP_ALIGN.CENTER
+            run = para.add_run()
+            run.text = value
+            run.font.name = faces.get(t.get("font") or "") or _PPTX_DEFAULT_FACE
+            run.font.size = Pt(size)
+            run.font.bold = bool(t.get("bold"))
+            run.font.color.rgb = _rgb(_pill_ink(t))
+            if t["field"] in ("post_link", "link") and ctx.get("post_link"):
+                run.hyperlink.address = ctx["post_link"]
+                run.font.underline = False        # the pill IS the button
+            return shp
         value = _trim(value, _drawable(value, _pdf_font(t, fonts)), size,
                       t["w"] * W)
         box = slide.shapes.add_textbox(Pt(t["x"] * W),

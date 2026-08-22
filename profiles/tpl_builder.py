@@ -620,6 +620,37 @@ def build_pdf(results, images, places, profile, title, out):
 # which is why the PDF's Helvetica geometry survives the trip. Naming Arial
 # outright beats naming a font we know will be swapped.
 _PPTX_DEFAULT_FACE = "Arial"
+# `font.name` in python-pptx writes `<a:latin>` and nothing else, and <a:latin>
+# names the face for LATIN characters only. A Devanagari Page name — "काशी के
+# मोदी" is what that Page is called on Facebook — falls to the complex-script
+# slot, which the slide left unset, so PowerPoint chose the face itself and one
+# handle came out in a face nothing else in the deck uses. Naming `<a:cs>` and
+# `<a:ea>` makes the deck's choice instead of the machine's. Nirmala UI is the
+# Devanagari UI face that ships with Windows/Office; a Mac without it still
+# substitutes, but it substitutes from a name the deck asked for.
+_PPTX_INDIC_FACE = "Nirmala UI"
+# Devanagari, Gujarati, Bengali, Gurmukhi, Tamil, Telugu, Kannada, Malayalam.
+_INDIC_RE = re.compile(r"[\u0900-\u0DFF]")
+
+
+def _set_face(run, family: str) -> None:
+    """Name the face for the latin, East-Asian and complex-script slots.
+
+    The three go in schema order — latin, ea, cs — which is why `cs` is
+    inserted first and `ea` then goes in front of it.
+    """
+    from pptx.oxml import parse_xml
+    from pptx.oxml.ns import nsdecls, qn
+    run.font.name = family
+    indic = _PPTX_INDIC_FACE if _INDIC_RE.search(run.text or "") else family
+    rPr = run.font._rPr
+    latin = rPr.get_or_add_latin()
+    for tag in ("a:cs", "a:ea"):
+        el = rPr.find(qn(tag))
+        if el is None:
+            latin.addnext(parse_xml(f'<{tag} {nsdecls("a")}/>'))
+            el = rPr.find(qn(tag))
+        el.set("typeface", indic)
 # Arial's ascent in ems. The PDF puts a text slot's BASELINE one em below the
 # slot's y; a top-anchored text box at single line spacing puts it one ascent
 # below the frame top. Nudging the frame down by the difference makes the two
@@ -780,7 +811,7 @@ def build_pptx(results, images, places, profile, title, out):
                 para.alignment = PP_ALIGN.CENTER
                 run = para.add_run()
                 run.text = _trim(text_, _drawable(text_, _pdf_font(t, fonts)), size, w0 - ph_ * 0.6)
-                run.font.name = faces.get(t.get("font") or "") or _PPTX_DEFAULT_FACE
+                _set_face(run, faces.get(t.get("font") or "") or _PPTX_DEFAULT_FACE)
                 run.font.size = Pt(size)
                 run.font.bold = bool(t.get("bold"))
                 run.font.color.rgb = _rgb(ink)
@@ -814,7 +845,7 @@ def build_pptx(results, images, places, profile, title, out):
         para.line_spacing = 1.0
         run = para.add_run()
         run.text = value
-        run.font.name = faces.get(t.get("font") or "") or _PPTX_DEFAULT_FACE
+        _set_face(run, faces.get(t.get("font") or "") or _PPTX_DEFAULT_FACE)
         run.font.size = Pt(size)
         run.font.bold = bool(t.get("bold"))
         run.font.color.rgb = _rgb(t.get("color"))
@@ -864,7 +895,7 @@ def build_pptx(results, images, places, profile, title, out):
                 run.text = value
                 run.font.size = Pt(fs)
                 run.font.bold = bold
-                run.font.name = _PPTX_DEFAULT_FACE
+                _set_face(run, _PPTX_DEFAULT_FACE)
                 run.font.color.rgb = _rgb(ink)
 
     _sec, per_post = _sections(results)

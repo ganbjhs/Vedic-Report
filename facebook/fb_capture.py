@@ -317,6 +317,103 @@ _JS_PAGE_NAME = r"""
 """
 
 
+# --------------------------------------------------------------------------- #
+# The Page name, cleaned
+# --------------------------------------------------------------------------- #
+# Facebook picks a logged-out visitor's interface language from the exit IP,
+# not from Accept-Language, so an Indian runner is served Hindi or Marathi
+# chrome around an English Page. Two things then leak into the name:
+#
+#   * the call-to-action of the video plugin — "Facebook वर पाहण्यासाठी
+#     क्लिक करा" ("Click to view on Facebook") — which is a facebook.com
+#     link inside the plugin exactly like the Page's own, and used to win on
+#     document order;
+#   * a count that innerText glues to the name: "The Chaupal १.१ लाख" is a Page
+#     name followed by a reel's view count in Devanagari digits.
+#
+# `_force_english` asks for the English UI at the source; `_clean_name` is the
+# net for whatever still comes back localised. A Page whose name really IS in
+# Hindi — "काशी के मोदी" — keeps it: that is what Facebook shows.
+
+_EN_LOCALE = "en_GB"
+
+_DEV_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
+
+# Facebook's own furniture, never a Page name. The distinctive strings are
+# matched anywhere in the text; the short generic ones only as the WHOLE name,
+# because "log in" is also the middle of "Blog Insider".
+_CHROME_SUB = (
+    "click to view on facebook", "view on facebook", "watch on facebook",
+    "पाहण्यासाठी", "क्लिक करा", "देखने के लिए", "फेसबुक पर देखें",
+)
+_CHROME_EXACT = {
+    "log in", "sign up", "see more", "learn more", "privacy", "terms",
+    "home", "live", "explore", "facebook", "होम", "लॉग इन", "और देखें",
+}
+
+# A magnitude word that turns a bare number into a count.
+_MAG = (r"[KkMmBb]|lakh|crore|thousand|million|billion|"
+        r"लाख|हज़ार|हजार|करोड़|करोड")
+_LABEL = (r"followers?|फॉलोअर्स|फ़ॉलोअर्स|views?|व्यूज़|व्यूज|व्यू|likes?|लाइक्स")
+
+# A count glued to the END of a name. Two ways in: after a bullet or play glyph
+# a bare number is already a count ("The Chaupal ▶ 1.1"), while after plain
+# whitespace it takes a magnitude or a label to be one — so "@kashikewasi3" and
+# a Page really called "Banaras Live 24" both survive untouched.
+_COUNT_TAIL = re.compile(
+    r"(?:"
+    r"\s*[·•▶►|]+[\s·•▶►|]*\d[\d.,]*\s*(?:" + _MAG + r")?"
+    r"|"
+    r"\s+\d[\d.,]*\s*(?:" + _MAG + r")"
+    r")"
+    r"\s*(?:" + _LABEL + r")?\s*$",
+    re.I)
+
+# A name that is ONLY a count — the first card of a "Related reels" rail reads
+# "१.१ लाख" and nothing else. `_COUNT_TAIL` cannot see it: there is no name in
+# front of it for the count to be trailing.
+_COUNT_ONLY = re.compile(
+    r"^[\s·•▶►|]*\d[\d.,]*\s*(?:" + _MAG + r")?\s*(?:" + _LABEL + r")?\s*$",
+    re.I)
+
+
+def _clean_name(raw) -> str:
+    """One Page name, or '' when what was read is Facebook's own furniture.
+
+    Devanagari DIGITS fold to ASCII — a Hindi Page name stays Hindi, but "१.१
+    लाख" is a number, and a number is read in the reader's digits. A trailing
+    follower or view count is dropped. A UI string is refused outright, so the
+    caller falls through to its next source instead of printing a button.
+    """
+    name = re.sub(r"\s+", " ", (raw or "").translate(_DEV_DIGITS)).strip(" ·•|—-​")
+    if not name:
+        return ""
+    low = name.casefold()
+    if low in _CHROME_EXACT or any(c in low for c in _CHROME_SUB):
+        return ""
+    trimmed = _COUNT_TAIL.sub("", name).strip(" ·•|—-")
+    if trimmed != name:
+        name = trimmed                       # may now be empty: it was all count
+    if not name or _COUNT_ONLY.match(name):
+        return ""
+    return name[:60]
+
+
+def _force_english(page) -> None:
+    """Ask Facebook for the English UI before the page is opened.
+
+    `locale` is the cookie Facebook's own language switcher sets, and it is
+    what the logged-out desktop site reads; `?locale=` is the documented
+    parameter of the social plugins (set in `_reel_alternatives`). Never
+    raises: a context that will not take the cookie simply behaves as before.
+    """
+    try:
+        page.context.add_cookies([{"name": "locale", "value": _EN_LOCALE,
+                                   "domain": ".facebook.com", "path": "/"}])
+    except Exception as e:                       # rule 17: say so, carry on
+        print(f"[fb] could not ask for the English UI: {e}", flush=True)
+
+
 def _handle_from(page, article, url) -> str:
     """The Page name from the post itself, falling back to the URL's slug.
 
@@ -325,9 +422,9 @@ def _handle_from(page, article, url) -> str:
     a report with no handle column would otherwise print above the screenshot.
     """
     try:
-        name = (article.evaluate(_JS_PAGE_NAME) or "").strip()
+        name = _clean_name(article.evaluate(_JS_PAGE_NAME))
         if name:
-            return name[:60]
+            return name
     except Exception:
         pass
     m = re.search(r"facebook\.com/([^/?#]+)/(?:posts|photos|videos)/", url.lower())
@@ -336,9 +433,9 @@ def _handle_from(page, article, url) -> str:
         return m.group(1)
     for sel in ('h2 strong', 'h3 strong', 'strong a[role="link"]', 'a[role="link"] strong'):
         try:
-            t = article.locator(sel).first.inner_text(timeout=500).strip()
+            t = _clean_name(article.locator(sel).first.inner_text(timeout=500))
             if t:
-                return t[:60]
+                return t
         except Exception:
             continue
     return ""
@@ -377,14 +474,15 @@ def _reel_alternatives(url: str) -> list:
     from urllib.parse import quote
     canonical = f"https://www.facebook.com/reel/{vid}"
     return [
-        f"https://www.facebook.com/watch/?v={vid}",
+        f"https://www.facebook.com/watch/?v={vid}&locale={_EN_LOCALE}",
         "https://www.facebook.com/plugins/video.php?href=" + quote(canonical, safe="")
-        + "&show_text=true&width=560&height=720",
+        + f"&show_text=true&width=560&height=720&locale={_EN_LOCALE}",
     ]
 
 
 def _capture_plugin(page, url: str, shot_path, res: dict) -> dict:
     """Screenshot the public video-plugin page (no article/dialogs there)."""
+    _force_english(page)
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
     page.wait_for_timeout(2500)
     body = _body_text(page)
@@ -406,11 +504,19 @@ def _capture_plugin(page, url: str, shot_path, res: dict) -> dict:
             res["status"] = "ok"
             res["frame_ok"] = True
             res["cut"] = "video_plugin"
-            try:
-                res["handle"] = (loc.locator("a[href*='facebook.com/']").first
-                                 .inner_text(timeout=600).strip())[:60]
-            except Exception:
-                pass
+            try:                                  # header band first — the CTA
+                res["handle"] = _clean_name(loc.evaluate(_JS_PAGE_NAME))
+            except Exception:                     # sits at the BOTTOM of the
+                res["handle"] = ""                # plugin, not the top
+            if not res["handle"]:
+                try:    # every facebook.com link in order; first that is a name
+                    links = loc.locator("a[href*='facebook.com/']")
+                    for i in range(min(links.count(), 8)):
+                        res["handle"] = _clean_name(links.nth(i).inner_text(timeout=600))
+                        if res["handle"]:
+                            break
+                except Exception:
+                    pass
             try:
                 res["text"] = loc.inner_text(timeout=800)[:500]
             except Exception:
@@ -471,7 +577,7 @@ def _capture_comment(page, article, comment_id: str, shot_path, res: dict):
         res.update({"screenshot": str(shot_path), "status": "ok", "frame_ok": True,
                     "cut": "comment", "overlay": overlay_present(page)})
         try:
-            res["handle"] = (target.locator('a[role="link"]').first.inner_text(timeout=600) or "").strip()[:60]
+            res["handle"] = _clean_name(target.locator('a[role="link"]').first.inner_text(timeout=600))
             res["text"] = target.inner_text(timeout=800)[:500]
         except Exception:
             pass
@@ -485,6 +591,7 @@ def _capture_once(page, url: str, shot_path, keep_engagement: bool = True) -> di
     res = {"url": url, "status": "error", "handle": "", "screenshot": None,
            "text": "", "overlay": False, "frame_ok": True, "parent_lost": False}
     shot_path = Path(shot_path)
+    _force_english(page)
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
     page.wait_for_timeout(2500)
 

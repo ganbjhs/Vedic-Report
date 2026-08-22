@@ -402,16 +402,50 @@ def _clean_name(raw) -> str:
 def _force_english(page) -> None:
     """Ask Facebook for the English UI before the page is opened.
 
-    `locale` is the cookie Facebook's own language switcher sets, and it is
-    what the logged-out desktop site reads; `?locale=` is the documented
-    parameter of the social plugins (set in `_reel_alternatives`). Never
-    raises: a context that will not take the cookie simply behaves as before.
+    Three asks, because no single one of them is reliable on its own:
+
+      * the `locale` COOKIE — what Facebook's own language switcher sets, and
+        what the logged-out desktop site reads back;
+      * the `Accept-Language` HEADER — ignored when Facebook is confident about
+        the exit IP, honoured when it is not;
+      * `?locale=` on the URL (see `_en_url`) — the strongest of the three, and
+        the only one the plugin iframe reads.
+
+    Never raises: a context that will not take any of them behaves as before.
     """
     try:
         page.context.add_cookies([{"name": "locale", "value": _EN_LOCALE,
                                    "domain": ".facebook.com", "path": "/"}])
     except Exception as e:                       # rule 17: say so, carry on
-        print(f"[fb] could not ask for the English UI: {e}", flush=True)
+        print(f"[fb] could not set the locale cookie: {e}", flush=True)
+    try:
+        page.set_extra_http_headers({"Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8"})
+    except Exception as e:
+        print(f"[fb] could not set Accept-Language: {e}", flush=True)
+
+
+def _en_url(url: str) -> str:
+    """`url` with Facebook's own `locale` parameter on it.
+
+    This is the NAVIGATION url only. `res["url"]` keeps the link as the sheet
+    wrote it, and the deck's LINK button comes from the sheet row
+    (`prof_runner`) and not from here — so nothing the reader clicks changes.
+
+    Facebook reads `?locale=` on the logged-out desktop site the same way it
+    reads the cookie, and on the plugin iframe it is the ONLY thing it reads.
+    """
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    try:
+        parts = urlsplit(url)
+        if "facebook.com" not in parts.netloc:
+            return url
+        q = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+             if k != "locale"]
+        q.append(("locale", _EN_LOCALE))
+        return urlunsplit(parts._replace(query=urlencode(q)))
+    except Exception as e:
+        print(f"[fb] could not add locale to {url}: {e}", flush=True)
+        return url
 
 
 def _handle_from(page, article, url) -> str:
@@ -474,16 +508,16 @@ def _reel_alternatives(url: str) -> list:
     from urllib.parse import quote
     canonical = f"https://www.facebook.com/reel/{vid}"
     return [
-        f"https://www.facebook.com/watch/?v={vid}&locale={_EN_LOCALE}",
+        f"https://www.facebook.com/watch/?v={vid}",
         "https://www.facebook.com/plugins/video.php?href=" + quote(canonical, safe="")
-        + f"&show_text=true&width=560&height=720&locale={_EN_LOCALE}",
+        + "&show_text=true&width=560&height=720",
     ]
 
 
 def _capture_plugin(page, url: str, shot_path, res: dict) -> dict:
     """Screenshot the public video-plugin page (no article/dialogs there)."""
     _force_english(page)
-    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    page.goto(_en_url(url), wait_until="domcontentloaded", timeout=45000)
     page.wait_for_timeout(2500)
     body = _body_text(page)
     if any(p in body[:2000] for p in _GONE_PHRASES) or "log in" in body[:400].lower():
@@ -592,7 +626,7 @@ def _capture_once(page, url: str, shot_path, keep_engagement: bool = True) -> di
            "text": "", "overlay": False, "frame_ok": True, "parent_lost": False}
     shot_path = Path(shot_path)
     _force_english(page)
-    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    page.goto(_en_url(url), wait_until="domcontentloaded", timeout=45000)
     page.wait_for_timeout(2500)
 
     if re.search(r"facebook\.com/(login|checkpoint|recover)", page.url):

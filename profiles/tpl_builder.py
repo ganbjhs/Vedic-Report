@@ -620,15 +620,31 @@ def build_pdf(results, images, places, profile, title, out):
 # which is why the PDF's Helvetica geometry survives the trip. Naming Arial
 # outright beats naming a font we know will be swapped.
 _PPTX_DEFAULT_FACE = "Arial"
+# Arial's ascent in ems. The PDF puts a text slot's BASELINE one em below the
+# slot's y; a top-anchored text box at single line spacing puts it one ascent
+# below the frame top. Nudging the frame down by the difference makes the two
+# documents agree on where the text sits, rather than by a visible hair.
+_ASCENT_EM = 0.905
+
 # `font.name` in python-pptx writes `<a:latin>` and nothing else, and <a:latin>
 # names the face for LATIN characters only. A Devanagari Page name — "काशी के
-# मोदी" is what that Page is called on Facebook — falls to the complex-script
-# slot, which the slide left unset, so PowerPoint chose the face itself and one
-# handle came out in a face nothing else in the deck uses. Naming `<a:cs>` and
-# `<a:ea>` makes the deck's choice instead of the machine's. Nirmala UI is the
-# Devanagari UI face that ships with Windows/Office; a Mac without it still
-# substitutes, but it substitutes from a name the deck asked for.
-_PPTX_INDIC_FACE = "Nirmala UI"
+# मोदी" is what that Page is called on Facebook — falls to the COMPLEX-SCRIPT
+# slot instead, so a deck that names only <a:latin> leaves the Devanagari face
+# to the reader's app. Naming <a:ea>/<a:cs> takes that choice back.
+#
+# _PPTX_INDIC_FACE is the face to name for a run that contains Indic text.
+# EMPTY IS THE DEFAULT AND IT IS DELIBERATE. A slide references a font by NAME;
+# there is no font file inside a .pptx. Name one the reader does not have and
+# the good case is a substitution — but WPS Office on macOS, asked for the
+# Windows-only "Nirmala UI", drew the conjuncts as empty boxes instead. There
+# is no Devanagari family name shared by macOS and Windows, so the honest
+# default is to name nothing for Indic and let the app use its own Devanagari
+# fallback, which renders correctly on both.
+#
+# Set it if you know what the decks are opened on, and only then:
+#     macOS   "Kohinoor Devanagari"  or  "Devanagari Sangam MN"
+#     Windows "Nirmala UI"           or  "Mangal"
+_PPTX_INDIC_FACE = ""
 # Devanagari, Gujarati, Bengali, Gurmukhi, Tamil, Telugu, Kannada, Malayalam.
 _INDIC_RE = re.compile(r"[\u0900-\u0DFF]")
 
@@ -636,13 +652,20 @@ _INDIC_RE = re.compile(r"[\u0900-\u0DFF]")
 def _set_face(run, family: str) -> None:
     """Name the face for the latin, East-Asian and complex-script slots.
 
-    The three go in schema order — latin, ea, cs — which is why `cs` is
-    inserted first and `ea` then goes in front of it.
+    An Indic run with no `_PPTX_INDIC_FACE` configured is left with <a:latin>
+    alone — naming a Latin face in the complex-script slot is not neutral, it
+    is a wrong answer the app then has to recover from.
+
+    The three elements go in schema order — latin, ea, cs — which is why `cs`
+    is inserted first and `ea` then goes in front of it.
     """
     from pptx.oxml import parse_xml
     from pptx.oxml.ns import nsdecls, qn
     run.font.name = family
-    indic = _PPTX_INDIC_FACE if _INDIC_RE.search(run.text or "") else family
+    if _INDIC_RE.search(run.text or ""):
+        if not _PPTX_INDIC_FACE:
+            return
+        family = _PPTX_INDIC_FACE
     rPr = run.font._rPr
     latin = rPr.get_or_add_latin()
     for tag in ("a:cs", "a:ea"):
@@ -650,12 +673,7 @@ def _set_face(run, family: str) -> None:
         if el is None:
             latin.addnext(parse_xml(f'<{tag} {nsdecls("a")}/>'))
             el = rPr.find(qn(tag))
-        el.set("typeface", indic)
-# Arial's ascent in ems. The PDF puts a text slot's BASELINE one em below the
-# slot's y; a top-anchored text box at single line spacing puts it one ascent
-# below the frame top. Nudging the frame down by the difference makes the two
-# documents agree on where the text sits, rather than by a visible hair.
-_ASCENT_EM = 0.905
+        el.set("typeface", family)
 
 
 def _rgb(value, default="111111"):

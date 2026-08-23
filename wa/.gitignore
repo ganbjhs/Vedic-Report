@@ -1,0 +1,22 @@
+# --- secrets / personal data (never push) ---
+wa_profile/
+# the server's runtime volume: its OWN wa_profile (a live WhatsApp login),
+# its config.json, tasks.json and links.csv. Never commit any of it.
+data/
+service_account.json
+links.csv
+*.csv
+debug.png
+# --- local history (keep CHECKPOINTS.md, not the zips) ---
+checkpoints/
+# --- build / env / caches ---
+__pycache__/
+*.pyc
+.venv/
+.venv-build/
+build/
+dist/
+node_modules/
+*.spec.bak
+.DS_Store
+Thumbs.db

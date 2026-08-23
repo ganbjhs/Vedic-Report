@@ -34,6 +34,44 @@ services:
       start_period: 40s
 
   # ---------------------------------------------------------------------------
+  # WA Toolkit — https://report.vedictech.in/wa
+  #
+  # Deliberately its own service: its own image, its own Chromium, its own
+  # volume. It shares exactly one thing with the report tool — SESSION_SECRET
+  # out of .env — and that is only so it can READ the ra_session login cookie
+  # instead of having a login of its own. Building, restarting or removing this
+  # service does not touch `web` above.
+  #
+  #   docker compose up -d --build wa
+  # ---------------------------------------------------------------------------
+  wa:
+    build: ./wa
+    image: wa-toolkit:latest
+    restart: unless-stopped
+    env_file: .env                   # SESSION_SECRET / SESSION_HOURS / COOKIE_SECURE
+    environment:
+      PORT: "8010"
+      WA_DATA_DIR: /data
+      WA_ROOT_PATH: /wa
+      WA_FORCE_HEADLESS: "1"         # a VPS has no display; Chromium must be headless
+    ports:
+      # localhost only — Caddy reaches it as `wa:8010` over the compose network.
+      # Published so `curl localhost:8010/health` works when debugging.
+      - "127.0.0.1:8010:8010"
+    volumes:
+      # The WhatsApp login (wa_profile/), config.json, tasks.json, links.csv.
+      # A bind mount so the login survives `--build` and you can back it up.
+      - ./wa/data:/data
+    # Chromium crashes on media-heavy chats with Docker's default 64 MB.
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8010/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # ---------------------------------------------------------------------------
   # OPTIONAL: Caddy for automatic HTTPS, for a server with nothing else on
   # ports 80/443.
   #
@@ -56,6 +94,7 @@ services:
       - caddyconfig:/config
     depends_on:
       - web
+      - wa
 
 volumes:
   caddydata:

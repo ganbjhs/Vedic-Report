@@ -1,0 +1,55 @@
+{
+  "_help": "See README.md. profile_dir keeps you logged in (git-ignored). Keep headless false.",
+  "profile_dir": "./wa_profile",
+  "headless": false,
+  "send": {
+    "_help": "Feature 1. Each job = one .txt file, one line = one message sent as 'line + newline + text'. delay = seconds between messages.",
+    "chat": "My Test Group",
+    "delay": 1.5,
+    "jobs": [
+      {
+        "file": "file1.txt",
+        "text": "hello_world"
+      },
+      {
+        "file": "file2.txt",
+        "text": "https://example.com"
+      }
+    ]
+  },
+  "collect": {
+    "_help": "Features 2+3. senders: names OR numbers exactly as WhatsApp shows them (run `python wa.py read --chat GROUP` to see). Numbers match on digits only, names case-insensitive. Empty list = everyone.",
+    "groups": [
+      "Engagement Group 1",
+      "Engagement Group 2"
+    ],
+    "senders": [],
+    "include_me": false,
+    "days": 7,
+    "max_messages": 400,
+    "kinds": [
+      "post",
+      "comment"
+    ],
+    "platforms": [],
+    "metrics": false,
+    "metrics_delay": 4
+  },
+  "sheets": {
+    "_help": "mode: gspread (Google Sheets via service_account.json) or csv (local file).",
+    "mode": "gspread",
+    "sheet_id": "PASTE_YOUR_GOOGLE_SHEET_ID_HERE",
+    "worksheet": "links",
+    "creds": "service_account.json",
+    "csv_path": "links.csv"
+  },
+  "bot": {
+    "_help": "Command bot (python bot.py). group = WhatsApp group where you type /start … . headless=true = no window. ignore_own=true when the bot runs on ITS OWN number (recommended): it never treats its own/outgoing messages as commands. Set false only if bot + commands are the same number.",
+    "group": "Testing",
+    "headless": true,
+    "delay": 1.5,
+    "poll": 2.0,
+    "target": null,
+    "ignore_own": true
+  }
+}

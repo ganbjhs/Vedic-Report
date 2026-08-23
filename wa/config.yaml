@@ -1,0 +1,37 @@
+# ---------------------------------------------------------------------------
+# wa_toolkit configuration
+# ---------------------------------------------------------------------------
+profile_dir: ./wa_profile        # Chromium profile (keeps you logged in). Add to .gitignore!
+headless: false                  # keep false: WhatsApp Web behaves better with a visible window
+
+# --- feature 1: bulk send (port of AutomateMsgSender.py) --------------------
+send:
+  chat: "My Test Group"          # exact chat/group name as shown in WhatsApp
+  delay: 1.5                     # seconds between messages (be humane, avoids bans)
+  jobs:                          # each job = one .txt file, one line = one message
+    - file: file1.txt
+      text: "hello_world"        # appended on a new line after every message ("" to disable)
+    - file: file2.txt
+      text: "https://example.com"
+
+# --- feature 2 + 3: collect links from groups -> Google Sheet ---------------
+collect:
+  groups:
+    - "Engagement Group 1"
+    - "Engagement Group 2"
+  senders: []                    # only these senders (names or numbers as WhatsApp shows them).
+                                 # empty list = everyone.  Example: ["Rahul", "+91 98765 43210"]
+  include_me: false              # also collect links you posted yourself
+  days: 7                        # look back this many days (scrolls history)
+  max_messages: 400              # hard cap per group
+  kinds: ["post", "comment"]     # which link kinds to keep: post | comment | story | profile | other
+  platforms: []                  # e.g. ["instagram","twitter","facebook","linkedin"]; empty = all
+  metrics: false                 # try to fetch likes/comments etc. (slow, best-effort; see wa/metrics.py)
+  metrics_delay: 4               # seconds between metric fetches
+
+sheets:
+  mode: gspread                  # gspread | csv
+  sheet_id: "PASTE_YOUR_GOOGLE_SHEET_ID_HERE"
+  worksheet: "links"
+  creds: service_account.json
+  csv_path: links.csv            # used when mode = csv

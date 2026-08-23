@@ -9,7 +9,24 @@
 
 report.vedictech.in {
 	encode gzip
-	reverse_proxy web:8000
+
+	# --- WA Toolkit at /wa ---------------------------------------------------
+	# handle_path strips the prefix, so the wa container only ever sees "/".
+	# The bare /wa MUST redirect: ui/index.html links bundle.js relatively, and
+	# without the trailing slash a browser resolves that to /bundle.js — which
+	# is a Report Maker URL, not a WA Toolkit one.
+	redir /wa /wa/
+	handle_path /wa/* {
+		reverse_proxy wa:8010
+	}
+
+	# --- Report Maker: unchanged, still every other path ---------------------
+	# Wrapped in handle{} only so the two routes are explicitly ordered rather
+	# than relying on Caddy's implicit directive order. Same upstream, same
+	# behaviour for every URL that is not under /wa/.
+	handle {
+		reverse_proxy web:8000
+	}
 
 	# Uploads are capped in the app too (MAX_UPLOAD_MB); this is the edge guard.
 	request_body {

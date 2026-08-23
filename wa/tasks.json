@@ -1,0 +1,231 @@
+{
+  "_help": "Each key is a task: `python wa.py run <name>`. Steps run top to bottom; {var} placeholders read variables. See README 'Task recipes' for all actions.",
+  "forward_links": {
+    "description": "Feature 1 – send every line of a file (+ appended text) into a chat",
+    "steps": [
+      {
+        "action": "open_chat",
+        "chat": "My Test Group"
+      },
+      {
+        "action": "send_lines",
+        "file": "file1.txt",
+        "text": "hello_world",
+        "delay": 1.5
+      },
+      {
+        "action": "send_lines",
+        "file": "file2.txt",
+        "text": "https://example.com",
+        "delay": 1.5
+      }
+    ]
+  },
+  "collect_links": {
+    "description": "Feature 2+3 – links from chosen senders in several groups -> Google Sheet, classified post/comment",
+    "vars": {
+      "groups": [
+        "Engagement Group 1",
+        "Engagement Group 2"
+      ],
+      "senders": [],
+      "days": 7
+    },
+    "steps": [
+      {
+        "action": "for_each",
+        "list": "{groups}",
+        "as": "group",
+        "collect": "links",
+        "steps": [
+          {
+            "action": "open_chat",
+            "chat": "{group}"
+          },
+          {
+            "action": "read_history",
+            "days": "{days}",
+            "max": 400,
+            "save_as": "msgs"
+          },
+          {
+            "action": "filter",
+            "from": "{msgs}",
+            "senders": "{senders}",
+            "exclude_me": true,
+            "has_links": true,
+            "save_as": "msgs"
+          },
+          {
+            "action": "extract_links",
+            "from": "{msgs}",
+            "kinds": [
+              "post",
+              "comment"
+            ],
+            "save_as": "links"
+          }
+        ],
+        "save_as": "all_links"
+      },
+      {
+        "action": "to_sheet",
+        "from": "{all_links}",
+        "dedupe": true
+      }
+    ]
+  },
+  "collect_with_metrics": {
+    "description": "Same as collect_links but also scrapes likes/comments (slow, best-effort)",
+    "vars": {
+      "groups": [
+        "Engagement Group 1"
+      ],
+      "senders": [],
+      "days": 3
+    },
+    "steps": [
+      {
+        "action": "for_each",
+        "list": "{groups}",
+        "as": "group",
+        "collect": "links",
+        "steps": [
+          {
+            "action": "open_chat",
+            "chat": "{group}"
+          },
+          {
+            "action": "read_history",
+            "days": "{days}",
+            "max": 400,
+            "save_as": "msgs"
+          },
+          {
+            "action": "filter",
+            "from": "{msgs}",
+            "senders": "{senders}",
+            "has_links": true,
+            "save_as": "msgs"
+          },
+          {
+            "action": "extract_links",
+            "from": "{msgs}",
+            "kinds": [
+              "post",
+              "comment"
+            ],
+            "save_as": "links"
+          }
+        ],
+        "save_as": "all_links"
+      },
+      {
+        "action": "metrics",
+        "from": "{all_links}",
+        "delay": 4,
+        "save_as": "all_links"
+      },
+      {
+        "action": "to_sheet",
+        "from": "{all_links}"
+      }
+    ]
+  },
+  "reshare_group_links": {
+    "description": "Take today's post links from group A and re-post them (one message each) into group B",
+    "vars": {
+      "source": "Engagement Group 1",
+      "target": "My Test Group"
+    },
+    "steps": [
+      {
+        "action": "open_chat",
+        "chat": "{source}"
+      },
+      {
+        "action": "read_history",
+        "days": 1,
+        "save_as": "msgs"
+      },
+      {
+        "action": "extract_links",
+        "from": "{msgs}",
+        "kinds": [
+          "post"
+        ],
+        "save_as": "links"
+      },
+      {
+        "action": "open_chat",
+        "chat": "{target}"
+      },
+      {
+        "action": "for_each",
+        "from": "links",
+        "as": "l",
+        "steps": [
+          {
+            "action": "send_text",
+            "text": "{l.sender} shared ({l.platform} {l.kind}):\n{l.clean_url}",
+            "delay": 2
+          }
+        ]
+      }
+    ]
+  },
+  "broadcast": {
+    "description": "Send the same message to many chats",
+    "vars": {
+      "chats": [
+        "Alice",
+        "Bob"
+      ],
+      "message": "Hi {chat}, reminder about tomorrow!"
+    },
+    "steps": [
+      {
+        "action": "for_each",
+        "list": "{chats}",
+        "as": "chat",
+        "steps": [
+          {
+            "action": "open_chat",
+            "chat": "{chat}"
+          },
+          {
+            "action": "send_text",
+            "text": "{message}",
+            "delay": 2
+          }
+        ]
+      }
+    ]
+  },
+  "custom_python": {
+    "description": "Example of calling your own code in plugins/example.py",
+    "steps": [
+      {
+        "action": "open_chat",
+        "chat": "My Test Group"
+      },
+      {
+        "action": "read_history",
+        "max": 50,
+        "save_as": "msgs"
+      },
+      {
+        "action": "python",
+        "func": "example.summarise",
+        "args": {
+          "msgs": "{msgs}"
+        },
+        "save_as": "summary"
+      },
+      {
+        "action": "print",
+        "text": "{summary}"
+      }
+    ]
+  }
+}

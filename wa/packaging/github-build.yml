@@ -1,0 +1,36 @@
+# Builds installers on GitHub's machines - you never need Windows yourself.
+# Push this repo to GitHub -> Actions tab -> "Build installers" -> download artifacts.
+name: Build installers
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pyinstaller
+      - run: python -m playwright install chromium
+        env: { PLAYWRIGHT_BROWSERS_PATH: "0" }
+      - run: pyinstaller --noconfirm --clean packaging/WAToolkit.spec
+      - run: choco install innosetup -y --no-progress
+      - run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\installer.iss'
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with: { name: WAToolkit-Windows, path: dist/WAToolkit-Setup.exe }
+  macos:
+    runs-on: macos-latest
+    continue-on-error: true      # Windows is the primary target; a mac hiccup must not fail the run
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pyinstaller
+      # macOS: browsers are NOT bundled (Chromium.app breaks PyInstaller); the app downloads them on first launch
+      - run: pyinstaller --noconfirm --clean --log-level WARN packaging/WAToolkit.spec
+      - run: hdiutil create -volname "WA Toolkit" -srcfolder "dist/WA Toolkit.app" -ov -format UDZO dist/WAToolkit.dmg
+      - uses: actions/upload-artifact@v4
+        with: { name: WAToolkit-macOS, path: dist/WAToolkit.dmg }

@@ -470,9 +470,11 @@ class Api:
         else:
             cmd = [sys.executable, str(APP_DIR / "bot.py"), "--group", group] + (["--headed"] if headed else [])
         self._bot_lines.clear()
-        self._bot = subprocess.Popen(cmd, cwd=str(BASE), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        # assign on the CLASS: Worker._session() guards on Api._bot, and an
+        # instance attribute here would shadow it and disable that guard.
+        Api._bot = subprocess.Popen(cmd, cwd=str(BASE), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
-        def pump(proc=self._bot):
+        def pump(proc=Api._bot):
             for line in proc.stdout:
                 self._bot_lines.append(line.rstrip())
                 if len(self._bot_lines) > 500:
@@ -487,7 +489,7 @@ class Api:
                 self._bot.wait(5)
             except Exception:  # noqa: BLE001
                 self._bot.kill()
-        self._bot = None
+        Api._bot = None
         return {"running": False}
 
     def open_folder(self):

@@ -35,6 +35,8 @@ def open_chat(s: WASession, name: str, timeout: int = 15000) -> None:
     """Open a chat (contact or group) by the exact name shown in WhatsApp."""
     if s.current_chat().strip().lower() == name.strip().lower():
         return  # already open
+    # A modal swallows every click aimed at the chat list or the search box.
+    s.dismiss_dialogs()
     # 1) Try clicking it directly in the chat list (works even if the search box moved)
     if s.page.evaluate(_JS_CLICK_IN_LIST, name):
         time.sleep(0.8)

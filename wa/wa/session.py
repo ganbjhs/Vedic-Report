@@ -179,9 +179,68 @@ class WASession:
                 if self.page.locator(css).count():
                     print("Logged in.")
                     time.sleep(1.5)  # let chat list settle
+                    self.dismiss_dialogs()   # the promo/sync modal shown right after linking
                     return
             time.sleep(1)
         raise TimeoutError("Not logged in within timeout. Run `python wa.py login` and scan the QR.")
+
+    # -- modal overlays --------------------------------------------------
+    # WhatsApp Web throws up aria-modal dialogs — the "get the desktop app"
+    # promo, the post-link sync notice, "restoring your chats". They swallow
+    # every click aimed at the search box, which surfaces 30 s later as
+    # "<div role=dialog ...> subtree intercepts pointer events" out of
+    # open_chat(). Nothing works until the dialog is gone.
+    #
+    # SAFETY: only ever press Escape, click an explicit close/back control, or
+    # click a button whose label is on the allow-list below. Never click
+    # blindly inside a WhatsApp dialog — "Log out", "Delete chat", "Exit group"
+    # and "Remove" all live in dialogs too.
+    SAFE_DISMISS = ("continue", "ok", "okay", "not now", "later", "no thanks",
+                    "dismiss", "close", "cancel", "got it", "skip",
+                    "maybe later", "done")
+
+    def dialog_text(self) -> str:
+        """First 300 chars of the open modal, or '' when there is none."""
+        js = """() => {
+          const d = document.querySelector('[role="dialog"][aria-modal="true"]');
+          return d ? (d.innerText || '').trim().slice(0, 300) : ''; }"""
+        try:
+            return self.page.evaluate(js) or ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def dismiss_dialogs(self, tries: int = 4, log=print) -> bool:
+        """Close any blocking modal. True if the page is clear afterwards."""
+        for _ in range(tries):
+            txt = self.dialog_text()
+            if not txt:
+                return True
+            first = txt.splitlines()[0][:80] if txt.splitlines() else txt[:80]
+            log(f"[wa] dismissing dialog: {first!r}")
+            try:
+                self.page.keyboard.press("Escape")
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.5)
+            if not self.dialog_text():
+                return True
+            js = """(safe) => {
+              const d = document.querySelector('[role="dialog"][aria-modal="true"]');
+              if (!d) return true;
+              const btns = Array.from(d.querySelectorAll('button,[role="button"]'));
+              const x = btns.find(b => /^(close|back)$/i.test((b.getAttribute('aria-label')||'').trim()));
+              if (x) { x.click(); return true; }
+              const hit = btns.find(b => safe.includes((b.innerText||'').trim().toLowerCase()));
+              if (hit) { hit.click(); return true; }
+              return false; }"""
+            try:
+                if not self.page.evaluate(js, list(self.SAFE_DISMISS)):
+                    log(f"[wa] dialog has no safe dismiss button. Full text: {txt[:200]!r}")
+                    return False
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.6)
+        return not self.dialog_text()
 
     def new_tab(self) -> Page:
         """A second tab in the same logged-in profile (used for metrics scraping)."""

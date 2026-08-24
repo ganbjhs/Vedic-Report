@@ -154,19 +154,37 @@ class WebApi(desktop.Api):
 # --------------------------------------------------------------------------- #
 # Wiring
 # --------------------------------------------------------------------------- #
-def _force_headless_config() -> None:
-    """A VPS has no display. Flip config.json once, loudly, rather than letting
-    Chromium fail to launch with an error nobody can read."""
+def _force_headless() -> None:
+    """A server has no X display, so a headed Chromium cannot start — it dies
+    with "Missing X server or $DISPLAY" and a TargetClosedError.
+
+    Setting `headless: true` in config.json is NOT enough: `Worker._session()`
+    re-reads that file on every job, the Advanced -> Config tab can save it back
+    to false, and `ensure_defaults()` seeds a fresh copy with the desktop default
+    (false) on any new volume. So pin it at the class instead — every WASession
+    on this server is headless no matter what any config says.
+
+    config.json is still corrected, so the UI shows the truth rather than a
+    setting that silently does nothing.
+    """
     if not FORCE_HEADLESS:
         return
+
+    _orig_init = WASession.__init__
+
+    def _headless_init(self, profile_dir="./wa_profile", headless=False, slow_mo=0):
+        _orig_init(self, profile_dir, True, slow_mo)
+
+    WASession.__init__ = _headless_init
+
     cfg = desktop.load_json(CONFIG)
     if cfg.get("headless") is not True:
         cfg["headless"] = True
         desktop.save_json(CONFIG, cfg)
-        print("[wa] config.json: headless -> true (no display on a server)", flush=True)
+    print("[wa] Chromium pinned to headless (no display on a server)", flush=True)
 
 
-_force_headless_config()
+_force_headless()
 
 worker = WebWorker()
 worker.start()

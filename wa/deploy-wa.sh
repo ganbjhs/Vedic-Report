@@ -26,13 +26,37 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-echo "== validating Caddyfile BEFORE reloading (a bad config must not take the report tool down)"
-docker compose --profile caddy exec -T caddy caddy validate \
-  --config /etc/caddy/Caddyfile --adapter caddyfile
-
-echo "== reloading Caddy in place (zero downtime, no container restart)"
-docker compose --profile caddy exec -T caddy caddy reload \
-  --config /etc/caddy/Caddyfile
+echo "== edge proxy"
+# This box may be fronted by the compose Caddy container OR by nginx installed
+# on the host. Detect rather than assume — reloading the wrong one silently
+# leaves /wa returning the report tool's 404.
+if docker compose --profile caddy ps --status running --services 2>/dev/null | grep -qx caddy; then
+  echo "   caddy container detected — validating before applying"
+  docker compose --profile caddy exec -T caddy caddy validate \
+    --config /etc/caddy/Caddyfile --adapter caddyfile
+  docker compose --profile caddy exec -T caddy caddy reload \
+    --config /etc/caddy/Caddyfile
+  echo "   caddy reloaded (zero downtime)"
+elif command -v nginx >/dev/null 2>&1; then
+  if nginx -T 2>/dev/null | grep -q "location /wa/"; then
+    echo "   nginx detected, /wa/ block present — testing and reloading"
+    nginx -t && systemctl reload nginx
+    echo "   nginx reloaded"
+  else
+    echo "   !! nginx is the edge on this box, and it has no '/wa/' location yet."
+    echo "      /wa will keep returning the report tool's 404 until you add one."
+    echo
+    echo "      1. grep -rl report.vedictech.in /etc/nginx/"
+    echo "      2. copy the block in wa/nginx-wa.conf into that server{},"
+    echo "         above the catch-all 'location / {'"
+    echo "      3. nginx -t && systemctl reload nginx"
+    echo
+    echo "   The wa container itself is up and healthy on 127.0.0.1:8010."
+  fi
+else
+  echo "   !! neither a caddy container nor nginx found."
+  echo "      Point your edge proxy at 127.0.0.1:8010, stripping the /wa prefix."
+fi
 
 echo
 echo "done."

@@ -31,31 +31,82 @@ _JS_CLICK_IN_LIST = r"""(name) => {
 }"""
 
 
+def _focus_editor(s: WASession, box) -> None:
+    """Put the caret in the search box, whatever is floating over it.
+
+    Three attempts, cheapest first, because only the LAST one is guaranteed:
+
+      1. a real click — hit-tested, so it fails if anything overlaps the box;
+      2. a forced click — skips the hit test (Playwright still dispatches at
+         the box's own coordinates);
+      3. `el.focus()` — no pointer involved at all, so nothing can intercept it.
+
+    Typing afterwards goes wherever the caret is, so focus is all this needs to
+    achieve; a click was never the point. Short timeouts on purpose: the bug
+    this replaces spent Playwright's full 30 s default on a tooltip, three
+    times over, before the bot reported "Could not open the group".
+    """
+    s.clear_overlays()
+    errors = []
+    for how in ("click", "force", "focus"):
+        try:
+            if how == "click":
+                box.click(timeout=5000)
+            elif how == "force":
+                box.click(force=True, timeout=3000)
+            else:
+                box.evaluate("el => el.focus()")
+            if how != "click":
+                print(f"[wa] search box focused via {how} (something was covering it)", flush=True)
+            return
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{how}: {str(e).splitlines()[0][:90]}")
+            s.clear_overlays()
+    raise RuntimeError("Could not put the caret in the search box — " + "; ".join(errors))
+
+
 def open_chat(s: WASession, name: str, timeout: int = 15000) -> None:
     """Open a chat (contact or group) by the exact name shown in WhatsApp."""
     if s.current_chat().strip().lower() == name.strip().lower():
         return  # already open
-    # A modal swallows every click aimed at the chat list or the search box.
+    # A modal swallows every click aimed at the chat list or the search box;
+    # a tooltip in #wa-popovers-bucket does the same without being a dialog.
     s.dismiss_dialogs()
-    # 1) Try clicking it directly in the chat list (works even if the search box moved)
+    s.clear_overlays()
+    # The chat list may still be rendering — a headless start reaches here
+    # before #pane-side exists, and then step 1 below finds no rows and the
+    # search box is the only way in. Waiting a moment makes step 1 work, and
+    # step 1 is the path no overlay can block.
+    try:
+        s.find("logged_in", min(timeout, 10000))
+        time.sleep(0.4)
+    except TimeoutError:
+        pass
+    # 1) Try clicking it directly in the chat list. This is a DOM click, not a
+    #    hit-tested one, so it works even with something floating on top.
     if s.page.evaluate(_JS_CLICK_IN_LIST, name):
         time.sleep(0.8)
         if name.lower() in s.current_chat().lower():
             return
     # 2) Fall back to the search box
     box = _search_box(s, timeout)
-    box.click()
+    _focus_editor(s, box)
     s.page.keyboard.press("Meta+A" if _is_mac() else "Control+A")
     s.page.keyboard.press("Backspace")
     s.page.keyboard.type(name, delay=20)
     time.sleep(1.0)  # let results render
     # First result whose title matches exactly, then 'contains', then just press Enter
     clicked = False
+    s.clear_overlays()
     for loc in (s.page.locator(f'span[title="{name}"]:not(#main *)').first,
                 s.page.locator('span[title]:not(#main *)', has_text=name).first):
         try:
             loc.wait_for(state="visible", timeout=4000)
-            loc.click()
+            try:
+                loc.click(timeout=5000)
+            except Exception:  # noqa: BLE001  something floated over the result row
+                s.clear_overlays()
+                loc.click(force=True, timeout=3000)
             clicked = True
             break
         except Exception:  # noqa: BLE001
@@ -83,7 +134,11 @@ def _search_box(s: WASession, timeout: int):
         loc = s.page.locator(css).first
         if loc.count():
             try:
-                loc.click(timeout=2000)
+                try:
+                    loc.click(timeout=2000)
+                except Exception:  # noqa: BLE001
+                    s.clear_overlays()
+                    loc.click(force=True, timeout=2000)
                 break
             except Exception:  # noqa: BLE001
                 continue
@@ -99,7 +154,9 @@ def _search_box(s: WASession, timeout: int):
 def send_text(s: WASession, text: str, delay_after: float = 1.0) -> None:
     """Type a (possibly multi-line) message into the open chat and send it."""
     box = s.find("composer")
-    box.click()
+    # Same hazard as the search box: a tooltip floating over the composer would
+    # otherwise cost 30 s per message and then fail the whole run.
+    _focus_editor(s, box)
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if line:

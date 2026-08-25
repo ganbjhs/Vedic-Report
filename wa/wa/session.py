@@ -242,6 +242,62 @@ class WASession:
             time.sleep(0.6)
         return not self.dialog_text()
 
+    # -- non-modal overlays: tooltips and popovers -----------------------
+    # `dismiss_dialogs` above handles aria-modal DIALOGS. This handles the other
+    # thing WhatsApp floats over the page: `#wa-popovers-bucket`, where the
+    # left nav-rail tooltips render ("View recent calls, or start a new one
+    # with up to …"). A tooltip is not a dialog, has no close button and no
+    # Escape handler, so nothing above could ever remove it — and it sits right
+    # on top of the search box. Playwright then reports
+    #
+    #   <span …> from <div id="wa-popovers-bucket"> subtree intercepts pointer
+    #   events … retrying click action
+    #
+    # and burns the whole click timeout before open_chat gives up. That is the
+    # 30 s timeout in the bot's "Could not open the group" error.
+    #
+    # A tooltip is anchored to whatever the pointer happens to be over, and
+    # Playwright leaves the mouse wherever the last click put it — so moving the
+    # pointer somewhere harmless is the real fix. Neutralising what is left is
+    # belt and braces.
+    def clear_overlays(self, log=print) -> int:
+        """Stop floating tooltips from eating clicks. Returns how many were neutralised.
+
+        SAFETY: this never clicks anything. Real menus (attach, chat context)
+        render in the same bucket, so a bucket child containing a button, link
+        or menu item is left completely alone — only inert, text-only popovers
+        get `pointer-events: none`, which lets the click through while leaving
+        WhatsApp's own code free to remove the node when it wants to.
+        """
+        try:
+            self.page.mouse.move(640, 8)      # the top edge, over nothing
+        except Exception:  # noqa: BLE001
+            pass
+        js = """() => {
+          const buckets = document.querySelectorAll('#wa-popovers-bucket, [data-popover-bucket]');
+          let n = 0;
+          for (const bucket of buckets) {
+            for (const el of Array.from(bucket.children)) {
+              if (el.querySelector('button,[role="button"],a,input,textarea,[role="menuitem"],[contenteditable="true"]')) {
+                continue;                       // a real menu — must stay clickable
+              }
+              if (el.style.pointerEvents === 'none') continue;
+              el.style.pointerEvents = 'none';
+              n++;
+            }
+          }
+          for (const t of document.querySelectorAll('[role="tooltip"]')) {
+            if (t.style.pointerEvents !== 'none') { t.style.pointerEvents = 'none'; n++; }
+          }
+          return n; }"""
+        try:
+            n = int(self.page.evaluate(js) or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+        if n:
+            log(f"[wa] {n} floating popover(s) were covering the page — clicks let through")
+        return n
+
     def new_tab(self) -> Page:
         """A second tab in the same logged-in profile (used for metrics scraping)."""
         return self.ctx.new_page()

@@ -108,7 +108,8 @@ in a preset.
     "footer": "{page} / {pages}",
     "per_post_fields": ["account_name", "post_link"],
     "metrics": null,                  // null, or an ordered label->key list
-    "links_table": true
+    "links_table": true,
+    "group_by_platform": null         // combined styles only — see below
   },
 
   "outputs": ["pdf", "docx", "html"]  // xlsx is global, not a profile output
@@ -127,6 +128,18 @@ in a preset.
   is about.
 * `grid` rather than `per_page` because the builder needs the shape anyway, and
   `per_page` is derivable. One source of truth.
+* `content.group_by_platform` is the ONE ordering rule a combined report needs:
+  a list of network slugs (`["x", "instagram", "facebook"]`) that decides the
+  order the pages print in **and** the order the links pages list in. It is
+  `null` for every single-network style, where the sheet's row order stands
+  unchanged, and `registry.validate` refuses it on one — a style that captures
+  Facebook only has nothing to group. `prof_builder.order_results` sorts with a
+  stable sort, so the sheet's own order survives inside each group; a row whose
+  network is not in the list keeps its place at the end and gets an "Other
+  links" section rather than disappearing. Grouping is applied once, in
+  `prof_builder.main`, before `prepare()` — `prepare` and `layout.placements`
+  both walk the list positionally, so reordering after placement would pair one
+  post's page with another's screenshot.
 
 ---
 

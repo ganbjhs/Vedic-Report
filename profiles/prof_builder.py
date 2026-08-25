@@ -134,6 +134,69 @@ def shown_link(r) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Grouping — a combined report's one ordering rule
+# --------------------------------------------------------------------------- #
+# How a network is named in a heading. The key is the row's own `platform`,
+# which the worker stamps on every result (prof_worker), so the label and the
+# grouping can never disagree about which post belongs where.
+PLATFORM_LABELS = {"x": "X (Twitter)", "facebook": "Facebook",
+                   "instagram": "Instagram"}
+
+
+def platform_label(slug: str) -> str:
+    return PLATFORM_LABELS.get(slug, (slug or "Other").title())
+
+
+def platform_order(profile) -> list:
+    """The platform order this style prints in, or [] for 'sheet order'.
+
+    Empty is the answer for every single-network style, which is why the
+    grouping is opt-in data rather than a rule: the Twitter, Facebook and
+    Instagram reports have exactly one group and must keep the row order the
+    user typed.
+    """
+    return list((profile.get("content") or {}).get("group_by_platform") or [])
+
+
+def order_results(results, profile) -> list:
+    """Results grouped by platform, in the style's order.
+
+    `sorted` is STABLE, so the sheet's own row order survives inside each
+    group — a combined report reads as the three reports it replaces, printed
+    back to back, not as a reshuffle. A row whose network is not in the list
+    keeps its place at the end rather than being dropped.
+    """
+    order = platform_order(profile)
+    if not order:
+        return list(results)
+    rank = {p: i for i, p in enumerate(order)}
+    return sorted(results, key=lambda r: rank.get(r.get("platform"), len(order)))
+
+
+def link_sections(results, profile) -> list:
+    """[(heading, [link, ...]), ...] — the links pages, in printing order.
+
+    Ungrouped styles get the single "Links" list they have always had, empty
+    entries included (the DOCX prints those as "—"). A grouped style gets one
+    list per platform in the same order the pages were printed, so the reader
+    finds the X links under the X pages' heading and not interleaved.
+    """
+    order = platform_order(profile)
+    if not order:
+        return [("Links", [shown_link(r) for r in results])]
+    groups = {p: [] for p in order}
+    extras = []
+    for r in results:
+        target = groups.get(r.get("platform"))
+        (extras if target is None else target).append(shown_link(r))
+    out = [(f"{platform_label(p)} links", groups[p])
+           for p in order if any(groups[p])]
+    if any(extras):
+        out.append(("Other links", extras))
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # PDF
 # --------------------------------------------------------------------------- #
 def build_pdf(results, images, places, profile, title, out):
@@ -255,25 +318,35 @@ def build_pdf(results, images, places, profile, title, out):
             paint_bg()
             cursor_y = page_h - top * inch + 14
         y = cursor_y - 26
-        c.setFont("Helvetica-Bold", 14)
-        c.setFillColor(ink)
-        c.drawString(left * inch, y, "Links")
-        y -= 18
-        c.setFont("Helvetica", 8)
-        for r in results:
-            link = shown_link(r)
-            if not link:
-                continue
-            if y < bottom * inch:
-                c.showPage()
-                paint_bg()
-                y = page_h - top * inch
-                c.setFont("Helvetica", 8)
-            c.setFillColor(accent)
-            c.drawString(left * inch, y, link[:150])
-            c.linkURL(link, (left * inch, y - 2,
-                             page_w - right * inch, y + 8), relative=0)
-            y -= 12
+        for n, (heading, links) in enumerate(link_sections(results, profile)):
+            if n:
+                # A heading with no room for its own links under it is an
+                # orphan: break first rather than print "Facebook links" as the
+                # last line of a page.
+                if y - 18 < bottom * inch + need:
+                    c.showPage()
+                    paint_bg()
+                    y = page_h - top * inch
+                else:
+                    y -= 10
+            c.setFont("Helvetica-Bold", 14)
+            c.setFillColor(ink)
+            c.drawString(left * inch, y, heading)
+            y -= 18
+            c.setFont("Helvetica", 8)
+            for link in links:
+                if not link:
+                    continue
+                if y < bottom * inch:
+                    c.showPage()
+                    paint_bg()
+                    y = page_h - top * inch
+                    c.setFont("Helvetica", 8)
+                c.setFillColor(accent)
+                c.drawString(left * inch, y, link[:150])
+                c.linkURL(link, (left * inch, y - 2,
+                                 page_w - right * inch, y + 8), relative=0)
+                y -= 12
         c.showPage()
     elif places:
         c.showPage()
@@ -329,15 +402,15 @@ def build_docx(results, images, places, profile, title, out):
             mrun.font.size = Pt(8)
 
     if content.get("links_table"):
-        doc.add_heading("Links", level=1)
-        table = doc.add_table(rows=1, cols=1)
-        table.style = "Table Grid"
-        hdr = table.rows[0].cells[0].paragraphs[0].add_run("Link")
-        hdr.bold = True
-        hdr.font.color.rgb = RGBColor(0x1D, 0x9B, 0xF0)
-        for r in results:
-            link = shown_link(r)
-            table.add_row().cells[0].text = link or "—"
+        for heading, links in link_sections(results, profile):
+            doc.add_heading(heading, level=1)
+            table = doc.add_table(rows=1, cols=1)
+            table.style = "Table Grid"
+            hdr = table.rows[0].cells[0].paragraphs[0].add_run("Link")
+            hdr.bold = True
+            hdr.font.color.rgb = RGBColor(0x1D, 0x9B, 0xF0)
+            for link in links:
+                table.add_row().cells[0].text = link or "—"
 
     doc.save(str(out))
 
@@ -452,20 +525,24 @@ def build_pptx(results, images, places, profile, title, out):
         footer(slide, current + 1)
 
     if content.get("links_table"):
-        links = [shown_link(r) for r in results if shown_link(r)]
         per_slide = max(1, int((H - (top + bottom) * INCH - 30) // 12))
-        for start in range(0, max(len(links), 1), per_slide):
-            slide = new_slide()
-            y = top * INCH
-            text(slide, "Links", left * INCH, y, W - (left + right) * INCH, 18,
-                 14, ink, bold=True)
-            y += 22
-            for link in links[start:start + per_slide]:
-                text(slide, link[:150], left * INCH, y, W - (left + right) * INCH,
-                     11, 8, accent, link=link)
-                y += 12
-            if not links:
-                break
+        for heading, section in link_sections(results, profile):
+            links = [ln for ln in section if ln]
+            # The heading repeats at the top of every slide the section spans —
+            # a deck is read one slide at a time, so a continuation slide with
+            # no heading is a page of unattributed URLs.
+            for start in range(0, max(len(links), 1), per_slide):
+                slide = new_slide()
+                y = top * INCH
+                text(slide, heading, left * INCH, y, W - (left + right) * INCH,
+                     18, 14, ink, bold=True)
+                y += 22
+                for link in links[start:start + per_slide]:
+                    text(slide, link[:150], left * INCH, y,
+                         W - (left + right) * INCH, 11, 8, accent, link=link)
+                    y += 12
+                if not links:
+                    break
 
     prs.save(str(out))
 
@@ -513,6 +590,10 @@ def main():
     all_results = json.loads((OUT / "results.json").read_text())
     results = [r for r in all_results if usable(r)]
     skipped = len(all_results) - len(results)
+    # Grouping happens ONCE, here, before anything is placed: `prepare` and
+    # `layout.placements` both walk this list positionally, so reordering it
+    # later would pair page 3's placement with page 7's screenshot.
+    results = order_results(results, profile)
     if not results:
         print(f"[report] no capturable links ({skipped} skipped) — "
               "nothing to build", flush=True)

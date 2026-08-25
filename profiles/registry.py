@@ -97,8 +97,12 @@ _ALLOWED = {
     # runner's one copytree carries it into the job. DOCX ignores it (Word has
     # no reliable full-page background), which the designer says out loud.
     "page": {"size", "orientation", "grid", "margins_in", "background"},
+    # `group_by_platform` (v3): a list of platform slugs — the order the pages
+    # are printed in, and the order the links are listed in. Only a combined
+    # report has more than one network to order, so it is null everywhere else
+    # and the sheet's own row order stands, exactly as before.
     "content": {"cover", "header", "footer", "per_post_fields", "metrics",
-                "links_table"},
+                "links_table", "group_by_platform"},
 }
 _TOP = {"schema", "slug", "label", "description", "extends", "platform",
         "capture", "image", "page", "content", "outputs", "template"}
@@ -519,6 +523,9 @@ def validate(p: dict) -> dict:
             raise ProfileError(f"{slug}: content.metrics must be a non-empty "
                                "list of [label, key] pairs")
 
+    _validate_grouping(content.get("group_by_platform"),
+                       p.get("platform", DEFAULT_PLATFORM), slug)
+
     _validate_template(p, slug)
 
     outs = p.get("outputs") or []
@@ -541,6 +548,39 @@ def validate(p: dict) -> dict:
         raise ProfileError(f"{slug}: unsupported output(s) {bad}; "
                            f"allowed: {list(allowed)}.{extra}")
     return p
+
+
+def _validate_grouping(order, platform, slug: str) -> None:
+    """`content.group_by_platform` must be a list of real, single networks.
+
+    Refused here rather than sorted around in the builder, because every way of
+    getting this wrong is silent: a typo'd slug would simply never match a row
+    and those posts would drift to the end of the document with no error, and
+    "combined" in the list would match nothing at all (a ROW's platform is
+    always a single network — `combined` names the report, not a link).
+    """
+    if order is None:
+        return
+    if not isinstance(order, list) or not order:
+        raise ProfileError(f"{slug}: content.group_by_platform must be null or "
+                           "a non-empty list of platform slugs, e.g. "
+                           '["x", "instagram", "facebook"]')
+    seen = set()
+    for name in order:
+        if name not in PLATFORMS or name == "combined":
+            raise ProfileError(
+                f"{slug}: content.group_by_platform has unknown platform "
+                f"{name!r}; allowed: "
+                f"{[x for x in PLATFORMS if x != 'combined']}")
+        if name in seen:
+            raise ProfileError(f"{slug}: content.group_by_platform lists "
+                               f"{name!r} twice")
+        seen.add(name)
+    if platform != "combined":
+        raise ProfileError(
+            f"{slug}: content.group_by_platform only means something on a "
+            f"combined report — this style captures {platform!r} only, so "
+            "every post is already in one group")
 
 
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")

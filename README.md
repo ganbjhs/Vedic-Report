@@ -66,6 +66,15 @@ The web app's dashboard (`webapp/`, no build step — one CSS file, one JS file)
   Designers duplicate it, drop their own Canva art (16:9 PNG, art only) and
   keep the slots — or press *Place standard slots* on any page image.
 
+  The second shipped style, **Combined Report**, is the Twitter report over the
+  same mixed sheet: letter, one screenshot per page, engagement bar cropped,
+  0.75in margins — with the pages grouped by network, every X post first, then
+  Instagram, then Facebook, and the links pages in that same order under one
+  heading per network (*X (Twitter) links*, *Instagram links*, *Facebook
+  links*). Row order from the sheet is kept inside each group. The ordering is
+  one line of the style — `content.group_by_platform` — so a report that wants
+  Facebook first only changes that list.
+
 Why X still uses an account when Facebook does not: X shows a single post
 logged-out, but not reliably the *conversation* the Twitter report is defined
 by (a reply shot together with its parent), hides sensitive/age-gated media,

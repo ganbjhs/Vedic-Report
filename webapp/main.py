@@ -230,8 +230,19 @@ async def new_run(request: Request, user: str = Depends(auth.require_user)):
 
 @app.get("/project/styles", response_class=HTMLResponse)
 async def project_styles_page(request: Request, user: str = Depends(auth.require_user)):
-    """Which styles this project prints in, picked from the pool."""
+    """Which styles this project prints in, picked from the pool.
+
+    An admin sees the whole pool here and ticks what this project prints in. A
+    member sees ONLY the styles already attached — the same short list New run
+    offers — and chooses the file formats. The narrowing is done here rather
+    than in the template so an unattached style's label, caption and preview
+    never reach a member's HTML at all.
+    """
     kinds = report_types.all_types()
+    if not auth.is_admin(user):
+        picked = {s["slug"] for s
+                  in projects.styles_of(projects.current(request))}
+        kinds = [rt for rt in kinds if rt.slug in picked]
     return templates.TemplateResponse(
         request, "project_styles.html",
         _shell(request, user, "pstyles",
@@ -325,8 +336,15 @@ async def report_types_redirect():
 
 
 @app.get("/styles", response_class=HTMLResponse)
-async def styles_page(request: Request, user: str = Depends(auth.require_user)):
-    """The gallery of report styles, plus the designer for new ones."""
+async def styles_page(request: Request, user: str = Depends(auth.require_admin)):
+    """The gallery of report styles, plus the designer for new ones.
+
+    ADMIN ONLY. A member's world is their project: /project/styles lists the
+    styles an admin attached to it, and New run offers exactly those. The pool
+    is the library behind that, and showing a member ten styles they cannot use
+    is the "too many styles" problem this page caused. Hiding the sidebar link
+    is a hint; this dependency is the gate, so the URL is refused too.
+    """
     kinds = report_types.all_types()
     return templates.TemplateResponse(
         request, "styles.html",

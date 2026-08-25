@@ -138,7 +138,18 @@ async def delete_project(pid: str, request: Request,
 async def set_project_styles(pid: str, request: Request,
                              user: str = Depends(auth.require_user_api)):
     """Replace the list. Body: {"styles": [{"slug": ..., "outputs": [...]}]}.
-    Outputs are checked against the style — the same gate the job API has."""
+    Outputs are checked against the style — the same gate the job API has.
+
+    WHO MAY CHANGE WHAT. Attaching and detaching styles is the admin's job: it
+    is what decides the short list a member (and, later, the Telegram bot) is
+    offered, and it is the whole reason the pool is admin-only. Choosing which
+    FORMATS each attached style builds stays with whoever runs the report —
+    that is a per-run preference, not curation.
+
+    Both live on this one endpoint because the page sends the whole list either
+    way; the guard below is on the slug SET, so a member may reorder nothing
+    into existence. Hiding the buttons is a hint, this is the gate.
+    """
     data = await _json_body(request)
     _csrf(request, data)
     _project(pid)
@@ -159,6 +170,13 @@ async def set_project_styles(pid: str, request: Request,
         seen.add(slug)
         items.append({"slug": slug,
                       "outputs": list(report_types.clean_outputs(slug, asked))})
+    if not auth.is_admin(user):
+        current = {x["slug"] for x in store.project_styles(pid)}
+        if {i["slug"] for i in items} != current:
+            raise HTTPException(
+                status_code=403,
+                detail="Only an admin can add or remove this project's styles. "
+                       "You can still choose which formats each one builds.")
     store.project_set_styles(pid, items)
     return {"ok": True, "project": projects.public(_project(pid))}
 
@@ -171,7 +189,7 @@ async def replace_style_pages(pid: str, slug: str, request: Request,
                               end: UploadFile = File(None),
                               grid: UploadFile = File(None),
                               csrf_token: str = Form(...),
-                              user: str = Depends(auth.require_user_api)):
+                              user: str = Depends(auth.require_admin)):
     """Replace the page art (background) of a designed-page style — the slots
     stay exactly where they are. A shipped style is copied into the project
     first, so the original stays as it was for everyone else."""
@@ -198,7 +216,7 @@ async def set_style_background(pid: str, slug: str, request: Request,
                                remove: str = Form(""),
                                image: UploadFile = File(None),
                                csrf_token: str = Form(...),
-                               user: str = Depends(auth.require_user_api)):
+                               user: str = Depends(auth.require_admin)):
     """Give a style a page background — a colour or a full-page image — for the
     PDF and the PPTX. Multipart, because an image may ride along.
 

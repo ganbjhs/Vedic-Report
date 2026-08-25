@@ -36,7 +36,11 @@
       {% endfor %}
     </div>
     {% else %}
+    {% if is_admin %}
     <div class="ov-empty" style="margin-top:10px">This project has no styles yet.<br><a class="btn primary sm" href="/project/styles" style="margin-top:10px">Pick from the style pool →</a></div>
+    {% else %}
+    <div class="ov-empty" style="margin-top:10px">This project has no styles yet.<br><span class="small faint">An admin adds them from the style pool.</span></div>
+    {% endif %}
     {% endif %}
   </section>
 

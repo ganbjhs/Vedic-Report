@@ -1308,6 +1308,11 @@ function initTemplateDesigner() {
 function initProjectStyles() {
   const grid = $("pick-grid"); if (!grid) return;
   const pid = grid.dataset.pid;
+  // A member's grid IS the project's list, not a choice from a pool: the cards
+  // cannot be toggled off and there is no filter bar. The server refuses a
+  // changed slug set anyway (routes_projects.set_project_styles) — this only
+  // keeps the page from offering an action that would come back 403.
+  const locked = grid.dataset.locked === "1";
   const cards = [...grid.querySelectorAll(".pick[data-slug]")];
   const status = $("ps-status"), count = $("ps-count");
   let project = {}; try { project = JSON.parse($("pstyles-data").textContent) || {}; } catch (_) {}
@@ -1331,7 +1336,8 @@ function initProjectStyles() {
       paintBg(c);
     });
     const n = cards.filter((c) => c.classList.contains("on")).length;
-    count.textContent = `${n} picked · ${cards.filter((c) => !c.hidden).length} shown`;
+    count.textContent = locked ? `${n} style${n === 1 ? "" : "s"} in this project`
+      : `${n} picked · ${cards.filter((c) => !c.hidden).length} shown`;
     const k = document.querySelector('.nav a[href="/project/styles"] .k'); if (k) k.textContent = String(n);
   };
   const payload = () => cards.filter((c) => c.classList.contains("on")).map((c) => ({
@@ -1351,6 +1357,7 @@ function initProjectStyles() {
   };
   cards.forEach((c) => {
     c.addEventListener("click", (e) => {
+      if (locked) return;
       if (e.target.closest("[data-outs]") || e.target.closest("[data-bg]")) return;
       c.classList.toggle("on");
       // Ticking with nothing chosen means every file the style builds.
@@ -1359,14 +1366,15 @@ function initProjectStyles() {
     });
     c.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); c.click(); } });
     c.querySelectorAll("[data-outs] input").forEach((i) => i.addEventListener("change", () => {
-      if (!c.classList.contains("on")) c.classList.add("on");
+      if (!c.classList.contains("on") && !locked) c.classList.add("on");
       if (![...c.querySelectorAll("[data-outs] input")].some((x) => x.checked)) { i.checked = true; say("Keep at least one file for a picked style.", "bad"); }
       refresh(); save();
     }));
   });
 
-  /* filters */
+  /* filters — admin only; a member's grid is already just their project */
   const fPlat = $("pf-plat"), fKind = $("pf-kind"), fPicked = $("pf-picked");
+  if (!fPlat || !fKind || !fPicked) { refresh(); return; }
   const filter = () => {
     fPicked.classList.toggle("on", fPicked.querySelector("input").checked);
     cards.forEach((c) => {

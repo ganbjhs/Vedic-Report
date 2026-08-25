@@ -1,0 +1,18 @@
+# Automatic HTTPS via Let's Encrypt, free and self-renewing.
+#
+# Configured for report.vedictech.in -> 200.97.175.12 (A record already set).
+# Caddy issues the certificate on first start; ports 80 and 443 must be open,
+# which they are. Nothing else to do.
+#
+# Changing domain? Edit the hostname below, point its DNS A record at this
+# server, and `docker compose up -d`.
+
+report.vedictech.in {
+	encode gzip
+	reverse_proxy web:8000
+
+	# Uploads are capped in the app too (MAX_UPLOAD_MB); this is the edge guard.
+	request_body {
+		max_size 10MB
+	}
+}

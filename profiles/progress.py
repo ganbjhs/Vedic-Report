@@ -158,3 +158,18 @@ def metrics_unread(count: int) -> str:
 def metrics_partial(count: int) -> str:
     return _say(f"[metrics] {count} post(s) were missing a number X did not "
                 "show — left blank, never written as 0")
+
+
+# --------------------------------------------------------------------------- #
+# Resume  (_RE_RESUME, _RE_RESUME_ALL)
+#
+# `src/run_report.py --resume` prints these literally, the way the frozen
+# runners print theirs. They live here so the contract test can see both sides.
+# --------------------------------------------------------------------------- #
+def resume_reusing(kept: int, todo: int) -> str:
+    return _say(f"[resume] {kept} link(s) already captured, {todo} still to do")
+
+
+def resume_complete(total: int) -> str:
+    return _say(f"[resume] every one of the {total} link(s) was already "
+                "captured — building the document from them")

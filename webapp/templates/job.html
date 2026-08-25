@@ -17,12 +17,14 @@
     <span class="st {{ job.status }}" id="status-pill">{{ job.status }}</span>
     <span class="muted small" id="elapsed"></span>
     <span class="spacer"></span>
+    <button type="button" class="btn sm primary" id="resume-btn" hidden></button>
     <form id="cancel-form" hidden><button type="submit" class="btn sm danger">Cancel this job</button></form>
   </div>
   <p class="phase" id="phase">{{ job.phase }}</p>
   <div class="progress" id="progress-wrap"><i id="progress-bar" style="width:0%"></i></div>
   <p class="muted small" id="counter" style="margin:6px 0 0"></p>
   <div class="alert alert-error" id="job-error" hidden style="margin-top:12px;white-space:pre-line"></div>
+  <p class="muted small" id="resume-note" hidden style="margin:10px 0 0"></p>
   <div class="downloads" id="downloads" hidden>
     <a class="btn primary" id="dl-pdf" hidden>Download PDF</a>
     <a class="btn" id="dl-docx" hidden>Download DOCX</a>

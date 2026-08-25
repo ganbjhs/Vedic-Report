@@ -25,6 +25,7 @@ git diff <first-commit> -- run.py src/ install.py requirements.txt
 # expected: run.py, src/overlays.py, src/capture/x_capture.py,
 #           src/capture/__init__.py, src/shot_quality.py, src/run_report.py,
 #           src/_worker.py
+# (approved edits 1-7; every one of them is written up below)
 ```
 
 (An earlier two-line change to `src/_worker.py`, from when the browser ran
@@ -57,6 +58,45 @@ in the PNG, and the clip is chosen inside the capture. Additive and default-off:
 without the switch, `_crop_box` runs the same branch it always did and the
 picture is unchanged. The flag rides on the task dict, so `run_chunk`'s pickled
 signature did not move.
+
+**Approved edit 7 — a killed run must not lose the work it did**
+(`src/_worker.py`, `src/run_report.py`). A 1232-link run takes hours. When one
+is cancelled, times out or dies at 90%, roughly eleven hundred good screenshots
+are sitting in `reports/screenshots/` — and until this edit they were
+unusable, because `results.json` is written ONCE, on the last line of
+`run_report.main()`, from what the workers returned. Everything before that
+lived only in worker memory. Nothing on disk said which link a PNG was, whether
+it captured cleanly, or whether it was a login wall. The only option was to pay
+for the whole run again.
+
+*7a — a sidecar beside every shot.* `_worker._one` writes the result dict to
+`<shot>.json` the moment the capture returns. ~300 bytes, one write, against a
+capture that costs seconds. It never raises: a sidecar that cannot be written
+costs a later resume the chance to skip that one post, and must not cost the run
+the post itself. This is worth having on its own, before anything reads it — a
+killed job now loses only the posts it had not reached.
+
+*7b — `--resume`, default off.* `_resumable` splits the task list into what is
+already done and what is not. **A screenshot on disk is not evidence of a good
+capture** — `x_capture` writes one for a login wall, a deleted post and an
+age-gated post too, deliberately, as debugging evidence. So the bar for skipping
+a post is `_quality_ok`, the same gate the pipeline's own final pass uses, and
+anything below it is captured again. Resume can only ever remove work; it can
+never lower the standard of what reaches the document. The sidecar's
+`screenshot` path is rewritten to the resuming job's own path, because rule 2
+gives every job a private copy of the tree and the recorded path points into a
+folder this run does not own.
+
+Cannot be done from outside `src/`: the results exist only inside the worker
+process until the run ends, and which tasks get dispatched is decided in
+`main()`. Both parameters default to the old behaviour — without `--resume`,
+`_resumable` is never called and the run is unchanged; the sidecar write is
+additive and read by nothing else.
+
+The web layer's half (`runs.resume_run`) clones the old job's `rows.json`
+rather than re-reading the sheet. A sheet can gain a date between the two runs,
+and a resume that quietly captured different links than the run it claims to
+continue would produce a report nobody could explain.
 
 **Approved edit 6 — a long list must not spend its time waiting**
 (`src/run_report.py`, `src/_worker.py`, `src/capture/x_capture.py`,
@@ -171,6 +211,7 @@ line: an idea that was wrong once will look attractive again.
 | **Trusting `frame_ok`, `status="ok"` or `[verify] N/N clean`** as evidence a run was good | All 80 shots across four benchmark runs reported `frame_ok=True`, `overlay=False`, `status="ok"` and `[verify] 20/20` — while shots were visibly missing their parent post, and one showed a loading spinner instead of a video | Rule 3, without exception: **open the images and the documents and look**. A green status only proves the code did not raise |
 | **"Fixing" the absolute paths in `reports/results.json`** | They look like a portability bug and are not. Rule 2 copies the code into the job dir, so `ROOT` resolves inside the job and the paths are self-consistent | Leave them. A consumer **inside** the job subprocess may trust them; a consumer in the **webapp** must glob or rebase, as `publish()` and `_zip_screenshots()` already do |
 | **Running more than ~300 captures a day on one X account** | Measured: after ~320 the same 60-link set went from 0 to 18 retries, 1 to 8 recaptures, produced 598x80 frames, and parent loss hit 38/60 (63%). Nothing raised an error | Rule 21. Rest the account, and treat any run with an unusual retry count as inadmissible rather than as a result |
+| **Rebuilding a killed run's report from the PNGs alone** | It is the obvious cheap version of resume and it cannot work: the capture writes a screenshot for a login wall, a deleted post and an age-gated post ON PURPOSE, as evidence. Any "the file is over 1 KB so it is a good post" rule prints those into the document as real posts — rule 3's mistake with extra steps | Approved edit 7a's sidecar. The result is written beside the PNG at capture time, so a resume knows each shot's real status and re-captures everything that is not `_quality_ok` |
 | **Raising `--workers` to make a big run finish sooner, without checking the box** | Measured on the 1-vCPU / 4 GB production VPS: 1232 links at 4 browsers produced **0 screenshots in 2m29s**. `MAX_WORKERS` defaulted to the constant 4 on every machine, so the form offered four browsers to one core and they took turns on it. The config comment beside `MAX_WORKERS` had predicted exactly this and was not wired to anything | `config._hardware_ceiling()` — cores + 1 (a capture waits on the network with the CPU idle, so one more than cores fills the gaps; two more only adds context switching), capped by free RAM at ~1.2 GB per browser. Shown on Project settings so the number is visible before a run, not after |
 | **Reading "0 / N captured" as a hung job** | The per-link result lines only print after capture ENDS, and the bar counts PNGs on disk, so a healthy 1232-link job looks identical to a dead one for its first minute — and the reasonable thing to do with a dead job is cancel it, which is what happened | `_Progress.heartbeat()`, on a timer rather than an event: before the first PNG it reports elapsed time and says the job is alive; after it, the measured posts/min and a finish estimate from THIS run's pace |
 | **Averaging a healthy run with a degraded one** | The two zero-cost diagnostic passes were 6.7% and 63.3%. Their mean, 35%, describes neither and would have been reported as the bug's rate | Report the conditions separately, or discard the degraded run and re-measure |

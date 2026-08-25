@@ -207,7 +207,16 @@ MAX_WORKERS = max(CAPTURE_WORKERS, _int("MAX_WORKERS", 0) or HARDWARE_MAX_WORKER
 # cores and the accounts rarely repeat.
 INFLUENCER_WORKERS = max(1, _int("INFLUENCER_WORKERS", 1))
 
+# The watchdog's FLOOR, not its answer. A 20-link job that wedges should be
+# killed quickly; a 1232-link job needs hours, and killing that at 90 minutes is
+# how a run that was working got marked "Timed out" at 90% done. The real budget
+# is computed per job from its size — see `runner.timeout_minutes`.
 JOB_TIMEOUT_MINUTES = max(1, _int("JOB_TIMEOUT_MINUTES", 90))
+
+# Nothing may run longer than this, however big the list. A backstop against an
+# arithmetic mistake in the estimate, not a policy.
+JOB_TIMEOUT_MAX_MINUTES = max(JOB_TIMEOUT_MINUTES,
+                              _int("JOB_TIMEOUT_MAX_MINUTES", 480))
 
 # How many posts one capture account can take in a day before the session starts
 # to rot. Not a guess: measured on 2026-08-03 at ~320 captures, after which retry
@@ -323,7 +332,8 @@ def public_settings() -> dict:
         "Reports running at once (MAX_CONCURRENT_JOBS)": MAX_CONCURRENT_JOBS,
         "Links per report (MAX_LINKS)": MAX_LINKS or "unlimited",
         "Upload size limit": f"{MAX_UPLOAD_MB} MB",
-        "Job time limit": f"{JOB_TIMEOUT_MINUTES} min",
+        "Job time limit (floor, small jobs)": f"{JOB_TIMEOUT_MINUTES} min",
+        "Job time limit (ceiling, any job)": f"{JOB_TIMEOUT_MAX_MINUTES} min",
         "Reports kept for": f"{RETENTION_DAYS} day(s)",
         "Disk cap for job data": f"{MAX_DATA_GB} GB",
         "Daily capture budget (DAILY_CAPTURE_BUDGET)": DAILY_CAPTURE_BUDGET,

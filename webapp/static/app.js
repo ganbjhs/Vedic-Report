@@ -428,6 +428,7 @@ function initJobPage(executionMode) {
   const counter = $("counter"), elapsed = $("elapsed"), errBox = $("job-error"), downloads = $("downloads");
   const cancelForm = $("cancel-form"), activity = $("activity"), skippedCard = $("skipped-card");
   const skippedList = $("skipped"), skippedCount = $("skipped-count"), ephemeralNote = $("ephemeral-note");
+  const resumeBtn = $("resume-btn"), resumeNote = $("resume-note");
   const KINDS = ["pdf", "docx", "pptx", "xlsx", "csv", "zip"];
 
   const render = (job) => {
@@ -452,10 +453,43 @@ function initJobPage(executionMode) {
     downloads.hidden = !arts.length;
     for (const k of KINDS) { const el = $(`dl-${k}`); if (!el) continue; el.hidden = !arts.includes(k); if (arts.includes(k)) el.href = `/api/jobs/${jobId}/download/${k}`; }
     ephemeralNote.hidden = !(arts.length && job.execution_mode === "inline");
+    /* Resume: offered only where the server says it will actually work, and
+       labelled with the real number of screenshots so it is never a promise
+       the next run has to break. */
+    if (resumeBtn) {
+      resumeBtn.hidden = !job.can_resume;
+      if (job.can_resume) resumeBtn.textContent = `Resume — keep ${job.resumable_shots} screenshot(s)`;
+    }
+    if (resumeNote) {
+      if (job.can_resume) {
+        resumeNote.hidden = false;
+        resumeNote.textContent = `A resume starts a new run that keeps the ${job.resumable_shots} screenshot(s) already captured cleanly and takes only the rest. Anything that came back as a login wall, an unavailable post or a bad frame is captured again.`;
+      } else if (job.resumed_from) {
+        resumeNote.hidden = false;
+        resumeNote.innerHTML = `Resumed from job <a href="/jobs/${esc(job.resumed_from)}">${esc(job.resumed_from.slice(0, 8))}</a>.`;
+      } else if (job.resumable_shots > 0) {
+        resumeNote.hidden = false;
+        resumeNote.textContent = `${job.resumable_shots} screenshot(s) are still on the server but this run cannot be resumed — its style does not record a result beside each screenshot.`;
+      } else {
+        resumeNote.hidden = true;
+      }
+    }
     cancelForm.hidden = job.finished;
     document.title = `${job.status} · ${job.name} — Report Maker`;
     return job.finished;
   };
+  if (resumeBtn) resumeBtn.addEventListener("click", async () => {
+    resumeBtn.disabled = true;
+    const was = resumeBtn.textContent;
+    resumeBtn.textContent = "Starting…";
+    try {
+      const r = await api(`/api/jobs/${jobId}/resume`, { method: "POST", json: {} });
+      location.href = `/jobs/${r.job_id}`;
+    } catch (err) {
+      alert(err.message);
+      resumeBtn.disabled = false; resumeBtn.textContent = was;
+    }
+  });
   cancelForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = new FormData(); body.append("csrf_token", CSRF());

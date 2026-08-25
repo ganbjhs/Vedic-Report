@@ -91,6 +91,15 @@ def public_job(job: dict) -> dict:
         "elapsed": _elapsed(job),
         "finished": job["status"] in store.DONE_STATES,
         "execution_mode": config.EXECUTION_MODE,
+        # Resume (approved edit 7). `can_resume` is computed, not stored: it
+        # depends on the working folder still being on disk, which retention can
+        # take away at any time, so a stored flag would go stale and offer a
+        # button that 404s.
+        "resumed_from": job.get("resumed_from") or "",
+        "can_resume": runner.can_resume(job),
+        "resumable_shots": (runner.resumable_count(job["id"])
+                            if job["status"] in ("failed", "cancelled", "interrupted")
+                            else 0),
     }
 
 
@@ -519,6 +528,29 @@ async def run_inline(job_id: str, user: str = Depends(auth.require_user_api)):
         media_type="application/x-ndjson",
         # Buffering would defeat the point — no progress until the job ends.
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@router.post("/jobs/{job_id}/resume")
+async def resume(job_id: str, request: Request,
+                 user: str = Depends(auth.require_user_api)):
+    """Start a new job from this one's screenshots.
+
+    The old job is never touched. It keeps its own status and its own downloads
+    — a resume is a new run that borrows evidence, not an edit to history.
+    """
+    auth.verify_csrf(request, str(request.headers.get("x-csrf-token") or ""))
+    job = _owned_job(job_id, user)
+    if not runner.can_resume(job):
+        raise HTTPException(
+            status_code=400,
+            detail="This job cannot be resumed — it either finished, has no "
+                   "re-usable screenshots left, or its working folder has been "
+                   "cleaned up.")
+    try:
+        new_id = await runs.resume_run_async(job, user)
+    except runs.RunError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "job_id": new_id}
 
 
 # --------------------------------------------------------------------------- #

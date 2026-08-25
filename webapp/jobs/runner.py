@@ -154,11 +154,89 @@ def _copy_user_profiles(job_id: str, app: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Resume — start a job from another job's screenshots
+# --------------------------------------------------------------------------- #
+def shots_dir(job_id: str) -> Path:
+    return app_dir(job_id) / "reports" / "screenshots"
+
+
+def resumable_count(job_id: str) -> int:
+    """How many of this job's screenshots a resume could actually reuse.
+
+    Counts SIDECARS, not PNGs, and that distinction is the whole point: the
+    capture writes a screenshot for a login wall, a deleted post and an
+    age-gated post too, as debugging evidence. A count of PNGs would promise
+    the user a thousand reusable posts and then re-capture half of them.
+
+    Cheap and approximate on purpose — it reads whether the sidecar says the
+    capture was `ok`, and leaves the strict `_quality_ok` gate to the runner
+    that will actually do the work. Being a little pessimistic here is fine;
+    being optimistic would be a lie on a button.
+    """
+    n = 0
+    try:
+        for f in shots_dir(job_id).glob("*.json"):
+            try:
+                if json.loads(f.read_text()).get("status") == "ok":
+                    n += 1
+            except (ValueError, OSError):
+                continue
+    except OSError:
+        return 0
+    return n
+
+
+def can_resume(job: dict) -> bool:
+    """Whether a Resume button belongs on this job.
+
+    Four conditions, and each has cost someone an hour when it was assumed:
+    the job has to be finished-but-not-successful, its style has to understand
+    `--resume`, its working folder has to still exist (retention deletes
+    finished jobs), and there has to be something worth reusing.
+    """
+    if not job or job.get("status") not in ("failed", "cancelled", "interrupted"):
+        return False
+    rt = report_types.get(job.get("report_type") or "")
+    if rt is None or not rt.allows_resume:
+        return False
+    if not (job_dir(job["id"]) / "rows.json").is_file():
+        return False
+    return resumable_count(job["id"]) > 0
+
+
+def copy_shots_for_resume(old_job_id: str, new_job_id: str) -> int:
+    """Carry the old job's screenshots AND their sidecars into the new job.
+
+    Both, always. A PNG without its sidecar is an anonymous picture the runner
+    will re-capture anyway, and a sidecar without its PNG points at a file that
+    is not there — so a half-copy is worse than none.
+    """
+    src, dst = shots_dir(old_job_id), shots_dir(new_job_id)
+    dst.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    try:
+        entries = sorted(src.glob("*.json"))
+    except OSError:
+        return 0
+    for sidecar in entries:
+        png = sidecar.with_suffix(".png")
+        if not png.is_file():
+            continue
+        try:
+            shutil.copy2(png, dst / png.name)
+            shutil.copy2(sidecar, dst / sidecar.name)
+            copied += 1
+        except OSError as e:                      # rule 17: never silent
+            print(f"[resume] could not copy {png.name}: {e}", flush=True)
+    return copied
+
+
+# --------------------------------------------------------------------------- #
 # Command
 # --------------------------------------------------------------------------- #
 def build_command(report_type: str, title: str, date: str,
                   keep_engagement: bool = False, workers: int = 0,
-                  outputs=None, fast: bool = False) -> list:
+                  outputs=None, fast: bool = False, resume: bool = False) -> list:
     """The exact CLI invocation, identical in shape to what you run by hand.
 
     `--no-date` is what makes the document header read exactly what the user
@@ -216,6 +294,8 @@ def build_command(report_type: str, title: str, date: str,
     # this switch and would fail the job on an unrecognised argument.
     if fast and rt.allows_fast:
         cmd.append("--fast")
+    if resume and rt.allows_resume:
+        cmd.append("--resume")
     wanted = report_types.clean_outputs(report_type, outputs)
     if not rt.builtin and set(wanted) != set(rt.outputs):
         cmd += ["--outputs", ",".join(wanted)]
@@ -241,6 +321,8 @@ _RE_SKIPPED = re.compile(r"^\[input\]\s+skipped (\d+) non-X link")
 _RE_NO_SESSION = re.compile(r"^\[runner\]\s+NO saved X session")
 _RE_METRICS = re.compile(r"^\[metrics\]\s+(\d+) post\(s\) had at least one metric")
 _RE_WROTE = re.compile(r"^\[report\]\s+wrote\s+(.+?)\s+\(")
+_RE_RESUME = re.compile(r"^\[resume\]\s+(\d+) link\(s\) already captured, (\d+) still")
+_RE_RESUME_ALL = re.compile(r"^\[resume\]\s+every one of the (\d+)")
 
 
 class _Progress:
@@ -262,6 +344,7 @@ class _Progress:
         # says what is going on while nothing has landed yet.
         self._capture_started = 0.0
         self._warmed = False
+        self.building = False        # past the capture; the stall check stands down
 
     def note(self, message: str, level: str = "info") -> None:
         store.append_activity(self.job_id, message, level)
@@ -372,6 +455,7 @@ class _Progress:
         if m:
             good, total = int(m.group(1)), int(m.group(2))
             self.done, self.total = good, total
+            self.building = True
             self.set_phase("Building the document")
             level = "info" if good == total else "warn"
             self.note(f"Verified: {good}/{total} links produced a clean screenshot.",
@@ -387,10 +471,78 @@ class _Progress:
             self.note(f"{m.group(1)} post(s) had at least one engagement metric "
                       "unavailable — those show as — in the report.", "warn")
             return
+        m = _RE_RESUME.match(text)
+        if m:
+            kept, todo = int(m.group(1)), int(m.group(2))
+            self.done = kept
+            self.note(f"Resumed: {kept} screenshot(s) from the earlier run were "
+                      f"kept, {todo} link(s) still to capture.")
+            self._push(force=True)
+            return
+        m = _RE_RESUME_ALL.match(text)
+        if m:
+            self.note(f"All {m.group(1)} link(s) were already captured by the "
+                      f"earlier run — going straight to the document.")
+            self.building = True
+            return
         m = _RE_WROTE.match(text)
         if m:
             self.set_phase("Packaging downloads")
             return
+
+
+# --------------------------------------------------------------------------- #
+# How long this job is allowed to take
+# --------------------------------------------------------------------------- #
+# Seconds of wall clock one capture costs a single browser. Not a guess: the
+# weighted mean of what the capture really does — 90% ordinary posts at ~8s,
+# 8% media-heavy at ~15s, 2% dead or throttled at ~60s (three load attempts) —
+# which is 9.6s, rounded up.
+_SECONDS_PER_CAPTURE = 10
+
+# The retry and quality passes re-capture a share of the list AFTER the main
+# pass, and they run at half width. 1.35x covers a bad run without being
+# generous enough to hide a genuinely stuck job.
+_RECOVERY_OVERHEAD = 1.35
+
+# Building the PDF + DOCX, compressing images, zipping screenshots.
+_BUILD_MINUTES = 10
+
+# A job is STUCK when nothing has been written to the screenshots folder for
+# this long, which is a different fact from the job being LONG. The total budget
+# above has to be generous — a 1232-link run on one core legitimately takes
+# hours — and a generous budget on a server that runs one job at a time means a
+# wedged browser could hold the only capture slot all afternoon. So elapsed time
+# is not the only signal any more.
+#
+# Max mtime, not file count: the retry and quality passes OVERWRITE existing
+# shots, so a count would sit still through a perfectly healthy recovery pass
+# and this would kill it. It is only armed while capturing — the document build
+# writes no screenshots and is bounded by _BUILD_MINUTES.
+_STALL_MINUTES = 20
+
+
+def timeout_minutes(link_count: int, workers: int) -> int:
+    """The watchdog's budget for one job.
+
+    WHY THIS IS NOT A CONSTANT. `JOB_TIMEOUT_MINUTES` was one, at 90, and a
+    1232-link run on a 1-vCPU box needs about 150 — so the watchdog killed a
+    job that was working, at 90% done, and reported it as a timeout. A limit
+    that a correct job cannot satisfy is not a safety net.
+
+    Effective parallelism is capped at the CORE count, not the worker count:
+    the capture is CPU-bound, so a second browser on one core does not halve
+    the wall clock. Estimating with the worker count would produce the same
+    too-short budget on exactly the box that needs the longest one.
+
+    Returns at least the configured floor, and never more than
+    `JOB_TIMEOUT_MAX_MINUTES`.
+    """
+    effective = max(1, min(int(workers or 1), config.CORES))
+    estimate = (link_count * _SECONDS_PER_CAPTURE / effective / 60.0)
+    estimate = estimate * _RECOVERY_OVERHEAD + _BUILD_MINUTES
+    return int(max(config.JOB_TIMEOUT_MINUTES,
+                   min(estimate, config.JOB_TIMEOUT_MAX_MINUTES)))
 
 
 def _human_minutes(minutes: float) -> str:
@@ -407,6 +559,23 @@ def _shot_count(app: Path) -> int:
         return sum(1 for p in shots.iterdir() if p.suffix.lower() == ".png")
     except OSError:
         return 0
+
+
+def _last_shot_activity(app: Path) -> float:
+    """When a screenshot was last written OR rewritten. 0.0 when there are none."""
+    shots = app / "reports" / "screenshots"
+    latest = 0.0
+    try:
+        for p in shots.iterdir():
+            if p.suffix.lower() != ".png":
+                continue
+            try:
+                latest = max(latest, p.stat().st_mtime)
+            except OSError:
+                continue
+    except OSError:
+        return 0.0
+    return latest
 
 
 # --------------------------------------------------------------------------- #
@@ -753,7 +922,8 @@ def run_job(job_id: str, on_line=None) -> dict:
                                          job.get("outputs") or ())
     cmd = build_command(job["report_type"], job["title"], date, keep_engagement,
                         int(job.get("workers") or 0), outputs,
-                        bool(job.get("fast_capture")))
+                        bool(job.get("fast_capture")),
+                        bool(job.get("resumed_from")))
 
     store.update(job_id, status="running", started_at=time.time(),
                  phase="Checking the X login", error="")
@@ -824,13 +994,32 @@ def run_job(job_id: str, on_line=None) -> dict:
     _register(job_id, proc)
 
     # Watchdog: hard timeout so a wedged browser can't pin a capture slot forever.
-    timed_out = {"hit": False}
+    timed_out = {"hit": False, "stalled": False}
+    budget_minutes = timeout_minutes(
+        int(job.get("link_count") or job.get("total") or 0),
+        int(job.get("workers") or 0) or (rt.default_workers() if rt else 1))
+    if budget_minutes > config.JOB_TIMEOUT_MINUTES:
+        prog.note(f"Time limit for this job: {_human_minutes(budget_minutes)} "
+                  f"— worked out from {job.get('link_count', 0)} link(s) on "
+                  f"{config.CORES} vCPU, not the {config.JOB_TIMEOUT_MINUTES} "
+                  f"min default.")
 
     def _watchdog():
-        deadline = time.time() + config.JOB_TIMEOUT_MINUTES * 60
+        deadline = time.time() + budget_minutes * 60
         while time.time() < deadline:
             if proc.poll() is not None:
                 return
+            # Stuck, as opposed to merely long: capture has started, the build
+            # has not, and nothing has been written to screenshots/ in
+            # _STALL_MINUTES. Waiting out the full budget for that would hold
+            # this server's one capture slot for hours on a dead browser.
+            if prog._capture_started and not prog.building:
+                last = _last_shot_activity(app) or prog._capture_started
+                if time.time() - last > _STALL_MINUTES * 60:
+                    timed_out["hit"] = True
+                    timed_out["stalled"] = True
+                    cancel(job_id)
+                    return
             time.sleep(2)
         if proc.poll() is None:
             timed_out["hit"] = True
@@ -904,11 +1093,25 @@ def run_job(job_id: str, on_line=None) -> dict:
                      skipped=skipped, artifacts=artifacts, done=captured)
         return store.get(job_id)
 
-    if timed_out["hit"]:
+    if timed_out["hit"] and timed_out.get("stalled"):
+        store.update(job_id, status="failed", finished_at=finished,
+                     phase="Stalled", skipped=skipped, artifacts=artifacts,
+                     error=f"No screenshot was written for {_STALL_MINUTES} "
+                           f"minutes, so the capture was stopped rather than "
+                           f"left holding this server's capture slot. The "
+                           f"screenshots taken before it stalled are in the "
+                           f"downloads. Usually a browser that wedged, or an X "
+                           f"session that stopped being accepted.")
+        prog.note(f"Job stopped: nothing captured for {_STALL_MINUTES} minutes "
+                  f"— the capture had stalled, it was not merely slow.", "error")
+    elif timed_out["hit"]:
         store.update(job_id, status="failed", finished_at=finished,
                      phase="Timed out", skipped=skipped, artifacts=artifacts,
-                     error=f"The job ran longer than {config.JOB_TIMEOUT_MINUTES} "
-                           "minutes and was stopped.")
+                     error=f"The job ran longer than {budget_minutes} minutes "
+                           f"and was stopped. That budget was worked out from "
+                           f"{job.get('link_count', 0)} link(s) on "
+                           f"{config.CORES} vCPU — if the run was healthy and "
+                           f"simply long, raise JOB_TIMEOUT_MAX_MINUTES.")
         prog.note("Job stopped: exceeded the time limit.", "error")
     elif code != 0 and not has_document:
         tail = _log_tail(job_id)

@@ -9,6 +9,8 @@ Two entry points, same body:
   * `run_chunk(chunk, ...)` — a list decided up front. Its signature has not
     moved since it was first tested; `--keep-engagement` and `--fast` ride on
     the task dict precisely so it never has to.
+APPROVED EDIT 7a — every capture writes a SIDECAR beside its PNG. See `_save`.
+
   * `run_queue(queue, ...)` — APPROVED EDIT 6a. The worker pulls the NEXT task
     instead of being handed a fixed share, so a browser that finishes early
     takes more work rather than idling while another still has a backlog. The
@@ -17,8 +19,40 @@ Two entry points, same body:
     and on an oversubscribed box, one of them always does. The measurement is
     written up in `run_report.run_tasks`.
 """
+import json
 import sys
 from pathlib import Path
+
+SIDECAR_SUFFIX = ".json"
+
+
+def sidecar_for(shot_path) -> Path:
+    """The result file that belongs beside one screenshot."""
+    return Path(shot_path).with_suffix(SIDECAR_SUFFIX)
+
+
+def _save(t, res) -> None:
+    """APPROVED EDIT 7a — write this post's result next to its PNG, now.
+
+    WHY. `run_report` writes `reports/results.json` once, on its last line,
+    from what the workers returned. Everything before that lives only in worker
+    memory — so a run that is cancelled, times out or dies at 90% leaves a
+    thousand perfectly good screenshots on disk and NOTHING that says which link
+    each one is or whether it captured cleanly. Those screenshots cannot be
+    turned back into a report, and the whole run has to be paid for again.
+
+    ~300 bytes and one write per post, against a capture that costs seconds.
+    It is what makes `--resume` possible, and it is worth having on its own:
+    after this, a killed job has lost only the posts it had not reached.
+
+    Never raises. A sidecar that cannot be written costs a resume the chance to
+    skip that one post; it must not cost the run the post itself.
+    """
+    try:
+        sidecar_for(t["shot"]).write_text(json.dumps(res), encoding="utf-8")
+    except Exception as e:                       # rule 17: never silent
+        print(f"[resume] could not save the result for {t.get('post_link')}: {e}",
+              flush=True)
 
 
 def _one(capture, page, t):
@@ -32,6 +66,7 @@ def _one(capture, page, t):
                "platform": t["platform"], "screenshot": None, "handle": ""}
     res.update({"idx": t["idx"], "category": t["category"],
                 "account_name": t["account"], "post_link": t["post_link"]})
+    _save(t, res)
     return res
 
 

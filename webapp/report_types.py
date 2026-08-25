@@ -125,6 +125,12 @@ class ReportType:
     # True for a designed-page (Canva) template style — edited in the template
     # designer, not the numeric one.
     template: bool = False
+    # True when this style's entrypoint understands `--resume` (approved edit
+    # 7). Only the Twitter report's runner writes the per-shot sidecars a resume
+    # reads, so only it can offer the button — expressed as a capability so the
+    # UI and the API boundary read the same fact, and a style that gains the
+    # ability later gains the button by setting one flag.
+    allows_resume: bool = False
     # True when this style's entrypoint understands `--fast` (approved edit 6c).
     # A capability, not a slug test, for the reason this whole file exists: the
     # profile runners do not take the switch, and passing it to one would fail
@@ -145,7 +151,7 @@ _BUILTINS = (
         slug="twitter", label="Twitter Report",
         argv=("run.py",), worker_pool="capture",
         allows_worker_choice=True, allows_keep_engagement=True,
-        allows_fast=True, builtin=True,
+        allows_fast=True, allows_resume=True, builtin=True,
         caption="Letter · 1 post per page",
         description="Clean tweet screenshots with the engagement bar cropped "
                     "out. One post per page, plus a links table.",

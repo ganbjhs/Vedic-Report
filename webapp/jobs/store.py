@@ -143,7 +143,10 @@ _ADDED_COLUMNS = {
              # spends the X account's daily budget (RULEBOOK rule 21).
              ("fetch_metrics", "INTEGER DEFAULT 0"),
              # Shorter fixed waits inside the capture (approved edit 6c).
-             ("fast_capture", "INTEGER DEFAULT 0")),
+             ("fast_capture", "INTEGER DEFAULT 0"),
+             # The job whose screenshots this one started from (approved
+             # edit 7). Empty for every job that began from scratch.
+             ("resumed_from", "TEXT DEFAULT ''")),
     "presets": (("outputs", "TEXT DEFAULT '[]'"),),
     # Which of the project's styles THIS source runs. '[]' = all of them, which
     # is what every source created before this column meant.
@@ -221,7 +224,8 @@ def create(owner: str, name: str, title: str, report_type: str,
            link_count: int, upload_name: str,
            keep_engagement: bool = False, workers: int = 0,
            outputs=None, project_id: str = "",
-           fetch_metrics: bool = False, fast_capture: bool = False) -> str:
+           fetch_metrics: bool = False, fast_capture: bool = False,
+           resumed_from: str = "") -> str:
     """`workers` = browsers to capture with; 0 means "use the server default".
     `outputs` = the formats ticked on the form; [] means every format the
     style builds. `fetch_metrics` = read each X post's likes / reposts /
@@ -232,12 +236,14 @@ def create(owner: str, name: str, title: str, report_type: str,
         conn.execute(
             "INSERT INTO jobs (id, owner, name, title, report_type, status, "
             "phase, link_count, upload_name, total, keep_engagement, workers, "
-            "outputs, project_id, fetch_metrics, fast_capture, created_at) "
-            "VALUES (?,?,?,?,?,'queued','Waiting for a free capture slot',?,?,?,?,?,?,?,?,?,?)",
+            "outputs, project_id, fetch_metrics, fast_capture, resumed_from, "
+            "created_at) "
+            "VALUES (?,?,?,?,?,'queued','Waiting for a free capture slot',?,?,?,?,?,?,?,?,?,?,?)",
             (job_id, owner, name, title, report_type, link_count, upload_name,
              link_count, int(bool(keep_engagement)), max(0, int(workers)),
              json.dumps(list(outputs or [])), project_id or "",
-             int(bool(fetch_metrics)), int(bool(fast_capture)), time.time()))
+             int(bool(fetch_metrics)), int(bool(fast_capture)),
+             resumed_from or "", time.time()))
     return job_id
 
 

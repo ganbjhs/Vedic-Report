@@ -13,6 +13,7 @@ Usage:
     python src/run_report.py -                      # paste links, Ctrl-D
     python src/run_report.py --workers 6            # more parallelism
     python src/run_report.py --fast                 # shorter fixed waits
+    python src/run_report.py --resume               # keep shots already taken
     python src/run_report.py --headed               # watch the browser
     python src/run_report.py --keep-engagement      # keep the like/views line
 
@@ -64,6 +65,46 @@ def _recovery_workers(n_tasks: int, workers: int) -> int:
     if n_tasks < _RECOVERY_MIN_TASKS or workers <= 1:
         return 1
     return max(1, min(int(workers * _RECOVERY_WIDTH), n_tasks))
+
+
+def _resumable(tasks):
+    """APPROVED EDIT 7b — split `tasks` into (still to do, already done).
+
+    A task is ALREADY DONE only when its sidecar and its PNG together clear the
+    same bar the pipeline's own final gate uses: `_quality_ok`. That is
+    deliberately strict. A screenshot on disk is NOT evidence of a good capture
+    — `x_capture` writes one for a login wall, a deleted post and an age-gated
+    post too, on purpose, as debugging evidence. Trusting "the file is bigger
+    than 1 KB" would print those into the report as real posts, which is rule 3's
+    mistake wearing a new hat.
+
+    So: anything unclean is re-captured. Resume can only ever save work; it can
+    never lower the standard of what ends up in the document.
+
+    The sidecar's `screenshot` path is REWRITTEN to this job's own path. Rule 2
+    gives every job a private copy of the tree, so the path recorded by the run
+    that took the shot points into a folder this run does not own.
+    """
+    todo, done = [], {}
+    for t in tasks:
+        shot = Path(t["shot"])
+        sidecar = _worker.sidecar_for(shot)
+        if not sidecar.is_file():
+            todo.append(t)
+            continue
+        try:
+            res = json.loads(sidecar.read_text())
+        except (ValueError, OSError):
+            todo.append(t)
+            continue
+        res["screenshot"] = str(shot)
+        res.update({"idx": t["idx"], "category": t["category"],
+                    "account_name": t["account"], "post_link": t["post_link"]})
+        if _quality_ok(res):
+            done[t["idx"]] = res
+        else:
+            todo.append(t)
+    return todo, done
 
 CTX_KWARGS = {
     "viewport": {"width": 1280, "height": 1600},
@@ -267,6 +308,7 @@ def main() -> None:
     workers = int(_arg_value(argv, "--workers", DEFAULT_WORKERS))
     keep_engagement = "--keep-engagement" in argv
     fast = "--fast" in argv
+    resume = "--resume" in argv
 
     rows = input_loader.load(resolve_source(argv))
     tasks = build_tasks(rows, keep_engagement, fast)
@@ -279,10 +321,26 @@ def main() -> None:
         print("[runner] nothing to capture"); return
 
     state = x_storage_state()
-    workers = max(1, min(workers, len(tasks)))
-    print(f"[runner] capturing with {workers} parallel worker(s)...")
 
-    collected = run_tasks(tasks, workers, headless, state)
+    # APPROVED EDIT 7b — anything already captured cleanly by an earlier run of
+    # this job is kept and NOT re-shot. `--resume` only ever removes work; a
+    # shot that is not demonstrably clean is captured again (see `_resumable`).
+    preloaded = {}
+    if resume:
+        before = len(tasks)
+        tasks, preloaded = _resumable(tasks)
+        print(f"[resume] {len(preloaded)} link(s) already captured, "
+              f"{len(tasks)} still to do")
+        if not tasks:
+            print(f"[resume] every one of the {before} link(s) was already "
+                  f"captured — building the document from them")
+
+    collected = []
+    if tasks:
+        workers = max(1, min(workers, len(tasks)))
+        print(f"[runner] capturing with {workers} parallel worker(s)...")
+        collected = run_tasks(tasks, workers, headless, state)
+    collected += list(preloaded.values())
 
     # retry pass: re-attempt anything without a clean screenshot once,
     # sequentially (recovers transient timeouts from heavy parallelism).

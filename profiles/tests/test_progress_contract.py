@@ -82,6 +82,9 @@ CASES = [
     ("metrics_no_session",  lambda: emitted(P.metrics_no_session),     RN._RE_M_NO_SESSION, None),
     ("metrics_unread",      lambda: emitted(P.metrics_unread, 4),      RN._RE_M_UNREAD, ("4",)),
     ("metrics_partial",     lambda: emitted(P.metrics_partial, 5),     RN._RE_M_PARTIAL, ("5",)),
+    # src/run_report.py --resume
+    ("resume_reusing",      lambda: emitted(P.resume_reusing, 1100, 132), RN._RE_RESUME, ("1100", "132")),
+    ("resume_complete",     lambda: emitted(P.resume_complete, 1232),   RN._RE_RESUME_ALL, ("1232",)),
 ]
 for name, make, regex, groups in CASES:
     check(f"{name} -> {regex.pattern[:34]}...", matches(regex, make(), groups))
@@ -135,6 +138,7 @@ FROZEN_LINES = [
     ("[verify] 20/20 links produced a clean screenshot", RN._RE_VERIFY),
     ("[metrics] 4 post(s) had at least one metric unavailable", RN._RE_METRICS),
     ("[report] wrote /app/reports/X.pdf  (1.3 MB)", RN._RE_WROTE),
+    ("[resume] 1100 link(s) already captured, 132 still to do", RN._RE_RESUME),
     ("  [x] ok           @handle  Account Name", RN._RE_RESULT),
 ]
 for text, regex in FROZEN_LINES:

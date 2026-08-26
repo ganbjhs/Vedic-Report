@@ -81,12 +81,34 @@ async function api(url, opts = {}) {
     document.addEventListener("click", () => open(false));
     pdList.addEventListener("click", (e) => e.stopPropagation());
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") open(false); });
-    pdList.querySelectorAll("button[data-pid]").forEach((b) => b.addEventListener("click", async () => {
+    const pageProject = $("pdrop").dataset.pid;           // the project this page was rendered for
+    const bindSelect = (b) => b.addEventListener("click", async () => {
       if (b.classList.contains("on")) return open(false);
       b.disabled = true;
       try { await api(`/api/projects/${encodeURIComponent(b.dataset.pid)}/select`, { method: "POST", json: {} }); location.reload(); }
       catch (err) { alert(err.message); b.disabled = false; }
-    }));
+    });
+    pdList.querySelectorAll("button[data-pid]").forEach(bindSelect);
+    // Redraw the dropdown from a fresh listing without a page reload (rename /
+    // archive from the Manage dialog). The page itself still shows the project
+    // it was rendered for; when THAT one changes hands we reload instead.
+    const redrawDropdown = (listing) => {
+      const cur = listing.current;
+      pdList.querySelectorAll("button[data-pid]").forEach((b) => b.remove());
+      const anchor = $("pdrop-new");
+      listing.projects.filter((p) => !p.archived).forEach((p) => {
+        const b = document.createElement("button");
+        b.type = "button"; b.setAttribute("role", "option"); b.dataset.pid = p.id;
+        b.className = p.id === cur.id ? "on" : ""; b.setAttribute("aria-selected", String(p.id === cur.id));
+        b.innerHTML = `<span class="pd-em">${esc(p.emoji || "▣")}</span> ${esc(p.name)}`;
+        bindSelect(b); pdList.insertBefore(b, anchor);
+      });
+      pdBtn.querySelector(".pd-em").textContent = cur.emoji || "▣";
+      pdBtn.querySelector(".pd-name").textContent = cur.name;
+      const crumb = $("top-crumb");
+      if (crumb) crumb.textContent = `${cur.emoji || ""} ${cur.name}${cur.client ? " · " + cur.client : ""}`.trim();
+    };
+
     const modal = $("np-modal"), form = $("np-form"), msg = $("np-msg");
     const show = (on) => { modal.hidden = !on; open(false); if (on) setTimeout(() => form.elements.name.focus(), 30); };
     $("pdrop-new").addEventListener("click", () => show(true));
@@ -101,8 +123,161 @@ async function api(url, opts = {}) {
         location.href = "/project/styles";          // first stop: pick what it prints in
       } catch (err) { msg.textContent = err.message; msg.style.color = "var(--bad)"; }
     });
+
+    initManageProjects({ closeDropdown: () => open(false), redrawDropdown, pageProject });
   }
 })();
+
+/* v3: Manage projects… — rename / archive / delete, from the left-bar dropdown.
+   Two dialogs: the list, and (admin only) the delete confirm that shows what
+   goes and what stays before the name has to be typed. */
+function initManageProjects({ closeDropdown, redrawDropdown, pageProject }) {
+  const btn = $("pdrop-manage"), modal = $("mp-modal"), list = $("mp-list"), msg = $("mp-msg");
+  if (!btn || !modal) return;
+  const del = { modal: $("md-modal"), form: $("md-form"), name: $("md-name"), gone: $("md-gone"), kept: $("md-kept"),
+    blocked: $("md-blocked"), go: $("md-go"), msg: $("md-msg") };
+  let listing = null, canDelete = false, target = null;
+  const fmtBytes = (b) => b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : b < 1024 ** 3 ? `${(b / 1024 ** 2).toFixed(1)} MB` : `${(b / 1024 ** 3).toFixed(2)} GB`;
+  const say = (t, ok) => { msg.textContent = t; msg.style.color = ok ? "var(--ok)" : "var(--bad)"; };
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+  const load = async () => {
+    listing = await api("/api/projects?all=1");
+    canDelete = !!listing.can_delete;
+    render();
+  };
+  // After a change: if the project this page was rendered for is no longer the
+  // current one (archived / deleted), the page content is stale — reload.
+  const settle = async (fresh) => {
+    redrawDropdown(fresh);
+    if (fresh.current.id !== pageProject) { location.reload(); return; }
+    await load();                       // the PATCH/DELETE reply lists live projects only; the dialog wants archived ones too
+  };
+
+  const render = () => {
+    list.innerHTML = "";
+    if (!listing || !listing.projects.length) { list.innerHTML = '<div class="small muted" style="padding:14px 4px">No projects yet.</div>'; return; }
+    listing.projects.forEach((p) => {
+      const row = document.createElement("div");
+      row.className = "mp-row" + (p.archived ? " archived" : "") + (p.id === listing.current.id ? " current" : "");
+      row.dataset.pid = p.id;
+      const bits = [plural(p.job_count, "run"), plural(p.style_count, "style")];
+      if (p.source_count) bits.push(plural(p.source_count, "source"));
+      if (p.client) bits.unshift(esc(p.client));
+      const tags = (p.archived ? '<span class="tag">archived</span>' : "") + (p.id === listing.current.id ? '<span class="tag hot">current</span>' : "");
+      const delBtn = canDelete
+        ? `<button type="button" class="btn sm danger" data-act="delete" ${p.is_unsorted ? 'disabled title="The Unsorted project holds the v2 reports and cannot be deleted."' : ""}>Delete…</button>`
+        : "";
+      row.innerHTML = `
+        <span class="pd-em mp-em">${esc(p.emoji || "▣")}</span>
+        <div class="mp-main">
+          <div class="mp-name"><b data-role="name">${esc(p.name)}</b> ${tags}</div>
+          <div class="mp-sub small muted">${bits.join(" · ")}</div>
+        </div>
+        <div class="mp-actions">
+          <button type="button" class="btn sm" data-act="rename" ${p.is_unsorted ? 'disabled title="The Unsorted project keeps its name."' : ""}>Rename</button>
+          <button type="button" class="btn sm" data-act="archive" ${p.is_unsorted ? 'disabled title="The Unsorted project cannot be archived."' : ""}>${p.archived ? "Unarchive" : "Archive"}</button>
+          ${delBtn}
+        </div>`;
+      row.querySelector('[data-act="rename"]').addEventListener("click", () => rename(row, p));
+      row.querySelector('[data-act="archive"]').addEventListener("click", () => archive(row, p));
+      const d = row.querySelector('[data-act="delete"]');
+      if (d) d.addEventListener("click", () => openDelete(p));
+      list.appendChild(row);
+    });
+  };
+
+  /* Rename: the name becomes an input in place. Enter saves, Escape cancels,
+     blur saves. Nothing is sent when the name did not change. */
+  const rename = (row, p) => {
+    const holder = row.querySelector(".mp-name"), nameEl = holder.querySelector('[data-role="name"]');
+    if (holder.querySelector("input")) return;
+    const input = document.createElement("input");
+    input.type = "text"; input.maxLength = 80; input.value = p.name; input.className = "mp-rename";
+    input.setAttribute("aria-label", "Project name");
+    nameEl.replaceWith(input); input.focus(); input.select();
+    row.querySelectorAll(".mp-actions .btn").forEach((b) => { b.disabled = true; });
+    let done = false;
+    const finish = async (save) => {
+      if (done) return; done = true;
+      const name = input.value.trim();
+      if (!save || name === p.name || name.length < 2) {
+        if (save && name.length && name.length < 2) say("The name needs 2+ characters.", false);
+        render(); return;
+      }
+      say("Renaming…", true);
+      try {
+        const fresh = await api(`/api/projects/${encodeURIComponent(p.id)}`, { method: "PATCH", json: { name } });
+        say(`Renamed to “${name}”.`, true); settle(fresh);
+      } catch (err) { say(err.message, false); render(); }
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+  };
+
+  const archive = async (row, p) => {
+    row.querySelectorAll(".btn").forEach((b) => { b.disabled = true; });
+    say(p.archived ? "Bringing it back…" : "Archiving…", true);
+    try {
+      const fresh = await api(`/api/projects/${encodeURIComponent(p.id)}`, { method: "PATCH", json: { archived: !p.archived } });
+      say(p.archived ? `“${p.name}” is back in the dropdown.` : `“${p.name}” archived — its runs stay downloadable from their links.`, true);
+      settle(fresh);
+    } catch (err) { say(err.message, false); render(); }
+  };
+
+  /* Delete: swap to the second dialog, filled from the server's dry run. */
+  const li = (html, cls = "") => `<li class="${cls}">${html}</li>`;
+  const openDelete = async (p) => {
+    target = p; del.msg.textContent = ""; del.form.elements.confirm.value = ""; del.go.disabled = true;
+    del.name.textContent = p.name; del.form.elements.confirm.placeholder = p.name;
+    del.gone.innerHTML = li("Loading…", "muted"); del.kept.innerHTML = ""; del.blocked.hidden = true;
+    modal.hidden = true; del.modal.hidden = false;
+    try {
+      const pv = await api(`/api/projects/${encodeURIComponent(p.id)}/delete-preview`);
+      const gone = [li(`The project <b>${esc(pv.name)}</b> and its settings`)];
+      gone.push(li(pv.runs.count ? `<b>${plural(pv.runs.count, "run")}</b> with their files (${fmtBytes(pv.runs.bytes)})` : "No runs", pv.runs.count ? "" : "muted"));
+      if (pv.sources) gone.push(li(`<b>${plural(pv.sources, "watched source")}</b> (Google Sheets stop being read; the sheets themselves are untouched)`));
+      pv.styles_deleted.forEach((s) => gone.push(li(`Style <b>${esc(s.label)}</b> — made for this project, used nowhere else`)));
+      del.gone.innerHTML = gone.join("");
+      const kept = pv.styles_kept.map((s) => li(`<b>${esc(s.label)}</b> <span class="muted">— ${esc(s.why)}</span>`));
+      del.kept.innerHTML = kept.length ? kept.join("") : li("Nothing else is attached to this project.", "muted");
+      if (pv.blocked) { del.blocked.textContent = pv.blocked; del.blocked.hidden = false; }
+      target.blocked = pv.blocked || "";
+      setTimeout(() => del.form.elements.confirm.focus(), 30);
+    } catch (err) { del.gone.innerHTML = li(esc(err.message), "bad"); target.blocked = err.message; }
+  };
+  const backToList = () => { del.modal.hidden = true; modal.hidden = false; target = null; };
+  del.form.elements.confirm.addEventListener("input", () => {
+    del.go.disabled = !target || !!target.blocked || del.form.elements.confirm.value !== target.name;
+  });
+  del.form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (del.go.disabled || !target) return;
+    del.go.disabled = true; del.msg.textContent = "Deleting…";
+    const gone = target;
+    try {
+      const fresh = await api(`/api/projects/${encodeURIComponent(gone.id)}`, { method: "DELETE", json: { confirm: gone.name } });
+      backToList(); say(`Deleted “${gone.name}”.`, true); settle(fresh);
+    } catch (err) { del.msg.textContent = err.message; del.msg.style.color = "var(--bad)"; del.go.disabled = false; }
+  });
+  $("md-back").addEventListener("click", backToList);
+  $("md-close").addEventListener("click", () => { del.modal.hidden = true; target = null; });
+  del.modal.addEventListener("click", (e) => { if (e.target === del.modal) { del.modal.hidden = true; target = null; } });
+
+  const show = (on) => { modal.hidden = !on; if (on) { say("", true); closeDropdown(); load().catch((err) => { list.innerHTML = `<div class="small" style="color:var(--bad);padding:14px 4px">${esc(err.message)}</div>`; }); } };
+  btn.addEventListener("click", () => show(true));
+  $("mp-close").addEventListener("click", () => show(false));
+  $("mp-done").addEventListener("click", () => show(false));
+  modal.addEventListener("click", (e) => { if (e.target === modal) show(false); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!del.modal.hidden) { del.modal.hidden = true; target = null; }
+    else if (!modal.hidden) show(false);
+  });
+}
 
 /* Rough capture-time estimate. Measured order of magnitude only: ~10 s a
    post per browser for the X engine, ~16 s for the influencer engine (it also
@@ -1491,7 +1666,7 @@ function initProjectSettings() {
   const arch = $("proj-archive");
   if (arch) arch.addEventListener("click", async () => {
     if (!confirm(`Archive "${form.elements.name.value}"? Its runs stay downloadable from their links; the project leaves the dropdown.`)) return;
-    try { await api(`/api/projects/${encodeURIComponent(pid)}`, { method: "DELETE" }); location.href = "/"; }
+    try { await api(`/api/projects/${encodeURIComponent(pid)}`, { method: "PATCH", json: { archived: true } }); location.href = "/"; }
     catch (err) { say(err.message, false); }
   });
 }

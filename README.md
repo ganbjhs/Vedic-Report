@@ -626,6 +626,18 @@ cap RAM near 512 MB, which cannot run Chromium at all. All capture logic
 operates on a Playwright `page`, so it is identical whether the browser is local
 or reached over CDP — only where the browser lives changes.
 
+**Projects are renamed, archived and deleted from one place.** The left-bar
+dropdown ends in *Manage projects…*, which lists every project — archived ones
+included, so they can be brought back. Rename is in place (Enter saves, Escape
+cancels), Archive hides a project but keeps everything, and Delete… is admin-only
+and real: it first asks the server for a dry run (`GET
+/api/projects/{id}/delete-preview`) and shows two lists — what goes (the runs
+and their files, the project's watched sheets, styles forked just for it) and
+what stays (shipped styles, and custom styles another project also uses) —
+before the name has to be typed exactly. A project with a queued or running job
+cannot be deleted until it finishes. `DELETE /api/projects/{id}` needs
+`{"confirm": "<exact name>"}`; archiving is `PATCH {"archived": true}`.
+
 **Security.** `sessions/x_state.json` and `.env` are never served, never sent to
 the browser, and never baked into the image. Uploaded filenames are display-only;
 the report name is sanitised before touching the filesystem. Downloads are

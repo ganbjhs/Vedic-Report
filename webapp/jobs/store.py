@@ -458,6 +458,43 @@ def project_delete(pid: str) -> bool:
     return cur.rowcount > 0
 
 
+def project_job_ids(pid: str) -> list:
+    """Every job id the project owns, any status."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT id FROM jobs WHERE project_id=?", (pid,)).fetchall()
+    return [r["id"] for r in rows]
+
+
+def project_active_jobs(pid: str) -> int:
+    """Jobs still queued or running — a project with any of these is not
+    deletable until they finish or are stopped."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE project_id=? "
+            "AND status IN ('running','queued')", (pid,)).fetchone()
+    return int(row["n"])
+
+
+def projects_using_style(slug: str) -> list:
+    """Ids of every project (archived ones too) that has this style attached."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT project_id FROM project_styles WHERE slug=?",
+                            (slug,)).fetchall()
+    return [r["project_id"] for r in rows]
+
+
+def project_purge(pid: str) -> dict:
+    """Remove the project and every row that hangs off it — jobs, sources and
+    its style picks — in one transaction. Files on disk are the caller's job
+    (`projects.delete_project` does both). Returns the row counts removed."""
+    with _connect() as conn:
+        jobs = conn.execute("DELETE FROM jobs WHERE project_id=?", (pid,)).rowcount
+        sources = conn.execute("DELETE FROM sources WHERE project_id=?", (pid,)).rowcount
+        conn.execute("DELETE FROM project_styles WHERE project_id=?", (pid,))
+        cur = conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+    return {"jobs": jobs, "sources": sources, "project": cur.rowcount}
+
+
 def project_styles(pid: str) -> list:
     """[{slug, outputs}] in the project's own order."""
     with _connect() as conn:

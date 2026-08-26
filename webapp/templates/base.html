@@ -36,7 +36,7 @@
 
   <nav class="nav" aria-label="Main">
     <div class="sec" style="padding-top:0">Project</div>
-    <div class="pdrop" id="pdrop">
+    <div class="pdrop" id="pdrop" data-pid="{{ project.id }}" data-admin="{{ '1' if is_admin else '' }}">
       <button type="button" class="pdrop-btn" id="pdrop-btn" aria-haspopup="listbox" aria-expanded="false" title="Switch project">
         <span class="pd-em">{{ project.emoji or '▣' }}</span><span class="pd-name">{{ project.name }}</span><span class="pd-car">▾</span>
       </button>
@@ -45,6 +45,7 @@
         <button type="button" role="option" data-pid="{{ p.id }}" class="{{ 'on' if p.id == project.id else '' }}" aria-selected="{{ 'true' if p.id == project.id else 'false' }}"><span class="pd-em">{{ p.emoji or '▣' }}</span> {{ p.name }}</button>
         {% endfor %}
         <button type="button" class="pd-new" id="pdrop-new">+ New project</button>
+        <button type="button" class="pd-new pd-manage" id="pdrop-manage">Manage projects…</button>
       </div>
     </div>
     <a href="/" class="{{ 'active' if nav == 'overview' else '' }}" data-key="o"><span class="ico">◧</span> Overview <span class="k">O</span></a>
@@ -95,6 +96,37 @@
     </div>
   </div>
 
+
+  <div class="modal" id="mp-modal" hidden role="dialog" aria-modal="true" aria-label="Manage projects">
+    <div class="modal-card mp-card"><button type="button" class="modal-x" id="mp-close" aria-label="Close">×</button>
+      <h3 style="margin:0 0 4px">Manage projects</h3>
+      <p class="small muted" style="margin:0 0 12px">Rename, archive (hide but keep), or delete a project and the runs, sources and styles only it owns. Archived projects are listed here so you can bring them back.</p>
+      <div class="mp-list" id="mp-list" aria-live="polite"><div class="small muted" style="padding:14px 4px">Loading…</div></div>
+      <div class="row" style="margin-top:12px"><span class="small" id="mp-msg"></span><span class="spacer"></span><button type="button" class="btn" id="mp-done">Close</button></div>
+    </div>
+  </div>
+
+  <div class="modal" id="md-modal" hidden role="dialog" aria-modal="true" aria-label="Delete project">
+    <div class="modal-card md-card"><button type="button" class="modal-x" id="md-close" aria-label="Close">×</button>
+      <h3 style="margin:0 0 4px">Delete <span id="md-name"></span>?</h3>
+      <p class="small muted" style="margin:0 0 12px">This cannot be undone. Runs are removed from the server, including their PDF, DOCX and PPTX files — a link somebody was sent will stop working.</p>
+      <div id="md-blocked" class="alert alert-warn small" hidden></div>
+      <div class="md-lists">
+        <div><div class="md-h bad">Will be deleted</div><ul class="md-ul" id="md-gone"></ul></div>
+        <div><div class="md-h">Kept — shared or shipped</div><ul class="md-ul" id="md-kept"></ul></div>
+      </div>
+      <form id="md-form" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <label class="field" style="margin-top:12px"><span>Type the project name to confirm</span><input name="confirm" type="text" autocomplete="off" spellcheck="false" placeholder=""></label>
+        <div class="row" style="margin-top:12px">
+          <button type="button" class="btn" id="md-back">Back</button>
+          <span class="small" id="md-msg"></span>
+          <span class="spacer"></span>
+          <button type="submit" class="btn danger solid" id="md-go" disabled>Delete project</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <main class="main{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}

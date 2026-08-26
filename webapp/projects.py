@@ -11,6 +11,7 @@ not an access gate — this is an internal tool for one team, and a report made
 by a colleague in the same project is meant to be found by the next one.
 """
 import re
+import shutil
 
 from fastapi import Request
 
@@ -148,8 +149,107 @@ def public(project: dict, with_styles: bool = True) -> dict:
          "settings": project.get("settings") or {}, "archived": project["archived"],
          "created_at": project.get("created_at"),
          "is_unsorted": project["slug"] == store.UNSORTED_SLUG,
-         "job_count": store.count_for_project(project["id"])}
+         "job_count": store.count_for_project(project["id"]),
+         "style_count": len(store.project_styles(project["id"])),
+         "source_count": len(store.sources_for(project["id"]))}
     if with_styles:
         d["styles"] = [{k: v for k, v in s.items() if k != "rt"}
                        for s in styles_of(project)]
     return d
+
+
+# --------------------------------------------------------------------------- #
+# Deleting a project (v3): what goes, what stays, and doing it
+# --------------------------------------------------------------------------- #
+def _fork_suffixes(project: dict) -> tuple:
+    """The two slug endings `styles.fork_for_project` / `replace_page_art`
+    give a style copied for this project. A custom style with one of these
+    endings was made for this project and nobody else."""
+    return (f"-{project['slug'][:14]}".rstrip("-"), f"-{project['id'][:8]}")
+
+
+def _dir_bytes(path) -> int:
+    total = 0
+    try:
+        for f in path.rglob("*"):
+            try:
+                if f.is_file() and not f.is_symlink():
+                    total += f.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return total
+
+
+def delete_preview(project: dict) -> dict:
+    """Dry run. Everything `delete_project` would remove, and everything it
+    would deliberately leave alone, so the confirm dialog can show both lists
+    before anyone types the name.
+
+    Deleted: the project's runs (rows + files), its sources, its style picks,
+    and styles that were forked just for it and no other project uses.
+    Kept:    shipped/built-in styles (they live in the code tree), custom
+             styles another project also uses, and custom styles that were
+             designed in the pool rather than forked for this project.
+    """
+    from .jobs import runner
+    pid = project["id"]
+    job_ids = store.project_job_ids(pid)
+    run_bytes = sum(_dir_bytes(runner.job_dir(j)) for j in job_ids)
+    styles_deleted, styles_kept = [], []
+    suffixes = _fork_suffixes(project)
+    for s in styles_of(project):
+        row = {"slug": s["slug"], "label": s["label"]}
+        if s["missing"]:
+            continue                                  # nothing on disk to keep or lose
+        if not s["custom"]:
+            row["why"] = "built in" if s["builtin"] else "shipped with the app"
+            styles_kept.append(row); continue
+        others = [x for x in store.projects_using_style(s["slug"]) if x != pid]
+        if others:
+            names = [n["name"] for n in (store.project_get(o) for o in others) if n]
+            row["why"] = "also used by " + (", ".join(names[:3]) + ("…" if len(names) > 3 else "")
+                                             if names else "another project")
+            styles_kept.append(row); continue
+        if not s["slug"].endswith(suffixes):
+            row["why"] = "designed in the style pool, not made for this project"
+            styles_kept.append(row); continue
+        styles_deleted.append(row)
+    active = store.project_active_jobs(pid)
+    blocked = ""
+    if project["slug"] == store.UNSORTED_SLUG:
+        blocked = "The Unsorted project holds the v2 reports and cannot be deleted."
+    elif active:
+        blocked = (f"{active} run(s) are still queued or running. Wait for them to "
+                   "finish, or stop them from the Runs page, then try again.")
+    return {"id": pid, "name": project["name"],
+            "runs": {"count": len(job_ids), "bytes": run_bytes},
+            "sources": len(store.sources_for(pid)),
+            "styles_deleted": styles_deleted, "styles_kept": styles_kept,
+            "active_runs": active, "blocked": blocked}
+
+
+def delete_project(project: dict) -> dict:
+    """Do it. Refuses (ValueError) when the preview says it is blocked; the
+    caller has already checked the typed name. Files first, rows second, so
+    a crash half-way leaves a project whose runs simply look empty — never a
+    dangling run pointing at a project that is gone."""
+    from . import styles as style_files
+    from .jobs import runner
+    preview = delete_preview(project)
+    if preview["blocked"]:
+        raise ValueError(preview["blocked"])
+    pid = project["id"]
+    for jid in store.project_job_ids(pid):
+        shutil.rmtree(runner.job_dir(jid), ignore_errors=True)
+    removed = store.project_purge(pid)
+    styles_gone = []
+    for row in preview["styles_deleted"]:
+        try:
+            if style_files.delete(row["slug"]):
+                styles_gone.append(row["slug"])
+        except style_files.StyleError as e:          # rule 17: say so, keep going
+            print(f"[projects] kept style {row['slug']}: {e}", flush=True)
+    return {"name": project["name"], "runs": removed["jobs"],
+            "sources": removed["sources"], "styles": styles_gone}

@@ -4,7 +4,7 @@ Small and boring on purpose. Everything a page needs is a JSON call away, and
 the left-bar dropdown, the New project dialog and the project Styles page all
 talk to these routes only.
 """
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from . import auth, projects, report_types, styles
@@ -37,16 +37,21 @@ def _project(pid: str) -> dict:
     return p
 
 
-def _listing(request: Request) -> dict:
+def _listing(request: Request, include_archived: bool = False) -> dict:
     cur = projects.current(request)
     return {"projects": [projects.public(p, with_styles=False)
-                         for p in projects.all_projects()],
+                         for p in store.projects_list(include_archived=include_archived)],
             "current": projects.public(cur)}
 
 
 @router.get("")
-async def list_projects(request: Request, user: str = Depends(auth.require_user_api)):
-    return _listing(request)
+async def list_projects(request: Request,
+                        with_archived: str = Query("", alias="all"),
+                        user: str = Depends(auth.require_user_api)):
+    """`?all=1` includes archived projects — the Manage projects dialog needs
+    them so an archived project can be brought back."""
+    return {**_listing(request, include_archived=with_archived in ("1", "true", "yes")),
+            "can_delete": auth.is_admin(user)}
 
 
 @router.post("")
@@ -117,18 +122,39 @@ async def update_project(pid: str, request: Request,
     return {"ok": True, **_listing(request)}
 
 
+@router.get("/{pid}/delete-preview")
+async def delete_preview(pid: str, request: Request,
+                         user: str = Depends(auth.require_admin)):
+    """Dry run: what DELETE would remove and what it would keep. Nothing changes."""
+    return projects.delete_preview(_project(pid))
+
+
 @router.delete("/{pid}")
 async def delete_project(pid: str, request: Request,
-                         user: str = Depends(auth.require_user_api)):
-    _csrf(request, {})
+                         user: str = Depends(auth.require_admin)):
+    """Really delete a project: its runs (files and history), its sources, its
+    style picks and the styles forked just for it. Admin only, and the body
+    must carry the project's exact name as `confirm` — the dialog makes the
+    user type it. Archiving is a PATCH {"archived": true}; nothing here
+    archives on your behalf any more.
+    """
+    try:
+        data = await request.json()
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    _csrf(request, data)
     p = _project(pid)
-    if p["slug"] == store.UNSORTED_SLUG:
-        raise HTTPException(status_code=400, detail="The Unsorted project cannot be deleted.")
-    if not store.project_delete(pid):
-        # Has runs → archive instead, and say so. History is never lost quietly.
-        store.project_update(pid, archived=True)
-        return {"ok": True, "archived": True, **_listing(request)}
-    return {"ok": True, "deleted": True, **_listing(request)}
+    if str(data.get("confirm") or "") != p["name"]:
+        raise HTTPException(status_code=400, detail="Type the project name exactly to confirm.")
+    try:
+        result = projects.delete_project(p)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    # The session may have been pointing at the project that just went away;
+    # `projects.current` falls back on its own once the row is gone.
+    return {"ok": True, "deleted": True, "removed": result, **_listing(request)}
 
 
 # --------------------------------------------------------------------------- #

@@ -640,9 +640,18 @@ def _skipped_from_results(results: list) -> list:
             reason = _STATUS_REASON.get(status_txt,
                                         "screenshot did not render" if status_txt == "ok"
                                         else status_txt)
+        link = r.get("post_link") or r.get("url") or ""
+        # A Facebook /share/p/ link answers "You must log in to continue" to
+        # every logged-out visitor — there is no post on the page to frame. The
+        # generic login_wall wording sends people hunting for a broken session;
+        # this one tells them the fix, which is to use the post's own URL.
+        if "login_wall" in (status_txt or "") and re.search(
+                r"facebook\.com/share/[pv]/", link, re.I):
+            reason = ("Facebook share links (/share/p/) are login-only. Open "
+                      "the post and copy the link from its timestamp instead")
         skipped.append({
             "account": r.get("account_name") or r.get("handle") or "",
-            "link": r.get("post_link") or r.get("url") or "",
+            "link": link,
             "reason": reason,
         })
     return skipped

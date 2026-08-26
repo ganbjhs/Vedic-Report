@@ -4,17 +4,21 @@
   "label": "Combined Report",
   "platform": "combined",
   "description": "The Twitter report, run over one mixed link list. Same page as the Twitter report — letter, one post per page, a 4.9x7.0in image box, 0.75in margins, the engagement bar cropped out — with the pages grouped by network: every X post first, then Instagram, then Facebook. The links pages follow the same order, one list per network under its own heading. Sheet row order is kept inside each group.",
-
   "capture": {
     "engine": "combined",
     "device_scale_factor": 1,
-    "viewport": {"width": 1280, "height": 2000},
+    "viewport": {
+      "width": 1280,
+      "height": 2000
+    },
     "keep_engagement": false,
     "workers": null
   },
-
   "image": {
-    "max_in": [4.9, 7.0],
+    "max_in": [
+      4.9,
+      7.0
+    ],
     "aspect": null,
     "fit": "fit",
     "background": "#FFFFFF",
@@ -23,23 +27,38 @@
     "shadow": null,
     "watermark": null
   },
-
   "page": {
     "size": "letter",
     "orientation": "portrait",
-    "grid": [1, 1],
-    "margins_in": [0.75, 0.75, 0.75, 0.75]
+    "grid": [
+      1,
+      1
+    ],
+    "margins_in": [
+      0.75,
+      0.75,
+      0.75,
+      0.75
+    ]
   },
-
   "content": {
     "cover": false,
     "header": "{title}",
     "footer": null,
-    "per_post_fields": ["category", "post_link"],
+    "per_post_fields": [
+      "category",
+      "post_link"
+    ],
     "metrics": null,
     "links_table": true,
-    "group_by_platform": ["x", "instagram", "facebook"]
+    "group_by_platform": [
+      "x",
+      "instagram",
+      "facebook"
+    ]
   },
-
-  "outputs": ["pdf", "docx", "pptx"]
+  "outputs": [
+    "pdf",
+    "docx"
+  ]
 }

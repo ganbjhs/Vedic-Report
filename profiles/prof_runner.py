@@ -126,6 +126,20 @@ def fb_storage_state(name="fb_state.json", label="Facebook"):
     return {"cookies": d.get("cookies", []), "origins": d.get("origins", [])}
 
 
+def merge_states(*states):
+    """One storage_state carrying every saved login. None entries are skipped;
+    all-None gives None, which means 'logged out' to Playwright."""
+    cookies, origins = [], []
+    for st in states:
+        if not st:
+            continue
+        cookies.extend(st.get("cookies") or [])
+        origins.extend(st.get("origins") or [])
+    if not cookies and not origins:
+        return None
+    return {"cookies": cookies, "origins": origins}
+
+
 def build_tasks(rows, platform="x") -> list:
     tasks = []
     for i, row in enumerate(rows, 1):
@@ -219,10 +233,16 @@ def main() -> None:
         state = fb_storage_state()
     elif engine == "instagram":
         state = fb_storage_state("ig_state.json", "Instagram")
+    elif engine == "combined":
+        # One context captures all three networks, so it needs all three
+        # logins. Cookies are scoped to their own domains, so merging them is
+        # safe — and without this a saved Facebook session was loaded for a
+        # Facebook-only run but silently ignored in the combined report, which
+        # is the run that actually mixes networks.
+        state = merge_states(x_storage_state(),
+                             fb_storage_state(),
+                             fb_storage_state("ig_state.json", "Instagram"))
     else:
-        # X (and combined, whose X links need it). Facebook / Instagram public
-        # posts run logged-out inside the same context; extra cookies for
-        # x.com do not reach the other domains.
         state = x_storage_state()
     workers = max(1, min(workers, len(tasks)))
     chunks = [[] for _ in range(workers)]

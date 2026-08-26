@@ -19,6 +19,7 @@ not from a mode the user has to pick — see RULEBOOK §18c.
 """
 import re
 import sys
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
@@ -45,6 +46,47 @@ _FB_POST_RE = re.compile(
     r"|share/[pv]/[^/?#]+"              # /share/p/<code>  share links
     r"|groups/[^/?#]+/(?:posts|permalink)/[^/?#]+"
     r")", re.I)
+
+
+# --------------------------------------------------------------------------- #
+# Tracking junk
+# --------------------------------------------------------------------------- #
+# Query keys that carry no identity — share-sheet noise, analytics, referrer
+# breadcrumbs. Removing them shortens what the report prints and makes two
+# copies of the same post compare equal.
+#
+# REMOVAL, not a whitelist: a key nobody anticipated is kept, so a parameter
+# that turns out to BE the post (facebook's fbid, story_fbid, v, comment_id)
+# can never be thrown away by accident.
+_JUNK_PARAMS = {
+    "s", "t", "si", "src", "source", "ref", "ref_src", "ref_url", "refsrc",
+    "ref_domain", "referrer", "feature", "app", "epa", "rdid", "share_url",
+    "igsh", "igshid", "img_index", "hl_at", "originalsubdomain",
+    "fbclid", "gclid", "dclid", "msclkid", "twclid", "yclid", "mkt_tok",
+    "mibextid", "sfnsn", "extid", "notif_id", "notif_t", "_rdr", "locale",
+    "wtsid", "paipv", "eav", "cft", "tn", "so", "eep", "is_from_rle",
+}
+_JUNK_PREFIXES = ("utm_", "__")
+
+
+def strip_tracking(url: str) -> str:
+    """A link with the noise taken out, everything meaningful kept.
+
+    `.../DcdBLhJsqYQ/?igsh=MWx…==`      -> `.../DcdBLhJsqYQ/`
+    `.../status/2092512?s=20&t=abc`     -> `.../status/2092512`
+    `.../photo.php?fbid=123&__cft__=x`  -> `.../photo.php?fbid=123`
+    """
+    url = (url or "").strip()
+    if "?" not in url and "#" not in url:
+        return url
+    parts = urlsplit(url)
+    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+            if k.lower() not in _JUNK_PARAMS
+            and not k.lower().startswith(_JUNK_PREFIXES)]
+    # A fragment is never part of a post's identity on these networks, and a
+    # bare "#" is pure noise from a copy-paste.
+    return urlunsplit((parts.scheme, parts.netloc, parts.path,
+                       urlencode(kept), ""))
 
 
 def is_x_url(url: str) -> bool:
@@ -102,10 +144,10 @@ def normalize_url(url: str, platform: str = "combined") -> str:
     survive, and an Instagram link only fails that test because the reader
     dropped its `?igsh=…`. Comparing raw text would report the row the user can
     see in the table right above as rejected."""
-    link = input_loader._clean_url(url)
+    link = strip_tracking(input_loader._clean_url(url))
     plat = platform_of(link) if platform == "combined" else platform
     if plat == "facebook":
-        return normalize_fb_url(link)
+        return strip_tracking(normalize_fb_url(link))
     if plat == "instagram":
         return normalize_ig_url(link)
     return link
@@ -237,7 +279,16 @@ def rows_from_grid(grid, platform: str = "x") -> list:
     platform, keeping that platform's links instead. Rows carry the platform
     (per row for 'combined'), and any metric columns the sheet has."""
     if platform == "x":
-        return input_loader._rows_from_grid(grid)
+        rows = input_loader._rows_from_grid(grid)
+        # The frozen reader keeps a link exactly as typed, so an X link pasted
+        # from the share sheet arrives as `…/status/123?s=20&t=hLQ…`. Cleaning
+        # its OUTPUT leaves the reader untouched and still gives every caller —
+        # the frozen Twitter pipeline included — a tidy link.
+        for r in rows:
+            clean = strip_tracking(r.get("link") or "")
+            r["link"] = clean
+            r["post_link"] = strip_tracking(r.get("post_link") or "") or clean
+        return rows
     keep = MATCHERS[platform]
     grid = [cells for cells in grid if any(cells)]
     if not grid:

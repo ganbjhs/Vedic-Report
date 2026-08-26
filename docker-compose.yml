@@ -72,6 +72,32 @@ services:
       start_period: 40s
 
   # ---------------------------------------------------------------------------
+  # Report bot — Telegram front door for Report Maker.
+  #
+  # Talks to the app over HTTPS through Caddy rather than to `web:8000`
+  # directly: with COOKIE_SECURE=1 the session cookie is marked Secure, and an
+  # HTTP client (unlike a browser on localhost) will not send it back over
+  # plain http — every CSRF check would fail as "this form expired".
+  # So tg/.env must carry APP_URL=https://report.vedictech.in
+  #
+  #   docker compose up -d --build tg
+  #   docker compose logs -f tg
+  # ---------------------------------------------------------------------------
+  tg:
+    build: ./tg
+    image: report-tgbot:latest
+    restart: unless-stopped
+    env_file: tg/.env              # TG_BOT_TOKEN, APP_URL, APP_USER, APP_PASSWORD
+    environment:
+      TG_DATA_DIR: /data
+    volumes:
+      # Each person's last project/style choice. A bind mount so a rebuild
+      # doesn't make everyone pick again.
+      - ./tg/data:/data
+    depends_on:
+      - web
+
+  # ---------------------------------------------------------------------------
   # OPTIONAL: Caddy for automatic HTTPS, for a server with nothing else on
   # ports 80/443.
   #

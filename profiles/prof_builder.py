@@ -147,6 +147,48 @@ def platform_label(slug: str) -> str:
     return PLATFORM_LABELS.get(slug, (slug or "Other").title())
 
 
+# What the small line above a group of pages says. Separate from
+# PLATFORM_LABELS because "X (Twitter) posts" reads badly and the team calls
+# them Twitter posts.
+SECTION_LABELS = {"x": "Twitter posts", "facebook": "Facebook posts",
+                  "instagram": "Instagram posts"}
+
+
+def section_label(slug: str) -> str:
+    return SECTION_LABELS.get(slug, f"{platform_label(slug)} posts")
+
+
+def header_plan(results, places, profile, title) -> dict:
+    """page number -> (report title or None, section line or None).
+
+    An ungrouped style keeps what it always did: the header on every page. A
+    grouped one prints the report title ONCE, on the first page, and a small
+    section line only where the network changes — so a reader sees "Testing"
+    at the start and "Instagram posts" at the moment the pages switch, instead
+    of the same title stamped on all of them.
+    """
+    content = profile["content"]
+    base = content.get("header")
+    if not base:
+        return {}
+    text = base.format(title=title)
+    if not platform_order(profile):
+        return {pl.page: (text, None) for pl in places}
+
+    plan, last, first = {}, object(), True
+    for r, pl in zip(results, places):
+        slot = plan.setdefault(pl.page, [None, None])
+        if first:
+            slot[0] = text
+            first = False
+        network = r.get("platform")
+        if network != last:
+            last = network
+            if slot[1] is None:
+                slot[1] = section_label(network)
+    return {page: tuple(v) for page, v in plan.items()}
+
+
 def platform_order(profile) -> list:
     """The platform order this style prints in, or [] for 'sheet order'.
 
@@ -254,6 +296,7 @@ def build_pdf(results, images, places, profile, title, out):
                             f"{len(results)} post(s)")
         c.showPage()
 
+    heads = header_plan(results, places, profile, title)
     current = -1
     cursor_y = None          # lowest ink on the current page, for the links table
     for r, img, place in zip(results, images, places):
@@ -264,12 +307,17 @@ def build_pdf(results, images, places, profile, title, out):
             current = place.page
             cursor_y = None
             paint_bg()
-            if content.get("header"):
+            head_title, head_section = heads.get(current, (None, None))
+            head_y = page_h - top * inch * 0.55
+            if head_title:
                 c.setFont("Helvetica-Bold", 13)
                 c.setFillColor(ink)
-                c.drawCentredString(page_w / 2,
-                                    page_h - top * inch * 0.55,
-                                    content["header"].format(title=title))
+                c.drawCentredString(page_w / 2, head_y, head_title)
+                head_y -= 15
+            if head_section:
+                c.setFont("Helvetica-Bold", 9)
+                c.setFillColor(grey)
+                c.drawCentredString(page_w / 2, head_y, head_section)
 
         # reportlab's origin is bottom-left; layout works from the top.
         x = place.x_in * inch
@@ -380,9 +428,19 @@ def build_docx(results, images, places, profile, title, out):
         run.font.size = Pt(16)
 
     per_page = registry.per_page(profile)
+    grouped = bool(platform_order(profile))
+    last_network = object()
     for i, (r, img, place) in enumerate(zip(results, images, places)):
         if i and i % per_page == 0:
             doc.add_page_break()
+        if grouped and r.get("platform") != last_network:
+            last_network = r.get("platform")
+            sp = doc.add_paragraph()
+            sp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            srun = sp.add_run(section_label(last_network))
+            srun.bold = True
+            srun.font.size = Pt(10)
+            srun.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.add_run().add_picture(img, width=Inches(place.w_in),
@@ -494,6 +552,7 @@ def build_pptx(results, images, places, profile, title, out):
         text(slide, f"{len(results)} post(s)", 0, H * 0.51, W, 16, 11, faint,
              align=PP_ALIGN.CENTER)
 
+    heads = header_plan(results, places, profile, title)
     slide, current = None, -1
     for r, img, place in zip(results, images, places):
         if place.page != current:
@@ -501,9 +560,14 @@ def build_pptx(results, images, places, profile, title, out):
                 footer(slide, current + 1)
             current = place.page
             slide = new_slide()
-            if content.get("header"):
-                text(slide, content["header"].format(title=title),
-                     0, top * INCH * 0.55 - 9, W, 18, 13, ink, bold=True,
+            head_title, head_section = heads.get(current, (None, None))
+            head_y = top * INCH * 0.55 - 9
+            if head_title:
+                text(slide, head_title, 0, head_y, W, 18, 13, ink, bold=True,
+                     align=PP_ALIGN.CENTER)
+                head_y += 16
+            if head_section:
+                text(slide, head_section, 0, head_y, W, 14, 9, grey, bold=True,
                      align=PP_ALIGN.CENTER)
         x, y = place.x_in * INCH, place.y_in * INCH
         w, h = place.w_in * INCH, place.h_in * INCH

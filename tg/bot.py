@@ -650,8 +650,23 @@ def progress_text(job: dict, b: dict) -> str:
     if st == "queued":
         body = "<i>Queued — waiting for a capture slot.</i>"
     elif st == "done":
-        body = (f"<b>Complete</b>   {total} post{'s' if total != 1 else ''}"
+        skipped = job.get("skipped") or []
+        kept = max(0, total - len(skipped))
+        body = (f"<b>Complete</b>   {kept} post{'s' if kept != 1 else ''}"
                 f" · {elapsed(job.get('elapsed') or 0)}")
+        if skipped:
+            # Silence here is how a missing Facebook post goes unnoticed until
+            # someone opens the PDF and counts.
+            lines = "\n".join(
+                "· " + html.escape(_short_link(x.get("link") or "")) + " — "
+                + html.escape(x.get("reason") or "not captured")
+                for x in skipped[:6])
+            more = (f"\n<i>…and {len(skipped) - 6} more</i>"
+                    if len(skipped) > 6 else "")
+            body += (f"\n\n<b>{len(skipped)} link"
+                     f"{'s' if len(skipped) != 1 else ''} not included</b>\n"
+                     f"<i>{lines}{more}</i>")
+        body += "\n\n<i>Choose a format below.</i>"
     elif st == "cancelled":
         body = "<b>Cancelled</b>"
     elif st in ("failed", "interrupted"):
@@ -668,6 +683,12 @@ def progress_text(job: dict, b: dict) -> str:
             tail += ", run by " + html.escape(b["ran_by"])
         tail += "</i>"
     return head + body + tail
+
+
+def _short_link(url: str) -> str:
+    """Enough of a URL to recognise it, not enough to wrap over three lines."""
+    u = re.sub(r"^https?://(www\.)?", "", url or "")
+    return u if len(u) <= 46 else u[:43] + "…"
 
 
 def format_kb(job_id: str, artifacts, sent: set):
@@ -691,8 +712,7 @@ async def run_job(ctx, cid: int, b: dict):
     try:
         res = await api.submit(report_name=name, report_type=b["style"]["slug"],
                                platform=b["platform"], text="\n".join(b["links"]),
-                               file=b["file"], project_id=b["project"]["id"],
-                               outputs=["pdf"])
+                               file=b["file"], project_id=b["project"]["id"])
         job_id = res.get("job_id")
         RUNS[job_id] = {"chat": cid, "sent": set(), "batch": b}
         LAST[cid] = job_id
@@ -709,12 +729,10 @@ async def run_job(ctx, cid: int, b: dict):
         if job.get("status") != "done":
             return await panel(ctx, cid, progress_text(job, b),
                                kb([("New report", "restart")]))
-        artifacts = job.get("artifacts") or []
-        if "pdf" in artifacts:
-            await send_artifact(ctx, cid, job_id, "pdf")
-        rest = format_kb(job_id, [k for k in artifacts if k != "pdf"],
-                         RUNS[job_id]["sent"])
-        await panel(ctx, cid, progress_text(job, b), rest)
+        # Nothing is pushed: the style builds every format it knows how to,
+        # and the reader takes the one they actually want.
+        await panel(ctx, cid, progress_text(job, b),
+                    format_kb(job_id, job.get("artifacts") or [], set()))
     except ApiError as e:
         await panel(ctx, cid, f"<b>{html.escape(name)}</b>\n"
                               f"<b>Failed</b>\n<i>{html.escape(str(e))}</i>",

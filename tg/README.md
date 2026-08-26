@@ -1,40 +1,71 @@
 # Report bot — Telegram front door for Report Maker
 
-Send it post links, it sends back the PDF. One job, end to end, with no
-changes to `webapp/`: the bot signs in as an ordinary Report Maker account and
-uses the same `/api` endpoints the browser uses.
+Send it post links, it sends back the PDF. No changes to `webapp/`: the bot
+signs in as an ordinary Report Maker account and uses the same `/api`
+endpoints the browser uses — so every run also shows up in History, attributed
+to `reportbot`.
 
 ```
 Telegram ──► tg/bot.py ──HTTP──► Report Maker /api ──► capture ──► PDF ──► Telegram
 ```
 
-## What it does
+## The conversation
 
-* **Links are read out of ordinary text** — several to a line, inside a
-  sentence, in brackets, with a trailing full stop, or pasted without
-  `https://`. A title and its links can share one message; the words become
-  the report name and the links become the batch.
-* **Send links however they arrive** — one message with twenty, or twenty
-  forwarded messages with one each. The bot collects them and keeps a live
-  count showing the project and style it will use, so **Run now** is never a
-  leap of faith. Duplicates across messages are counted once.
-* **Run now starts the job** — one tap, no confirmation step.
-* **Nothing is lost by waiting.** If you don't tap anything, the batch closes
-  itself after 30 seconds of quiet and becomes a confirm card — and links that
-  arrive *after* that are still added to the same batch, not to a new one.
-* **Type the report name as its own message first** if you like — it's
-  remembered and used when the links follow.
-* Or upload `.xlsx` / `.csv` / `.txt` instead; a file closes any open batch.
-* **Everything is a tap.** Project and style are inline-keyboard pickers, and
-  your last choice is remembered per person (`tg/data/prefs.json`), so the
-  second report is one tap. A picker with a single answer is skipped entirely.
-* It runs `/api/preview` first, so you see **what would be captured** —
-  link count, duplicates removed, rows skipped — before anything is spent.
-* Tap **Run**. One message edits itself with a progress bar until the job ends.
-* The PDF arrives as a document. Word / PowerPoint / screenshots appear as
-  buttons and are fetched on demand — no re-capture.
-* First line of your message becomes the report name. No line, no question:
-  it names it `Report DD-MM-YY HH:MM`.
+```
+/start    →  New report                        [Change project] [Change style]
+             Project   Kashi Report            [Continue]
+             Style     Combined Report
+
+Continue  →  Send the post links.
+
+links     →  12 links received                 [Yes, continue] [Not yet]
+             Finished adding?
+
+Not yet   →  12 links                          (asks again when more arrive)
+             Still listening — send the rest.
+
+Yes       →  Name this report                  [Use today's date]
+
+name      →  July fake accounts                [Run report] [Edit]
+
+             Project   Kashi Report
+             Style     Combined Report
+             Links     12   2 duplicates removed
+             Time      about 2 minutes
+
+             Requested by @tilak
+
+Edit      →  What needs changing?
+             [Project] [Style] [Name] [Add links] [Back]
+
+Run       →  ████████░░░░░░░░   50%             [Stop]
+             Capturing posts · 6 of 12
+
+          →  Complete   12 posts · 1m 48s      [Word] [PowerPoint] [Screenshots]
+             + the PDF
+```
+
+One short question at a time, buttons for the answers, the whole exchange in a
+single message that keeps being rewritten. Formats other than PDF build on
+demand from the screenshots already taken — no re-capture.
+
+**Attribution.** Whoever sends the first link is recorded as the requester and
+printed on the summary, the progress and the finished report. If someone else
+presses Run, both names appear — useful in a shared group.
+
+**Commands.** `/start` builds a report · `/last` brings back the most recent
+one from this chat with its download buttons · `/cancel` discards the one in
+progress.
+
+**Links** are read out of ordinary text: several to a line, inside a sentence,
+in brackets, with a trailing full stop, or pasted without `https://`.
+Duplicates across messages count once. A `.xlsx` / `.csv` / `.txt` upload works
+too and skips straight to the summary.
+
+**Project and style** default to whatever the dashboard has selected, then to
+the chat's last choice. A picker with one answer is skipped. The **platform
+comes from the style** — a Twitter style captures X links, a Combined style
+takes mixed — which is the pairing the server itself enforces.
 
 ## Using it in a group
 

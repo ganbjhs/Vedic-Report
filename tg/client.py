@@ -254,6 +254,11 @@ class ReportMaker:
             raise ApiError(self._detail(r))
         return r.json()
 
+    async def cancel(self, job_id: str) -> None:
+        r = await self._post(f"/api/jobs/{job_id}/cancel")
+        if r.status_code not in (200, 202):
+            raise ApiError(self._detail(r))
+
     async def status(self, job_id: str) -> dict:
         r = await self._get(f"/api/jobs/{job_id}")
         if r.status_code != 200:

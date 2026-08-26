@@ -767,8 +767,18 @@ async def _post_init(app: Application):
     BOT_USERNAME = me.username or ""
     log.info("i am @%s", BOT_USERNAME)
     api: ReportMaker = app.bot_data["api"]
-    await api.login()
-    log.info("signed in to %s as %s", api.base, api.username)
+    try:
+        await api.login()
+        log.info("signed in to %s as %s", api.base, api.username)
+    except ApiError as e:
+        # Never die here. `restart: unless-stopped` would bring us straight
+        # back, and a few seconds of that trips Report Maker's own login rate
+        # limiter — the bot locks itself out of the app it is trying to use.
+        # The client signs in lazily on first use, so we start anyway and the
+        # real reason reaches whoever messages the bot.
+        log.error("could not sign in to Report Maker yet: %s", e)
+        log.error("the bot is running; fix the credentials and it will "
+                  "connect on the next message — no restart needed.")
     await app.bot.set_my_commands([
         ("start", "How this works, and what it's set to"),
         ("project", "Choose the project runs go into"),

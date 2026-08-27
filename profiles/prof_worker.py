@@ -17,6 +17,24 @@ _MISSING_METRICS = {"followers": "—", "reactions": "—", "comments": "—",
                     "reach": "—", "shares": "—"}
 
 
+def _fb_state(storage_state):
+    """The Facebook part of a merged storage_state, or None.
+
+    A combined run's state carries the X login too; that must not ride into
+    the Facebook context (nothing there needs it, and a logged-out Facebook
+    visit should look like one). Only cookies for facebook.com survive, and an
+    empty result means 'no storage_state at all' to the caller."""
+    if not storage_state:
+        return None
+    cookies = [c for c in (storage_state.get("cookies") or [])
+               if "facebook.com" in (c.get("domain") or "")]
+    origins = [o for o in (storage_state.get("origins") or [])
+               if "facebook.com" in (o.get("origin") or "")]
+    if not cookies and not origins:
+        return None
+    return {"cookies": cookies, "origins": origins}
+
+
 def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
               engine, keep_engagement=False, fb_path=None, ig_path=None):
     """Capture one chunk of links with `engine`
@@ -59,16 +77,45 @@ def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
             plat = t.get("platform") or engine
             if plat not in engines and not influencer:
                 plat = next(iter(engines), "x")
+            # Facebook gets a NEW context for every post: no cookies, no
+            # storage, no HTTP cache carried over from the previous link (or
+            # from the X session in a combined run). Facebook meters
+            # logged-out visitors on the cookies it hands out, and the
+            # second-or-third public post in one context starts answering with
+            # a /login redirect; a fresh context is a first visit every time.
+            # A saved sessions/fb_state.json (rare, admin-provided) is the one
+            # thing that is carried in — see `_fb_state`.
+            fb_ctx = fb_page = None
+            work_page = page
+            if plat == "facebook" and not influencer:
+                try:
+                    fb_kwargs = dict(ctx_kwargs)
+                    fb_state = _fb_state(storage_state)
+                    if fb_state:
+                        fb_kwargs["storage_state"] = fb_state
+                    fb_ctx = browser.new_context(**fb_kwargs)
+                    fb_page = fb_ctx.new_page()
+                    work_page = fb_page
+                except Exception as e:      # rule 17: say so, use the shared page
+                    print(f"[worker] fresh Facebook context failed ({e}); "
+                          f"using the shared one", flush=True)
+                    fb_ctx = fb_page = None
             try:
                 if influencer:
                     res = inf_capture.capture(page, t["capture_url"], shot)
                 else:
-                    res = engines[plat](page, t["capture_url"], shot)
+                    res = engines[plat](work_page, t["capture_url"], shot)
             except Exception as e:     # network/timeout — flag it, keep going
                 res = {"url": t["capture_url"], "status": f"error: {e}",
                        "screenshot": None, "handle": ""}
                 if influencer:
                     res["metrics"] = dict(_MISSING_METRICS)
+            finally:
+                if fb_ctx is not None:
+                    try:
+                        fb_ctx.close()       # cookies, storage and cache go with it
+                    except Exception:
+                        pass
             res["platform"] = "x" if influencer else plat
             res.update({"idx": t["idx"], "category": t["category"],
                         "account_name": t["account"],

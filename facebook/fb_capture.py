@@ -15,9 +15,19 @@ What a logged-out visitor gets from Facebook, and what this does about it:
     pixels AND turns scrolling into a no-op.
   * a **cookie banner** — "Decline optional cookies" / "Allow all cookies" is
     clicked so it never sits in frame.
-  * a **redirect to /login** or "You must log in to continue" — reported as
-    `status="login_wall"`; not screenshotted.
-  * "This content isn't available right now" — `status="not_found"`.
+  * a **redirect to /login** or "You must log in to continue" — NOT taken at
+    face value. Facebook meters logged-out visitors on the cookies it hands out
+    (`datr`, `sb`, …) and starts redirecting public permalinks to /login after a
+    few visits from one browser; a post that opens fine in a private window
+    is "login-only" on the server for that reason alone. So the engine wipes
+    every Facebook cookie and storage item before each visit (`_reset_state`),
+    retries the permalink once more from that clean slate, and then asks
+    Facebook's **public post plugin** (`/plugins/post.php?href=…`, the embed
+    every website uses) for the same post — it renders public posts with no
+    account and no dialogs. Only when all of that fails is the link reported
+    as `status="login_wall"`, with `detail` saying what was tried.
+  * "This content isn't available right now" — `status="not_found"`, after
+    the same plugin retry (Facebook shows that text to a metered visitor too).
 
 Framing: Facebook's permalink page renders the post as `div[role="article"]`
 with the comment thread as further `role="article"` nodes below and INSIDE it.
@@ -53,6 +63,30 @@ _GONE_PHRASES = ("this content isn't available right now",
 # Buttons that close a sheet politely, in the order worth trying.
 _CLOSE_LABELS = ("Close", "Not now", "Not Now", "Decline optional cookies",
                  "Only allow essential cookies", "Allow all cookies")
+
+# The login sheet's own close control, found by SHAPE rather than label:
+# Facebook labels it "Close" in English and "बंद करें" in Hindi, and the
+# viewer's language is the exit IP's, not the context's (RULEBOOK §18b). It is
+# the small square [role=button] sitting in the top-right corner of a dialog
+# that does not contain the post. Returns how many were clicked.
+_JS_CLICK_CORNER_CLOSE = r"""
+() => {
+  let clicked = 0;
+  document.querySelectorAll('[role="dialog"]').forEach(d => {
+    if (d.querySelector('div[role="article"]')) return;
+    const dr = d.getBoundingClientRect();
+    if (dr.width < 200 || dr.height < 100) return;
+    const btns = [...d.querySelectorAll('[role="button"], button')].filter(b => {
+      const r = b.getBoundingClientRect();
+      if (r.width < 20 || r.width > 56 || r.height < 20 || r.height > 56) return false;
+      if (Math.abs(r.width - r.height) > 12) return false;
+      return r.top - dr.top <= 72 && dr.right - r.right <= 72;
+    });
+    if (btns.length) { btns[0].click(); clicked++; }
+  });
+  return clicked;
+}
+"""
 
 _JS_DISMISS = r"""
 () => {
@@ -187,13 +221,72 @@ def _click_labels(page, labels, timeout=700) -> bool:
 
 
 def dismiss(page) -> dict:
-    """Close, then remove, Facebook's logged-out layers; unlock scrolling."""
+    """Close, then remove, Facebook's logged-out layers; unlock scrolling.
+
+    Four passes, politest first: the labelled close / "Not now" / cookie
+    buttons, the sheet's corner close control found by shape (any language),
+    Escape, and finally outright removal of whatever is still on top — the
+    dialog, its backdrop, the bottom login bar, the fixed banner — with the
+    body's scroll-lock released. Each pass is a no-op when there is nothing
+    for it to do, so calling this again later is cheap."""
     _click_labels(page, _CLOSE_LABELS)
+    corner = 0
+    try:
+        corner = int(page.evaluate(_JS_CLICK_CORNER_CLOSE) or 0)
+        if corner:
+            page.wait_for_timeout(300)
+    except Exception:
+        pass
+    if overlay_present(page):
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(250)
+        except Exception:
+            pass
     try:
         removed = page.evaluate(_JS_DISMISS)
     except Exception:
         removed = []
+    if corner:
+        removed = ["corner_close"] * corner + list(removed)
     return {"removed": removed}
+
+
+def _reset_state(page) -> None:
+    """Make the next Facebook visit a FIRST visit.
+
+    Drops every cookie Facebook set (never anything for another site — a
+    combined run's X login lives in the same context), and clears the page's
+    local/session storage when it is already on facebook.com. The HTTP cache
+    cannot be cleared from inside a context; `prof_worker` gives each Facebook
+    post its own context for that. Never raises."""
+    ctx = page.context
+    try:
+        try:
+            ctx.clear_cookies(domain=re.compile(r"facebook\.com|fbcdn\.net|facebook\.net"))
+        except TypeError:                      # playwright < 1.43: no filter
+            keep = [c for c in ctx.cookies()
+                    if not re.search(r"facebook\.com|fbcdn\.net|facebook\.net",
+                                     c.get("domain") or "")]
+            ctx.clear_cookies()
+            if keep:
+                ctx.add_cookies(keep)
+    except Exception as e:
+        print(f"[fb] could not clear cookies: {e}", flush=True)
+    try:
+        if "facebook.com" in (page.url or ""):
+            page.evaluate("""() => {
+              try { localStorage.clear(); } catch (e) {}
+              try { sessionStorage.clear(); } catch (e) {}
+              try { (indexedDB.databases ? indexedDB.databases() : Promise.resolve([]))
+                      .then(dbs => dbs.forEach(d => d.name && indexedDB.deleteDatabase(d.name))); } catch (e) {}
+            }""")
+    except Exception:
+        pass
+    try:
+        ctx.clear_permissions()
+    except Exception:
+        pass
 
 
 def overlay_present(page) -> bool:
@@ -516,6 +609,7 @@ def _reel_alternatives(url: str) -> list:
 
 def _capture_plugin(page, url: str, shot_path, res: dict) -> dict:
     """Screenshot the public video-plugin page (no article/dialogs there)."""
+    _reset_state(page)
     _force_english(page)
     page.goto(_en_url(url), wait_until="domcontentloaded", timeout=45000)
     page.wait_for_timeout(2500)
@@ -559,28 +653,213 @@ def _capture_plugin(page, url: str, shot_path, res: dict) -> dict:
     return res
 
 
+_VIDEO_RE = re.compile(r"facebook\.com/(?:[^/?#]+/videos/|watch/?\?v=|video\.php\?v=)(\d+)", re.I)
+_PLUGIN_VIEWPORT_W = 560                    # the embed's card width; the page fills its window
+
+
+def _post_plugin_url(url: str) -> str:
+    """Facebook's public post embed for `url` — `/plugins/post.php?href=…`.
+
+    This is the page every website's "embedded Facebook post" is an iframe of.
+    It is served to anyone, with no login dialog, no cookie banner and no
+    metering, for any post whose privacy is Public: header (Page name, date),
+    text, media and the reactions / comments / shares counts. Verified against
+    the two `/<page id>/posts/<pfbid>` links the permalink refused on
+    2026-08-27 — both rendered here in full. A non-public post says "This
+    content isn't available" on it, which is the honest answer."""
+    from urllib.parse import quote, urlsplit, urlunsplit
+    parts = urlsplit(url)
+    clean = urlunsplit(parts._replace(fragment=""))
+    return ("https://www.facebook.com/plugins/post.php?href="
+            + quote(clean, safe="") + "&show_text=true&width=500")
+
+
+def _video_plugin_url(url: str):
+    m = _VIDEO_RE.search(url)
+    if not m:
+        return None
+    from urllib.parse import quote
+    canonical = f"https://www.facebook.com/watch/?v={m.group(1)}"
+    return ("https://www.facebook.com/plugins/video.php?href="
+            + quote(canonical, safe="") + "&show_text=true&width=560&height=720")
+
+
+def _alternatives(url: str, status: str) -> list:
+    """Other addresses of the same post a logged-out visitor may get, in the
+    order worth trying. Reels keep their /watch → video-plugin ladder; every
+    other post gets the public post plugin (videos: the video plugin first)."""
+    if _REEL_RE.search(url):
+        return _reel_alternatives(url)
+    if status == "ok":
+        return []
+    alts = []
+    vp = _video_plugin_url(url)
+    if vp:
+        alts.append(vp)
+    alts.append(_post_plugin_url(url))
+    return alts
+
+
 def capture(page, url: str, shot_path, keep_engagement: bool = True) -> dict:
-    """One Facebook post. A /reel/ link that a logged-out visitor cannot see is
-    retried on its /watch page and then on the public video plugin — see
-    `_reel_alternatives` — before it is reported unavailable."""
-    res = _capture_once(page, url, shot_path, keep_engagement)
-    if res["status"] in ("not_found", "login_wall") and _REEL_RE.search(url):
-        for alt in _reel_alternatives(url):
-            try:
-                if "/plugins/video.php" in alt:
-                    r2 = _capture_plugin(page, alt, Path(shot_path),
-                                         dict(res, status="not_found"))
-                else:
-                    r2 = _capture_once(page, alt, shot_path, keep_engagement)
-            except Exception as e:                       # rule 17: say so, try the next
-                print(f"[fb] reel fallback {alt} failed: {e}", flush=True)
-                continue
+    """One Facebook post, with every way a logged-out visitor has of seeing it.
+
+    Ladder (each rung only when the one before it did not render):
+      1. the permalink, from a clean slate (`_reset_state` runs inside);
+      2. on a login wall: the permalink ONCE MORE from a clean slate — a fresh
+         `datr` cookie is often the whole difference, since Facebook meters
+         logged-out visitors per cookie and the first visit is free;
+      3. the public embed: for reels the /watch page then the video plugin,
+         for everything else the post plugin (`_post_plugin_url`).
+    `res["via"]` names the rung that rendered; `res["detail"]` says what was
+    tried when nothing did, so the report's skipped list can say so."""
+    try:
+        res = _capture_once(page, url, shot_path, keep_engagement)
+    except Exception as e:                               # timeout, net — the
+        print(f"[fb] permalink failed: {e}", flush=True)  # embed may still work
+        res = {"url": url, "status": f"error: {e}", "handle": "", "screenshot": None,
+               "text": "", "overlay": False, "frame_ok": True, "parent_lost": False}
+    if res["status"] == "ok":
+        return res
+    tried = [f"permalink: {res['status']}"]
+
+    if res["status"] == "login_wall":
+        try:
+            r2 = _capture_once(page, url, shot_path, keep_engagement)
+        except Exception as e:                           # rule 17: say so, go on
+            print(f"[fb] permalink retry failed: {e}", flush=True)
+            r2 = None
+        if r2 is not None:
             if r2["status"] == "ok":
-                r2["url"] = url                            # the report prints the sheet's link
-                r2["via"] = alt
-                print(f"[fb] reel rendered via {alt.split('?')[0]}", flush=True)
+                r2["via"] = "permalink-retry"
+                print("[fb] rendered on the second visit from a clean slate", flush=True)
                 return r2
+            tried.append(f"permalink again after clearing cookies: {r2['status']}")
+            res = r2 if r2["status"] != "error" else res
+
+    for alt in _alternatives(url, res["status"]):
+        short = alt.split("?")[0]
+        try:
+            if "/plugins/post.php" in alt:
+                r2 = _capture_post_plugin(page, alt, Path(shot_path),
+                                          dict(res, status="not_found"), keep_engagement)
+            elif "/plugins/video.php" in alt:
+                r2 = _capture_plugin(page, alt, Path(shot_path),
+                                     dict(res, status="not_found"))
+            else:
+                r2 = _capture_once(page, alt, shot_path, keep_engagement)
+        except Exception as e:                           # rule 17: say so, try the next
+            print(f"[fb] fallback {short} failed: {e}", flush=True)
+            tried.append(f"{short}: error")
+            continue
+        if r2["status"] == "ok":
+            r2["url"] = url                              # the report prints the sheet's link
+            r2["via"] = alt
+            print(f"[fb] rendered via {short}", flush=True)
+            return r2
+        tried.append(f"{short}: {r2['status']}")
+
+    res["detail"] = "; ".join(tried)
+    print(f"[fb] not rendered — {res['detail']}", flush=True)
     return res
+
+
+# The post plugin's card. `._4-u2` is the classic card class Facebook still
+# ships on the plugin page (2026-08); the message block carries
+# `data-testid="post_message"`. Both fall back to the document itself, because
+# on this page the document IS the card: its height is the card's height.
+_JS_PLUGIN_CARD = r"""
+(keepEngagement) => {
+  const R = el => el.getBoundingClientRect();
+  const card = document.querySelector('._4-u2') || document.body;
+  const cr = R(card);
+  let bottom = Math.max(cr.bottom, document.body.scrollHeight);
+  let cut = 'plugin_card';
+  if (!keepEngagement) {
+    // the reactions · comments · shares line is the last short full-width row
+    const msg = document.querySelector('[data-testid="post_message"]');
+    const floor = msg ? R(msg).bottom : cr.top + 60;
+    let top = null;
+    card.querySelectorAll('div').forEach(d => {
+      const r = R(d);
+      if (r.width < cr.width * 0.8 || r.height < 14 || r.height > 60) return;
+      if (r.top < floor || r.bottom < bottom - 48) return;
+      if (top === null || r.top < top) top = r.top;
+    });
+    if (top !== null && top > cr.top + 60) { bottom = top; cut = 'plugin_above_metrics'; }
+  }
+  return {x: cr.x, y: cr.y, width: cr.width, height: bottom - cr.y, cut};
+}
+"""
+
+
+def _capture_post_plugin(page, url: str, shot_path, res: dict,
+                         keep_engagement: bool = True) -> dict:
+    """Screenshot the public post-plugin page (no article, no dialogs).
+
+    The plugin fills whatever window it is in, so the viewport is narrowed to
+    the embed's card width for the visit and put back afterwards — the shared
+    context's other engines expect the profile's viewport."""
+    old_vp = page.viewport_size
+    try:
+        try:
+            page.set_viewport_size({"width": _PLUGIN_VIEWPORT_W,
+                                    "height": (old_vp or {}).get("height") or 1600})
+        except Exception as e:
+            print(f"[fb] could not narrow the viewport for the plugin: {e}", flush=True)
+        _reset_state(page)
+        _force_english(page)
+        page.goto(_en_url(url), wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(2500)
+        body = _body_text(page)
+        if any(p in body[:2000] for p in _GONE_PHRASES) or \
+                any(p in body[:400] for p in _LOGIN_PHRASES) or "log in" in body[:200]:
+            return res
+        try:
+            page.locator("body").first.wait_for(timeout=3000)
+        except Exception:
+            pass
+        _wait_media(page, page.locator("body").first)
+        try:
+            info = page.evaluate(_JS_PLUGIN_CARD, keep_engagement)
+        except Exception as e:
+            print(f"[fb] plugin card not measured: {e}", flush=True)
+            return res
+        if not info or info["height"] < 80 or info["width"] < 200:
+            return res
+        clip = {"x": max(0, info["x"]), "y": max(0, info["y"]),
+                "width": info["width"], "height": max(60, min(info["height"], 6000))}
+        shot_path.parent.mkdir(parents=True, exist_ok=True)
+        _screenshot_clip(page, clip, shot_path)
+        res.update({"screenshot": str(shot_path), "status": "ok", "frame_ok": True,
+                    "cut": info.get("cut", "plugin_card"), "overlay": False})
+        card = page.locator("._4-u2").first
+        if not card.count():
+            card = page.locator("body").first
+        res["handle"] = ""
+        try:
+            res["handle"] = _clean_name(card.evaluate(_JS_PAGE_NAME))
+        except Exception:
+            pass
+        if not res["handle"]:
+            try:    # every facebook.com link in order; first that is a name
+                links = card.locator("a[href*='facebook.com/']")
+                for i in range(min(links.count(), 8)):
+                    res["handle"] = _clean_name(links.nth(i).inner_text(timeout=600))
+                    if res["handle"]:
+                        break
+            except Exception:
+                pass
+        try:
+            res["text"] = card.inner_text(timeout=800)[:500]
+        except Exception:
+            pass
+        return res
+    finally:
+        if old_vp:
+            try:
+                page.set_viewport_size(old_vp)
+            except Exception:
+                pass
 
 
 def _capture_comment(page, article, comment_id: str, shot_path, res: dict):
@@ -625,18 +904,21 @@ def _capture_once(page, url: str, shot_path, keep_engagement: bool = True) -> di
     res = {"url": url, "status": "error", "handle": "", "screenshot": None,
            "text": "", "overlay": False, "frame_ok": True, "parent_lost": False}
     shot_path = Path(shot_path)
+    _reset_state(page)                      # no cookies, no storage: a first visit
     _force_english(page)
     page.goto(_en_url(url), wait_until="domcontentloaded", timeout=45000)
     page.wait_for_timeout(2500)
 
     if re.search(r"facebook\.com/(login|checkpoint|recover)", page.url):
         res["status"] = "login_wall"
+        res["detail"] = "redirected to " + page.url.split("?")[0]
         return res
     dismiss(page)
     page.wait_for_timeout(600)
     body = _body_text(page)
     if any(p in body[:3000] for p in _LOGIN_PHRASES) and not page.locator(_ARTICLE).count():
         res["status"] = "login_wall"
+        res["detail"] = "page said to log in and showed no post"
         return res
     if any(p in body[:3000] for p in _GONE_PHRASES) and not page.locator(_ARTICLE).count():
         res["status"] = "not_found"

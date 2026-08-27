@@ -641,6 +641,19 @@ def _skipped_from_results(results: list) -> list:
                                         "screenshot did not render" if status_txt == "ok"
                                         else status_txt)
         link = r.get("post_link") or r.get("url") or ""
+        # The Facebook engine tries the permalink from a clean slate (no
+        # cookies, no session), the permalink again, and then Facebook's
+        # public post embed before it gives up — `detail` is that ladder. So a
+        # Facebook login_wall here is never "the server's session"; the
+        # generic X wording would send people hunting for one.
+        if status_txt in ("login_wall", "not_found") and r.get("detail") and \
+                "facebook.com" in link.lower():
+            reason = ("Facebook did not show this post to a logged-out visitor "
+                      "on the post page or through its public embed, even with "
+                      "cookies and session cleared before each try "
+                      f"({r['detail']}). Check the post's privacy is Public; "
+                      "if it opens in a private browser window, Facebook is "
+                      "rate-limiting the server's address — rerun later")
         # A Facebook /share/p/ link answers "You must log in to continue" to
         # every logged-out visitor — there is no post on the page to frame. The
         # generic login_wall wording sends people hunting for a broken session;

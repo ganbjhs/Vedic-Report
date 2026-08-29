@@ -387,6 +387,20 @@ def build_pdf(results, images, places, profile, title, out):
             paint_bg()
             cursor_y = page_h - top * inch + 14
         y = cursor_y - 26
+        # Rendered as the Twitter report's bordered grid: a light-blue header
+        # cell reading "Link", then one framed row per URL, blue and clickable.
+        row_h = 16
+        tbl_x = left * inch
+        tbl_w = page_w - (left + right) * inch
+        header_fill = colors.HexColor("#D9E8F5")
+        grid = colors.HexColor("#BBBBBB")
+
+        def _row(text_y):
+            """One bordered cell spanning the table width, top edge at text_y."""
+            c.setStrokeColor(grid)
+            c.setLineWidth(0.5)
+            c.rect(tbl_x, text_y - row_h, tbl_w, row_h, stroke=1, fill=0)
+
         for n, (heading, links) in enumerate(link_sections(results, profile)):
             if n:
                 # A heading with no room for its own links under it is an
@@ -400,22 +414,34 @@ def build_pdf(results, images, places, profile, title, out):
                     y -= 10
             c.setFont("Helvetica-Bold", 14)
             c.setFillColor(ink)
-            c.drawString(left * inch, y, heading)
-            y -= 18
+            c.drawString(tbl_x, y, heading)
+            y -= 10
+            # header row
+            c.setFillColor(header_fill)
+            c.setStrokeColor(grid)
+            c.setLineWidth(0.5)
+            c.rect(tbl_x, y - row_h, tbl_w, row_h, stroke=1, fill=1)
+            c.setFont("Helvetica-Bold", 8)
+            c.setFillColor(accent)
+            c.drawString(tbl_x + 4, y - row_h + 5, "Link")
+            y -= row_h
             c.setFont("Helvetica", 8)
             for link in links:
-                if not link:
-                    continue
-                if y < bottom * inch:
+                if y - row_h < bottom * inch:
                     c.showPage()
                     paint_bg()
                     y = page_h - top * inch
                     c.setFont("Helvetica", 8)
-                c.setFillColor(accent)
-                c.drawString(left * inch, y, link[:150])
-                c.linkURL(link, (left * inch, y - 2,
-                                 page_w - right * inch, y + 8), relative=0)
-                y -= 12
+                _row(y)
+                if link:
+                    c.setFillColor(accent)
+                    c.drawString(tbl_x + 4, y - row_h + 5, link[:150])
+                    c.linkURL(link, (tbl_x, y - row_h, tbl_x + tbl_w, y),
+                              relative=0)
+                else:
+                    c.setFillColor(grey)
+                    c.drawString(tbl_x + 4, y - row_h + 5, "—")
+                y -= row_h
         c.showPage()
     elif places:
         c.showPage()

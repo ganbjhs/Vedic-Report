@@ -133,6 +133,22 @@ def shown_link(r) -> str:
     return "" if link.startswith("file://") else link
 
 
+def caption_value(r, field) -> str:
+    """One caption field as it should PRINT, not as it is stored.
+
+    "Uncategorized" is the loader's internal default for a sheet row with no
+    Category — a placeholder, not something anyone typed. Printing it above
+    the link reads like a verdict on the post, so here (as in the webapp
+    preview and `tpl_builder._field_value`) it renders as nothing; a real
+    category still shows."""
+    if field == "post_link":
+        return shown_link(r)
+    value = r.get(field) or ""
+    if field in ("category", "section") and str(value).strip() == "Uncategorized":
+        return ""
+    return str(value)
+
+
 # --------------------------------------------------------------------------- #
 # Grouping — a combined report's one ordering rule
 # --------------------------------------------------------------------------- #
@@ -327,9 +343,7 @@ def build_pdf(results, images, places, profile, title, out):
 
         caption_y = y - 11
         for field in content.get("per_post_fields") or []:
-            value = r.get(field) or ""
-            if field == "post_link":
-                value = shown_link(r)
+            value = caption_value(r, field)
             if not value:
                 continue
             c.setFont("Helvetica", 7.5)
@@ -446,7 +460,7 @@ def build_docx(results, images, places, profile, title, out):
         p.add_run().add_picture(img, width=Inches(place.w_in),
                                 height=Inches(place.h_in))
         for field in content.get("per_post_fields") or []:
-            value = shown_link(r) if field == "post_link" else (r.get(field) or "")
+            value = caption_value(r, field)
             if not value:
                 continue
             cp = doc.add_paragraph()
@@ -574,7 +588,7 @@ def build_pptx(results, images, places, profile, title, out):
         slide.shapes.add_picture(img, Pt(x), Pt(y), Pt(w), Pt(h))
         cap_y = y + h + 3
         for field in content.get("per_post_fields") or []:
-            value = shown_link(r) if field == "post_link" else (r.get(field) or "")
+            value = caption_value(r, field)
             if not value:
                 continue
             is_link = field == "post_link"

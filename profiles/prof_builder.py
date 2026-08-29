@@ -347,12 +347,19 @@ def build_pdf(results, images, places, profile, title, out):
             if not value:
                 continue
             c.setFont("Helvetica", 7.5)
-            c.setFillColor(accent if field == "post_link"
-                           else grey)
-            c.drawString(x, caption_y, str(value)[:110])
             if field == "post_link":
+                # "Link — " label in grey, the URL itself in the accent blue —
+                # the same caption the classic Twitter report prints.
+                c.setFillColor(grey)
+                c.drawString(x, caption_y, "Link — ")
+                lw = c.stringWidth("Link — ", "Helvetica", 7.5)
+                c.setFillColor(accent)
+                c.drawString(x + lw, caption_y, str(value)[:110])
                 c.linkURL(value, (x, caption_y - 2, x + place.w_in * inch,
                                   caption_y + 8), relative=0)
+            else:
+                c.setFillColor(grey)
+                c.drawString(x, caption_y, str(value)[:110])
             caption_y -= 10
 
         for label, key in content.get("metrics") or []:
@@ -464,6 +471,9 @@ def build_docx(results, images, places, profile, title, out):
             if not value:
                 continue
             cp = doc.add_paragraph()
+            if field == "post_link":
+                pre = cp.add_run("Link — ")
+                pre.font.size = Pt(8)
             run = cp.add_run(str(value))
             run.font.size = Pt(8)
             if field == "post_link":

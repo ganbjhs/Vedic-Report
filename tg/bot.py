@@ -34,12 +34,14 @@ from telegram import (InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
 from telegram.constants import ChatType, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
-                          ContextTypes, MessageHandler, filters)
+                          ContextTypes, MessageHandler, TypeHandler, filters)
 
 try:                                      # `python -m tg.bot`
-    from .client import ApiError, ReportMaker, find_links
+    from .client import (ApiError, ReportMaker, TokenClient, acting_as,
+                          find_links)
 except ImportError:                       # `python bot.py`
-    from client import ApiError, ReportMaker, find_links
+    from client import (ApiError, ReportMaker, TokenClient, acting_as,
+                        find_links)
 
 log = logging.getLogger("reportbot")
 HERE = Path(__file__).resolve().parent
@@ -66,6 +68,12 @@ BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
 APP_URL = os.environ.get("APP_URL", "http://127.0.0.1:8000").strip()
 APP_USER = os.environ.get("APP_USER", "").strip()
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
+# v3.1: a scoped token from Admin -> Bots. When it is set the bot stops signing
+# in as an ordinary account and talks to /v1 instead, carrying an X-Actor
+# header so the server knows which colleague is behind each request. Unset, the
+# original sign-in path is used unchanged -- the swap is one line of .env, and
+# reversible, which is what a live bot deserves.
+RM_TOKEN = os.environ.get("RM_TOKEN", "").strip()
 ALLOWED = {int(x) for x in os.environ.get("TG_ALLOWED_IDS", "").replace(" ", "").split(",")
            if x.strip().isdigit()}
 POLL_SECONDS = float(os.environ.get("TG_POLL_SECONDS", "4") or 4)
@@ -764,12 +772,28 @@ async def send_artifact(ctx, cid: int, job_id: str, kind: str):
 # --------------------------------------------------------------------------- #
 # Boot
 # --------------------------------------------------------------------------- #
+async def _note_actor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Record who is acting, for the /v1 client. A no-op on the sign-in path."""
+    user = update.effective_user
+    acting_as(user.id if user else 0)
+
+
+
 async def _post_init(app: Application):
     global BOT_USERNAME
     me = await app.bot.get_me()
     BOT_USERNAME = me.username or ""
     log.info("i am @%s", BOT_USERNAME)
-    api: ReportMaker = app.bot_data["api"]
+    api = app.bot_data["api"]
+    if isinstance(api, TokenClient):
+        try:
+            me = await api.whoami()
+            log.info("token accepted by %s as %r (%d scopes)", api.base,
+                     me["bot"]["name"], len(me["token_scopes"]))
+        except ApiError as e:
+            log.error("token not accepted yet: %s", e)
+        await _set_commands(app)
+        return
     try:
         await api.login()
         log.info("signed in to %s as %s", api.base, api.username)
@@ -779,6 +803,10 @@ async def _post_init(app: Application):
         # the bot locks itself out of the app it is trying to use. The client
         # signs in lazily, so start anyway and let the error reach the chat.
         log.error("not signed in yet: %s", e)
+    await _set_commands(app)
+
+
+async def _set_commands(app: Application):
     await app.bot.set_my_commands([
         ("start", "Build a report"),
         ("last", "The last report from this chat"),
@@ -790,14 +818,24 @@ def main():
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    missing = [k for k, v in (("TG_BOT_TOKEN", BOT_TOKEN), ("APP_USER", APP_USER),
-                              ("APP_PASSWORD", APP_PASSWORD)) if not v]
+    needed = (("TG_BOT_TOKEN", BOT_TOKEN),) if RM_TOKEN else (
+        ("TG_BOT_TOKEN", BOT_TOKEN), ("APP_USER", APP_USER),
+        ("APP_PASSWORD", APP_PASSWORD))
+    missing = [k for k, v in needed if not v]
     if missing:
         raise SystemExit("Missing in tg/.env: " + ", ".join(missing))
 
     load_prefs()
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
-    app.bot_data["api"] = ReportMaker(APP_URL, APP_USER, APP_PASSWORD)
+    app.bot_data["api"] = (TokenClient(APP_URL, RM_TOKEN) if RM_TOKEN
+                           else ReportMaker(APP_URL, APP_USER, APP_PASSWORD))
+    log.info("talking to %s via %s", APP_URL,
+             "/v1 token" if RM_TOKEN else "an APP_USERS sign-in")
+
+    # Runs before everything else and does nothing but record who is acting,
+    # so /v1 calls made anywhere downstream carry the right X-Actor without
+    # every handler having to know that /v1 exists.
+    app.add_handler(TypeHandler(Update, _note_actor), group=-1)
 
     app.add_handler(CommandHandler(["start", "help"], cmd_start))
     app.add_handler(CommandHandler("cancel", cmd_cancel))

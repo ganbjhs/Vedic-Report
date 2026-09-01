@@ -1,9 +1,10 @@
 # Telegram — the bots that replace the WhatsApp toolkit
 
-*Written 26 Aug 2026. Status: **bot 1 (report) is live**; bots 2 and 3 are
-designed, not built. Companion docs: `tg/README.md` (how the report bot works
-today), `wa/BLUEPRINT.md` (what is being replaced), `docs/v3-plan.md` (the API
-layer this leans on).*
+*Written 26 Aug 2026. Status **1 Sep**: **bot 1 (report) is live**; **`/v1` +
+the bot registry are built** (phase 1); **bot 2 (splitter) is built** (phase 2);
+bot 3 is designed, not built. Companion docs: `tg/README.md` (the report bot),
+`tg/SPLITTER.md` (the splitter), `wa/BLUEPRINT.md` (what is being replaced),
+`docs/v3-plan.md` (the API layer this leans on).*
 
 ---
 
@@ -101,11 +102,25 @@ generalised. Endpoints under `/v1`, `Authorization: Bearer vr_…`, plus an
 behind the bot — that header is what makes the intersection and the audit log
 work. Every call rows into `api_calls` (bot, actor, scope, run, result).
 
-**Until `/v1` exists**, the report bot signs in as an ordinary `APP_USERS`
-account and uses the same `/api` endpoints the browser does. That is a
-deliberate stopgap: it required no server change, and it means every run shows
-in History attributed to `reportbot`. When `/v1` lands, only `tg/client.py`
-changes.
+**Built, 1 Sep.** `/v1` is `webapp/api_v1.py`, the registry is
+`webapp/routes_bots.py` + Admin → Bots, and the tables are in
+`webapp/jobs/store.py`. Endpoints: `whoami`, `link`, `projects`, `preview`,
+`run` (JSON links or a multipart spreadsheet), `run/{id}`, `cancel`,
+`download/{kind}`.
+
+The promise held: **only `tg/client.py` changed**, which gained a `TokenClient`
+beside the old `ReportMaker`, plus one four-line handler in `bot.py` that
+records who is acting. Setting `RM_TOKEN` in `tg/.env` switches the report bot
+over; leaving it unset keeps the `APP_USERS` sign-in exactly as it was. A live
+bot deserves a swap that is one line of `.env` and reversible.
+
+Two things worth not relitigating:
+
+* **An unlinked actor gets the empty set, not the token's scopes.** A stranger
+  who finds the bot can do nothing at all. That is the whole reason the header
+  exists, so failing open there would have been the one bug that mattered.
+* **The audit log records refusals too.** A log of successes cannot answer the
+  question a log exists for.
 
 ---
 
@@ -132,7 +147,7 @@ Decisions worth not relitigating:
 
 ---
 
-## 4. Bot 2 — Message splitter  *(next)*
+## 4. Bot 2 — Message splitter  *(built — `tg/splitter.py`, `tg/SPLITTER.md`)*
 
 ### 4.1 What it replaces
 
@@ -189,6 +204,11 @@ the bot" rather than letting the send fail.
 accident. Gate it behind the `send.other_chat` scope, stamp every delivery with
 *"sent by @tilak"*, and keep people who have not opted in out of the list.
 
+*Built as:* the scope gate and the exclusion hold. The stamp became **one line
+before the batch** rather than a suffix on every message — appending it to
+sixty messages would quietly rewrite the very content the bot exists to deliver
+verbatim, and one line answers "who sent this" just as well.
+
 ### 4.4 Receipt
 
 When the delivery goes somewhere other than where you are standing, you need a
@@ -205,12 +225,61 @@ gets it throttled mid-list — a throttle that split a list in half would be
 worse than slowness. Being able to edit and delete after sending is new and
 worth using for a "sent the wrong list" undo.
 
-### 4.6 Open decisions
+### 4.6 Decisions taken (1 Sep)
 
-1. Split rule: blank-line (the WhatsApp convention colleagues know) or
-   per-line, or offered as a choice per batch?
-2. Numbering: plain `1`, `2`, `3` as today, or something like `— 1 —`?
-3. Does the destination belong to the person or to the chat?
+1. **Split rule: both, chosen per batch.** `[Blank line] [Per line]`, remembered
+   per person. §4.1 already noted the WhatsApp toolkit had two rules and both
+   were in use; picking one for people would have broken half of what they do.
+   Changing the rule mid-batch **re-splits what is already collected** — a batch
+   split two different ways without saying so would be the worst outcome.
+   Alongside it: *Under each* — nothing, a link per list, or one fixed text —
+   which is what folds the `send_lines` recipe in rather than bolting it on.
+2. **Numbering: plain `1`, `2`, `3`.** Unchanged from `wa/bot.py`. Colleagues
+   already read that marker in the destination chat; making it prettier would
+   change something people rely on to buy nothing.
+3. **The destination belongs to the person.** The opposite of the report bot,
+   and deliberately: a report is one thing a team shares, while a batch of
+   messages is one person's outbound work, composed in their own DM. Since the
+   compose flow moves to the DM anyway, per-chat would have collapsed to
+   per-person with extra steps.
+
+Four more that came out of building it, three of them from first use:
+
+-1. **Features are a registry, not a fork.** Asked to switch Preview off but
+   not delete it, the honest shape is a flag rather than a deletion: code cut
+   to "simplify" is code somebody rewrites from memory later. A bot now
+   **announces its own feature catalogue** to `/v1/features` at start-up and
+   Admin → Bots renders switches for whatever arrived — the server hardcodes no
+   feature names, so this works for the report bot and the collector without
+   further server work. Announce is authenticated by the **token alone**, no
+   actor and no scope: a bot boots before anybody has pressed a button, so
+   requiring an actor would mean it could never start.
+
+   The line that keeps this honest: **a feature says whether something is
+   present; a scope says whether you are allowed to do it.** `send.other_chat`
+   stays a scope. Anything that could hurt somebody is an administrator's
+   decision and belongs in the audit log, not in a convenience toggle.
+
+
+0. **A list may span several Telegram messages.** The original design — one
+   Telegram message per list — does not survive contact with the 4096-character
+   ceiling: a long list physically cannot arrive in one paste, and it does not
+   survive clients that drop blank lines on paste either. So messages
+   accumulate into the list being built, and **a message that is only a number
+   closes it** — the same marker the bot prints on the way out, so there is
+   nothing new to learn. Only a whole message counts, never a line inside a
+   paste. *Done* closes whatever is open.
+
+   This subsumes the old rule rather than competing with it: several messages
+   and no numbers is one list, several messages with numbers is several lists,
+   and one message is what it always was.
+
+
+4. **Messages over Telegram's 4096-character limit are refused, not truncated.**
+   A message cut in half on delivery is worse than one never sent, because
+   nobody notices.
+5. **Undo, for 30 minutes.** Telegram allows deletion for 48 hours, but an undo
+   button sitting next to yesterday's work is a trap rather than a feature.
 
 ---
 
@@ -244,8 +313,8 @@ Nobody copies a link anywhere.
 | Phase | Scope |
 |---|---|
 | **done** | Report bot on the `/api` stopgap: pickers, link collection, summary card, run, all formats on demand, attribution, group support, skipped-link reporting |
-| **1** | `/v1` + bot registry: tables, Admin → Bots page, token auth, scopes, audit log; then `/v1/run`, status, download; `tg/client.py` swaps to a token |
-| **2** | Message splitter (§4) |
+| **done** | `/v1` + bot registry: tables, Admin → Bots page, token auth, scopes, audit log, `/v1/run` + status + download; `tg/client.py` gained `TokenClient` and switches on `RM_TOKEN` |
+| **done** | Message splitter (§4) — `tg/splitter.py`, its own token, its own compose panel, paced delivery, undo |
 | **3** | Source → date wizard, so a recurring report needs no links at all |
 | **4** | Group collector (§5) |
 | **5** | Scheduled delivery — sources already auto-run on a new date; point that at a chat and the PDF simply arrives |

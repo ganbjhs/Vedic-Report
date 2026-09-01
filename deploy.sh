@@ -19,7 +19,17 @@ echo "== permissions"
 chown -R 1000:1000 data sessions reports 2>/dev/null || true
 
 echo "== build + restart"
-docker compose up -d --build
+# The splitter bot is only deployed once its secrets file exists on THIS
+# server. .env files are gitignored, so they never arrive with a `git pull` —
+# see tg/SPLITTER.md. Absent, the rest of the stack comes up exactly as before.
+PROFILES=()
+if [ -f tg/.env.splitter ]; then
+  PROFILES+=(--profile splitter)
+  echo "   splitter: tg/.env.splitter found, including it"
+else
+  echo "   splitter: no tg/.env.splitter on this server, skipping it"
+fi
+docker compose "${PROFILES[@]}" up -d --build
 
 echo "== waiting for health"
 for i in $(seq 1 30); do

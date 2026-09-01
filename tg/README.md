@@ -153,12 +153,28 @@ your laptop, not on the VPS.
   to the job page instead.
 * **Sessions expire.** The client re-signs-in by itself on a 401.
 
+## Scoped tokens (v3.1)
+
+The sign-in above is now the *fallback*. Make a bot in **Admin → Bots**, put its
+`vr_…` key in `RM_TOKEN`, and this bot talks to `/v1` instead:
+
+* Runs are attributed to **the colleague who asked**, not to a shared
+  `reportbot` account — the bot sends an `X-Actor: tg:<id>` header and the
+  server resolves it.
+* What each person may do is **their own role intersected with the bot's
+  scopes**. The bot cannot lend anybody permissions they do not have.
+* Revoking is one button, and every call is in the audit log on the Bots page.
+
+Colleagues bind their Telegram id once: an admin makes a code on the Bots page,
+they send `/link 482913`. Until they do, the bot can do nothing on their behalf
+— which is the right default for a stranger who finds it.
+
+Leaving `RM_TOKEN` empty keeps the `APP_USERS` sign-in exactly as before.
+
 ## What's next
 
-This is v0 on purpose — one bot, one job, no scoped tokens. The upgrade path:
-
-1. `/v1` API + bot registry in the dashboard (scopes per bot), then
-   `client.py` swaps to a token and `APP_USER`/`APP_PASSWORD` disappear.
-2. Source → date wizard, so a run needs no links at all — it reads the
+1. Source → date wizard, so a run needs no links at all — it reads the
    project's Google Sheet.
-3. Second bot: message splitter. Third: the group link collector.
+2. Third bot: the group link collector (`docs/telegram-plan.md` §5).
+
+The second bot — the **message splitter** — is built: see `tg/SPLITTER.md`.

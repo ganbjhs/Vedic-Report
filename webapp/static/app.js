@@ -1833,3 +1833,99 @@ function initProjectSources() {
   });
   render();
 }
+
+/* =========================================================================
+   Bots & API keys (v3.1) — Admin → Bots.
+
+   The token is shown once, in a card that has to be dismissed: a key that
+   scrolls away while somebody is reading the table is a key that gets
+   regenerated an hour later.
+   ========================================================================= */
+function initBots() {
+  const form = $("bot-add"); if (!form) return;
+  const msg = $("bot-msg");
+  const say = (t, ok) => { msg.textContent = t; msg.style.color = ok ? "var(--ok)" : "var(--bad)"; };
+  const picked = (name) => [...form.querySelectorAll(`[name="${name}"]:checked`)].map((c) => c.value);
+
+  const showToken = (token) => {
+    $("token-value").textContent = token;
+    $("token-card").hidden = false;
+    $("token-card").scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  $("token-done")?.addEventListener("click", () => location.reload());
+
+  /* Ticking the boxes means "custom"; choosing a preset re-ticks them, so the
+     two controls can never disagree about what is being granted. */
+  const presets = JSON.parse(form.dataset.presets || "{}");
+  const applyPreset = () => {
+    const want = new Set(presets[form.preset.value] || []);
+    form.querySelectorAll('[name="scope"]').forEach((c) => { c.checked = want.has(c.value); });
+  };
+  form.preset?.addEventListener("change", applyPreset);
+  form.querySelectorAll('[name="scope"]').forEach((c) => c.addEventListener("change", () => {
+    const have = new Set(picked("scope"));
+    const match = Object.keys(presets).find((k) => presets[k].length === have.size && presets[k].every((s) => have.has(s)));
+    if (form.preset) form.preset.value = match || form.preset.value;
+  }));
+  applyPreset();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    const scopes = picked("scope");
+    if (!scopes.length) return say("Pick a preset or tick at least one scope.", false);
+    try {
+      const r = await api("/api/bots", { method: "POST", json: {
+        name: f.get("name"), kind: f.get("kind"), scopes,
+        projects: picked("project"), test: !!f.get("test"),
+        limits: { links_per_call: +f.get("links_per_call"), runs_per_hour: +f.get("runs_per_hour"),
+                  mb_per_day: +f.get("mb_per_day"), max_concurrent: +f.get("max_concurrent") } } });
+      showToken(r.token);
+    } catch (err) { say(err.message, false); }
+  });
+
+  document.querySelectorAll("[data-toggle]").forEach((b) => b.addEventListener("click", async () => {
+    try { await api(`/api/bots/${encodeURIComponent(b.dataset.toggle)}`, { method: "PATCH", json: { status: b.dataset.to } }); location.reload(); }
+    catch (err) { say(err.message, false); }
+  }));
+
+  document.querySelectorAll("[data-regen]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Regenerate this key? The current one stops working immediately — anything using it must be given the new key.")) return;
+    try { showToken((await api(`/api/bots/${encodeURIComponent(b.dataset.regen)}/regenerate`, { method: "POST", json: {} })).token); }
+    catch (err) { say(err.message, false); }
+  }));
+
+  document.querySelectorAll("[data-delbot]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Delete this bot? Its key stops working. What it already did stays in the call log.")) return;
+    try { await api(`/api/bots/${encodeURIComponent(b.dataset.delbot)}`, { method: "DELETE" }); location.reload(); }
+    catch (err) { say(err.message, false); }
+  }));
+
+  const lf = $("link-form"), lmsg = $("link-msg");
+  lf?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api("/api/bots/identities/code", { method: "POST", json: { username: new FormData(lf).get("username") } });
+      lmsg.innerHTML = `Send <code>/link ${r.code}</code> to the bot within ${r.minutes} minutes.`;
+      lmsg.style.color = "var(--ok)";
+    } catch (err) { lmsg.textContent = err.message; lmsg.style.color = "var(--bad)"; }
+  });
+
+  /* A feature toggle is a three-state thing — on, off, or "whatever the bot
+     says". The checkbox covers the first two; "use default" clears it back. */
+  document.querySelectorAll("[data-feat]").forEach((c) => c.addEventListener("change", async () => {
+    c.disabled = true;
+    try { await api(`/api/bots/${encodeURIComponent(c.dataset.feat)}/features/${encodeURIComponent(c.dataset.name)}`, { method: "POST", json: { on: c.checked } }); location.reload(); }
+    catch (err) { say(err.message, false); c.checked = !c.checked; c.disabled = false; }
+  }));
+  document.querySelectorAll("[data-featreset]").forEach((b) => b.addEventListener("click", async () => {
+    try { await api(`/api/bots/${encodeURIComponent(b.dataset.featreset)}/features/${encodeURIComponent(b.dataset.name)}`, { method: "POST", json: { on: null } }); location.reload(); }
+    catch (err) { say(err.message, false); }
+  }));
+
+  document.querySelectorAll("[data-unlink]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm(`Unlink ${b.dataset.unlink}? They keep using the bot but it can no longer act for them.`)) return;
+    try { await api(`/api/bots/identities/${encodeURIComponent(b.dataset.unlink)}`, { method: "DELETE" }); location.reload(); }
+    catch (err) { alert(err.message); }
+  }));
+}

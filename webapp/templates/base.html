@@ -55,7 +55,6 @@
       <span class="k" title="styles picked for this project">{{ project_styles | length }}</span></a>
     <a href="/project/settings" class="{{ 'active' if nav == 'psettings' else '' }}"><span class="ico">⚙</span> Settings</a>
     <a href="/project/sources" class="{{ 'active' if nav == 'sources' else '' }}"><span class="ico">⇅</span> Sources</a>
-    <a class="soon" title="Tomorrow: per-project key, one call in → report out"><span class="ico">⌘</span> API <span class="tag">soon</span></a>
     {% if is_admin %}
     <div class="sec">Library</div>
     <a href="/styles" class="{{ 'active' if nav == 'styles' else '' }}" data-key="s"><span class="ico">◫</span> Style pool <span class="k">S</span></a>
@@ -66,6 +65,7 @@
       {% set worst = (platform_health | selectattr('live') | map(attribute='state') | list) %}
       <span class="dot {{ 'bad' if ('invalid' in worst or 'missing' in worst) else ('warn' if 'expiring' in worst else 'ok') }}" style="margin-left:auto" title="Capture account health"></span></a>
     <a href="/admin/users" class="{{ 'active' if nav == 'users' else '' }}"><span class="ico">👥</span> Users &amp; roles</a>
+    <a href="/admin/bots" class="{{ 'active' if nav == 'bots' else '' }}"><span class="ico">⌘</span> Bots &amp; API keys</a>
     <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}"><span class="ico">⚙</span> Server settings</a>
     {% if budget %}
     <div class="quota" title="Posts captured today on the shared X account. Quality degrades past the ceiling (RULEBOOK rule 21).">

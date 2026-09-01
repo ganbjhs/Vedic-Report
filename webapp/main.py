@@ -14,9 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, health, previews, projects, report_types,
-               routes_extras, routes_jobs, routes_projects, routes_sources,
-               sources, styles, uploads, x_login)
+from . import (api_v1, auth, config, health, previews, projects,
+               report_types, routes_bots, routes_extras, routes_jobs,
+               routes_projects, routes_sources, sources, styles, uploads,
+               x_login)
 from .jobs import cleanup, queue, store
 
 HERE = Path(__file__).resolve().parent
@@ -83,6 +84,10 @@ app.include_router(routes_jobs.router)
 app.include_router(routes_extras.router)
 app.include_router(routes_projects.router)
 app.include_router(routes_sources.router)
+app.include_router(routes_bots.router)
+# The scoped token API. Beside /api, never instead of it: a token call is
+# not a browser call, and the two authenticate differently on purpose.
+app.include_router(api_v1.router)
 
 
 def _shell(request: Request, user: str, nav: str, **extra) -> dict:
@@ -117,7 +122,9 @@ def _shell(request: Request, user: str, nav: str, **extra) -> dict:
 async def http_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 303 and "Location" in (exc.headers or {}):
         return RedirectResponse(exc.headers["Location"], status_code=303)
-    if request.url.path.startswith("/api/"):
+    # /v1 answers JSON too — a token client rendering an HTML error page is a
+    # crash report nobody can read.
+    if request.url.path.startswith(("/api/", "/v1/")):
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code,
                             headers=exc.headers)
     if exc.status_code == 401:
@@ -362,6 +369,24 @@ async def users_page(request: Request, user: str = Depends(auth.require_admin)):
         request, "users.html",
         _shell(request, user, "users", users=routes_extras._public_users(),
                roles=list(store.ROLES), env_admins=sorted(config.APP_ADMINS)))
+
+
+@app.get("/admin/bots", response_class=HTMLResponse)
+async def bots_page(request: Request, user: str = Depends(auth.require_admin)):
+    """The registry behind /v1: which key may do what, for whom, in which
+    project — and the log of what each one actually did."""
+    return templates.TemplateResponse(
+        request, "bots.html",
+        _shell(request, user, "bots",
+               bots=[routes_bots.public_bot(b) for b in store.bots_list()],
+               scopes=list(store.SCOPES),
+               presets={k: list(v) for k, v in store.SCOPE_PRESETS.items()},
+               defaults=dict(store.DEFAULT_LIMITS),
+               project_list=projects.all_projects(),
+               users=routes_extras._public_users(),
+               identities=store.identities_list(),
+               calls=store.api_calls_recent(40),
+               base_url=str(request.base_url).rstrip("/")))
 
 
 @app.get("/admin/session-status", response_class=HTMLResponse)

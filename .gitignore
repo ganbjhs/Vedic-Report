@@ -13,8 +13,14 @@ reports/*.pdf
 # scripts/capture_probe.py output — one PNG per probed link, evidence only
 reports/probe/
 
-# Web app secrets — app logins + session signing key; NEVER commit this
+# Web app secrets — app logins + session signing key; NEVER commit this.
+# The bare `.env` pattern matches a file named exactly that and nothing else,
+# so every sibling secrets file has to be named here too — `tg/.env.splitter`
+# holds a bot token and would otherwise be committed by a plain `git add -A`.
 .env
+.env.*
+!.env.example
+!.env.*.example
 
 # Web app runtime state — per-job working dirs, uploads, outputs, jobs.db
 data/

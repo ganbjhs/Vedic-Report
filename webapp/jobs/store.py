@@ -123,6 +123,98 @@ CREATE TABLE IF NOT EXISTS login_attempts (
     ts   REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS login_attempts_ip_ts ON login_attempts (ip, ts);
+
+-- v3.1: the BOT REGISTRY. A bot is a token that may touch some projects with
+-- some scopes. A person acting through it is named by the `X-Actor` header, so
+-- the rule the whole safety story rests on can be evaluated in one place:
+--
+--     effective permission = the token's scopes  n  the acting person's role
+--
+-- A bot can never exceed its token; a person can never exceed their account.
+CREATE TABLE IF NOT EXISTS bots (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'telegram',
+    token_hash    TEXT NOT NULL,
+    token_hint    TEXT DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'active',
+    projects      TEXT DEFAULT '[]',
+    audience      TEXT DEFAULT '[]',
+    limits        TEXT DEFAULT '{}',
+    is_test       INTEGER DEFAULT 0,
+    created_by    TEXT DEFAULT '',
+    created_at    REAL NOT NULL,
+    last_used_at  REAL
+);
+CREATE INDEX IF NOT EXISTS bots_token ON bots (token_hash);
+
+CREATE TABLE IF NOT EXISTS bot_scopes (
+    bot_id        TEXT NOT NULL,
+    scope         TEXT NOT NULL,
+    PRIMARY KEY (bot_id, scope)
+);
+
+-- Which Report Maker account a Telegram id acts as. No row = the actor is a
+-- stranger, and the intersection above leaves them with nothing.
+CREATE TABLE IF NOT EXISTS tg_identities (
+    actor         TEXT PRIMARY KEY,
+    username      TEXT NOT NULL,
+    label         TEXT DEFAULT '',
+    linked_by     TEXT DEFAULT '',
+    created_at    REAL NOT NULL,
+    last_seen_at  REAL
+);
+
+-- One-shot codes that bind a Telegram id to an account: an admin generates
+-- one, the colleague sends `/link 482913` to the bot, the row is consumed.
+CREATE TABLE IF NOT EXISTS link_codes (
+    code          TEXT PRIMARY KEY,
+    username      TEXT NOT NULL,
+    created_by    TEXT DEFAULT '',
+    created_at    REAL NOT NULL,
+    used_at       REAL,
+    used_by       TEXT DEFAULT ''
+);
+
+-- The audit log. Every /v1 call lands here, refusals included -- a log that
+-- only records successes cannot answer the question it exists for.
+CREATE TABLE IF NOT EXISTS api_calls (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    bot_id        TEXT DEFAULT '',
+    bot_name      TEXT DEFAULT '',
+    actor         TEXT DEFAULT '',
+    username      TEXT DEFAULT '',
+    scope         TEXT DEFAULT '',
+    method        TEXT DEFAULT '',
+    path          TEXT DEFAULT '',
+    project_id    TEXT DEFAULT '',
+    job_id        TEXT DEFAULT '',
+    status        INTEGER DEFAULT 0,
+    detail        TEXT DEFAULT '',
+    ts            REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS api_calls_bot_ts ON api_calls (bot_id, ts DESC);
+CREATE INDEX IF NOT EXISTS api_calls_ts ON api_calls (ts DESC);
+
+-- A FEATURE is a piece of a bot that can be switched off without being taken
+-- out. Rows are ANNOUNCED by the bot itself on start-up -- it knows what it can
+-- do; the dashboard does not, and hardcoding a list here would mean editing the
+-- server every time a bot grows a button. `override` is the admin's answer:
+-- NULL means "whatever the bot says its default is".
+--
+-- This is deliberately NOT the scopes table. A scope answers "may this person
+-- do X" and belongs in the audit log; a feature answers "is X here at all".
+-- Anything that could hurt somebody stays a scope.
+CREATE TABLE IF NOT EXISTS bot_features (
+    bot_id        TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    label         TEXT DEFAULT '',
+    why           TEXT DEFAULT '',
+    default_on    INTEGER DEFAULT 1,
+    override      INTEGER,
+    announced_at  REAL,
+    PRIMARY KEY (bot_id, name)
+);
 """
 
 _JSON_FIELDS = ("artifacts", "skipped", "activity", "outputs")
@@ -694,3 +786,376 @@ def recent_login_failures(ip: str) -> int:
             "SELECT COUNT(*) AS n FROM login_attempts WHERE ip=? AND ts >= ?",
             (ip, cutoff)).fetchone()
     return int(row["n"])
+
+
+# --------------------------------------------------------------------------- #
+# v3.1 — the bot registry
+#
+# Tokens are stored HASHED, exactly like passwords: a leaked database must not
+# hand anybody a working key. `token_hint` is the last four characters, kept in
+# clear so a human can tell two keys apart on the Bots page without either of
+# them being reconstructable from it.
+# --------------------------------------------------------------------------- #
+TOKEN_PREFIX = "vr_"
+
+# Every scope the server knows. The Bots page offers exactly these, so a typo
+# in a preset can never grant something the API does not check for.
+SCOPES = (
+    "project.read",       # list projects and their styles
+    "report.preview",     # what WOULD be captured, costing nothing
+    "report.run",         # spend capture minutes
+    "report.download",    # fetch a finished artifact
+    "report.cancel",      # stop a run
+    "source.run",         # make a source re-read now
+    "send.compose",       # draft a batch of messages
+    "send.dispatch",      # actually send them
+    "send.other_chat",    # ...into a chat the sender is not standing in
+    "style.write",
+    "schedule.write",
+    "users.link",         # bind a Telegram id to an account
+)
+
+# One click instead of twelve tick boxes. The names are the plan's (§2.2).
+SCOPE_PRESETS = {
+    "viewer":    ("project.read", "report.preview", "report.download"),
+    "operator":  ("project.read", "report.preview", "report.run",
+                  "report.download", "report.cancel", "source.run"),
+    "publisher": ("project.read", "report.preview", "report.run",
+                  "report.download", "report.cancel", "source.run",
+                  "send.compose", "send.dispatch"),
+    "admin":     SCOPES,
+}
+
+# What a role may do at most, whatever the token says. This is the right-hand
+# side of  scopes n role  — see api_v1.effective_scopes.
+ROLE_CEILING = {
+    "admin": set(SCOPES),
+    "designer": {"project.read", "report.preview", "report.run",
+                 "report.download", "report.cancel", "source.run",
+                 "send.compose", "send.dispatch", "style.write"},
+    "member": {"project.read", "report.preview", "report.run",
+               "report.download", "report.cancel", "send.compose",
+               "send.dispatch"},
+}
+
+DEFAULT_LIMITS = {"links_per_call": 200, "runs_per_hour": 60, "mb_per_day": 500,
+                  "max_concurrent": 2}
+
+
+def hash_token(token: str) -> str:
+    """sha256 of the raw token. A key is high-entropy and machine-generated, so
+    unlike a password it needs no slow KDF — a rainbow table over 32 random
+    bytes does not exist."""
+    import hashlib
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def new_token(slug: str) -> str:
+    """`vr_<slug>_<random>` — the shape docs/v3-plan.md §11 promised. The slug
+    is cosmetic (it makes a key recognisable in someone's .env); every check
+    goes through the hash."""
+    import re as _re
+    import secrets
+    slug = _re.sub(r"[^a-z0-9]+", "-", (slug or "bot").lower()).strip("-")[:24] or "bot"
+    return f"{TOKEN_PREFIX}{slug}_{secrets.token_urlsafe(24)}"
+
+
+def _bot_row(r) -> dict:
+    d = dict(r)
+    for key in ("projects", "audience"):
+        try:
+            d[key] = json.loads(d.get(key) or "[]")
+        except (ValueError, TypeError):
+            d[key] = []
+    try:
+        d["limits"] = {**DEFAULT_LIMITS, **(json.loads(d.get("limits") or "{}") or {})}
+    except (ValueError, TypeError):
+        d["limits"] = dict(DEFAULT_LIMITS)
+    d["is_test"] = bool(d.get("is_test"))
+    return d
+
+
+def bot_create(name: str, kind: str = "telegram", scopes=(), projects=(),
+               audience=(), limits: dict = None, is_test: bool = False,
+               created_by: str = "") -> tuple:
+    """Create a bot and return (record, raw_token). The raw token is returned
+    exactly once and never stored — losing it means regenerating, which is the
+    only honest way to hold a secret."""
+    token = new_token(name)
+    bot_id = uuid.uuid4().hex[:12]
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO bots (id, name, kind, token_hash, token_hint, status, "
+            "projects, audience, limits, is_test, created_by, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (bot_id, name.strip()[:80] or "Bot", kind, hash_token(token),
+             token[-4:], "active", json.dumps(list(projects or [])),
+             json.dumps([str(a) for a in (audience or [])]),
+             json.dumps(limits or {}), 1 if is_test else 0, created_by,
+             time.time()))
+        for scope in dict.fromkeys(s for s in (scopes or ()) if s in SCOPES):
+            conn.execute("INSERT OR IGNORE INTO bot_scopes (bot_id, scope) "
+                         "VALUES (?,?)", (bot_id, scope))
+    return bot_get(bot_id), token
+
+
+def bot_regenerate(bot_id: str):
+    """New token for an existing bot, keeping its scopes, projects and history.
+    Revocation and rotation are the same button pressed for different reasons."""
+    bot = bot_get(bot_id)
+    if not bot:
+        return None, ""
+    token = new_token(bot["name"])
+    with _connect() as conn:
+        conn.execute("UPDATE bots SET token_hash=?, token_hint=? WHERE id=?",
+                     (hash_token(token), token[-4:], bot_id))
+    return bot_get(bot_id), token
+
+
+def bot_get(bot_id: str):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM bots WHERE id=?", (bot_id,)).fetchone()
+    return _bot_row(row) if row else None
+
+
+def bot_by_token(token: str):
+    """The bot a raw token belongs to, or None. Only ever matched on the hash."""
+    if not token or not token.startswith(TOKEN_PREFIX):
+        return None
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM bots WHERE token_hash=?",
+                           (hash_token(token),)).fetchone()
+    return _bot_row(row) if row else None
+
+
+def bots_list() -> list:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM bots ORDER BY created_at DESC").fetchall()
+    return [_bot_row(r) for r in rows]
+
+
+def bot_update(bot_id: str, **fields) -> None:
+    allowed = {"name", "status", "projects", "audience", "limits", "kind"}
+    sets, values = [], []
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key in ("projects", "audience"):
+            value = json.dumps([str(v) for v in (value or [])])
+        elif key == "limits":
+            value = json.dumps(value or {})
+        sets.append(f"{key}=?")
+        values.append(value)
+    if not sets:
+        return
+    values.append(bot_id)
+    with _connect() as conn:
+        conn.execute(f"UPDATE bots SET {', '.join(sets)} WHERE id=?", values)
+
+
+def bot_delete(bot_id: str) -> bool:
+    with _connect() as conn:
+        conn.execute("DELETE FROM bot_scopes WHERE bot_id=?", (bot_id,))
+        cur = conn.execute("DELETE FROM bots WHERE id=?", (bot_id,))
+    return cur.rowcount > 0
+
+
+def bot_scopes_of(bot_id: str) -> set:
+    with _connect() as conn:
+        rows = conn.execute("SELECT scope FROM bot_scopes WHERE bot_id=?",
+                            (bot_id,)).fetchall()
+    return {r["scope"] for r in rows}
+
+
+def bot_set_scopes(bot_id: str, scopes) -> None:
+    keep = [s for s in dict.fromkeys(scopes or ()) if s in SCOPES]
+    with _connect() as conn:
+        conn.execute("DELETE FROM bot_scopes WHERE bot_id=?", (bot_id,))
+        for scope in keep:
+            conn.execute("INSERT OR IGNORE INTO bot_scopes (bot_id, scope) "
+                         "VALUES (?,?)", (bot_id, scope))
+
+
+def bot_touch(bot_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE bots SET last_used_at=? WHERE id=?",
+                     (time.time(), bot_id))
+
+
+# --------------------------------------------------------------------------- #
+# Telegram identities — who is acting behind a bot
+# --------------------------------------------------------------------------- #
+def identity_get(actor: str):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM tg_identities WHERE actor=?",
+                           (actor,)).fetchone()
+    return dict(row) if row else None
+
+
+def identities_list() -> list:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM tg_identities ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def identity_set(actor: str, username: str, label: str = "",
+                 linked_by: str = "") -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO tg_identities (actor, username, label, linked_by, created_at) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(actor) DO UPDATE SET "
+            "username=excluded.username, label=excluded.label",
+            (actor, username, label[:80], linked_by, time.time()))
+
+
+def identity_seen(actor: str) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE tg_identities SET last_seen_at=? WHERE actor=?",
+                     (time.time(), actor))
+
+
+def identity_delete(actor: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM tg_identities WHERE actor=?", (actor,))
+    return cur.rowcount > 0
+
+
+def link_code_create(username: str, created_by: str = "") -> str:
+    import secrets
+    code = f"{secrets.randbelow(900000) + 100000}"
+    with _connect() as conn:
+        conn.execute("DELETE FROM link_codes WHERE username=? AND used_at IS NULL",
+                     (username,))
+        conn.execute("INSERT INTO link_codes (code, username, created_by, created_at) "
+                     "VALUES (?,?,?,?)", (code, username, created_by, time.time()))
+    return code
+
+
+def link_code_consume(code: str, actor: str, ttl_minutes: int = 30):
+    """Spend a code and bind `actor` to its account. Returns the username, or
+    None when the code is unknown, already spent or older than `ttl_minutes`."""
+    now = time.time()
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM link_codes WHERE code=?", (code,)).fetchone()
+        if not row or row["used_at"] or now - row["created_at"] > ttl_minutes * 60:
+            return None
+        conn.execute("UPDATE link_codes SET used_at=?, used_by=? WHERE code=?",
+                     (now, actor, code))
+        username = row["username"]
+    identity_set(actor, username, linked_by=row["created_by"] or "")
+    return username
+
+
+# --------------------------------------------------------------------------- #
+# Audit log
+# --------------------------------------------------------------------------- #
+def api_call_record(*, bot_id: str = "", bot_name: str = "", actor: str = "",
+                    username: str = "", scope: str = "", method: str = "",
+                    path: str = "", project_id: str = "", job_id: str = "",
+                    status: int = 0, detail: str = "") -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO api_calls (bot_id, bot_name, actor, username, scope, "
+            "method, path, project_id, job_id, status, detail, ts) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (bot_id, bot_name, actor, username, scope, method, path[:200],
+             project_id, job_id, int(status), (detail or "")[:300], time.time()))
+
+
+def api_calls_recent(limit: int = 100, bot_id: str = "") -> list:
+    with _connect() as conn:
+        if bot_id:
+            rows = conn.execute(
+                "SELECT * FROM api_calls WHERE bot_id=? ORDER BY ts DESC LIMIT ?",
+                (bot_id, limit)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM api_calls ORDER BY ts DESC LIMIT ?",
+                                (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def api_calls_since(bot_id: str, seconds: float, scope: str = "") -> int:
+    """How many calls this bot has made in the last `seconds` — the rate limit
+    is counted from the audit log rather than from memory, so a restart cannot
+    hand somebody a fresh allowance."""
+    cutoff = time.time() - seconds
+    with _connect() as conn:
+        if scope:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM api_calls WHERE bot_id=? AND ts>=? "
+                "AND scope=? AND status < 400", (bot_id, cutoff, scope)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM api_calls WHERE bot_id=? AND ts>=? "
+                "AND status < 400", (bot_id, cutoff)).fetchone()
+    return int(row["n"])
+
+
+def api_calls_prune(days: int = 30) -> int:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM api_calls WHERE ts < ?",
+                           (time.time() - days * 86400,))
+    return cur.rowcount
+
+
+# --------------------------------------------------------------------------- #
+# Bot features — announced by the bot, overridden by an admin
+# --------------------------------------------------------------------------- #
+def bot_features_announce(bot_id: str, catalogue) -> None:
+    """Record what this bot says it can do.
+
+    Upsert on (bot_id, name) so an admin's `override` SURVIVES a redeploy —
+    the bot re-announcing its catalogue must not quietly undo a decision
+    somebody made on the dashboard. Labels and defaults are refreshed, because
+    those belong to the bot; the override does not.
+    """
+    now = time.time()
+    with _connect() as conn:
+        seen = []
+        for item in catalogue or ():
+            name = str((item or {}).get("name") or "").strip()[:48]
+            if not name:
+                continue
+            seen.append(name)
+            conn.execute(
+                "INSERT INTO bot_features (bot_id, name, label, why, default_on, "
+                "announced_at) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(bot_id, name) DO UPDATE SET "
+                "label=excluded.label, why=excluded.why, "
+                "default_on=excluded.default_on, announced_at=excluded.announced_at",
+                (bot_id, name, str(item.get("label") or name)[:120],
+                 str(item.get("why") or "")[:400],
+                 1 if item.get("default") else 0, now))
+        # A feature the bot no longer has is dropped, so the page never offers a
+        # switch that controls nothing.
+        if seen:
+            marks = ",".join("?" * len(seen))
+            conn.execute(f"DELETE FROM bot_features WHERE bot_id=? AND name NOT IN ({marks})",
+                         [bot_id, *seen])
+
+
+def bot_features_list(bot_id: str) -> list:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM bot_features WHERE bot_id=? ORDER BY name", (bot_id,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["default_on"] = bool(d["default_on"])
+        d["override"] = None if d["override"] is None else bool(d["override"])
+        d["on"] = d["default_on"] if d["override"] is None else d["override"]
+        out.append(d)
+    return out
+
+
+def bot_features_effective(bot_id: str) -> dict:
+    return {f["name"]: f["on"] for f in bot_features_list(bot_id)}
+
+
+def bot_feature_set(bot_id: str, name: str, override) -> bool:
+    """`override` True / False, or None to go back to the bot's own default."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE bot_features SET override=? WHERE bot_id=? AND name=?",
+            (None if override is None else (1 if override else 0), bot_id, name))
+    return cur.rowcount > 0

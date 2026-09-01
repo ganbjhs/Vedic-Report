@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Bots &amp; API keys — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+
+{% block content %}
+<h1>Bots &amp; API keys</h1>
+<p class="sub">A key that may touch some projects with some scopes. When a person acts through a bot, what they get is the smaller of the two: <b>the token's scopes ∩ that person's role</b> — a bot can never exceed its token, and a person can never exceed their own account.</p>
+
+<div class="card">
+  <h2 class="card-title">New bot</h2>
+  <form id="bot-add" data-presets='{{ presets | tojson }}'>
+    <div class="fields" style="grid-template-columns:1fr 160px 200px">
+      <label class="field"><span>Name</span><input name="name" type="text" maxlength="80" placeholder="e.g. Report bot" required autocomplete="off"></label>
+      <label class="field"><span>Kind</span><select name="kind"><option value="telegram">telegram</option><option value="generic">generic</option><option value="webhook">webhook</option></select></label>
+      <label class="field"><span>Permission preset</span><select name="preset">
+        {% for p in presets.keys() %}<option value="{{ p }}" {{ 'selected' if p == 'operator' else '' }}>{{ p | capitalize }}</option>{% endfor %}
+      </select></label>
+    </div>
+
+    <details style="margin-top:12px">
+      <summary class="small">Scopes in this preset, and the projects it may touch</summary>
+      <div class="scope-grid" id="bot-scopes" style="margin:10px 0">
+        {% for s in scopes %}
+        <label class="tick"><input type="checkbox" name="scope" value="{{ s }}"> <code>{{ s }}</code>{% if s in ('send.dispatch', 'send.other_chat') %} <span class="tag warn">pushes messages</span>{% endif %}</label>
+        {% endfor %}
+      </div>
+      <p class="hint" style="margin:0 0 10px"><code>send.other_chat</code> is the only scope that can put messages into a chat the sender is not standing in. It is separate for that reason — grant it deliberately.</p>
+
+      <div class="scope-grid">
+        {% for p in project_list %}
+        <label class="tick"><input type="checkbox" name="project" value="{{ p.id }}"> {{ p.emoji or '▣' }} {{ p.name }}</label>
+        {% endfor %}
+      </div>
+      <p class="hint" style="margin:8px 0 0">Tick none for every project. Tick exactly one and the bot needs no <code>project_id</code> in its calls — that is the one-key-per-project shape.</p>
+
+      <div class="fields" style="grid-template-columns:repeat(4,1fr);margin-top:12px">
+        <label class="field"><span>Links per call</span><input name="links_per_call" type="number" min="0" value="{{ defaults.links_per_call }}"></label>
+        <label class="field"><span>Runs per hour</span><input name="runs_per_hour" type="number" min="0" value="{{ defaults.runs_per_hour }}"></label>
+        <label class="field"><span>MB per day</span><input name="mb_per_day" type="number" min="0" value="{{ defaults.mb_per_day }}"></label>
+        <label class="field"><span>Max concurrent</span><input name="max_concurrent" type="number" min="0" value="{{ defaults.max_concurrent }}"></label>
+      </div>
+      <label class="tick" style="margin-top:10px"><input type="checkbox" name="test"> <b>Test key</b> — answers in the real shape without capturing anything</label>
+    </details>
+
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary" type="submit">Create bot</button>
+      <span id="bot-msg" class="small"></span>
+    </div>
+  </form>
+</div>
+
+<div class="card" id="token-card" hidden>
+  <h2 class="card-title">Copy this key now</h2>
+  <p class="small">It is stored hashed, so this is the only time it can be shown. If it is lost, regenerate — that also revokes the old one.</p>
+  <pre class="token" id="token-value" style="user-select:all;overflow-x:auto;padding:12px;border-radius:8px;background:var(--panel)"></pre>
+  <button type="button" class="btn" id="token-done">Done, I've saved it</button>
+</div>
+
+<div class="card">
+  <h2 class="card-title">Bots <span class="count">{{ bots | length }}</span></h2>
+  {% if not bots %}
+  <p class="hint">No bots yet. Until one exists, the Telegram report bot signs in as an ordinary account and its runs are attributed to that user.</p>
+  {% else %}
+  <table class="tbl" id="bot-table">
+    <thead><tr><th>Bot</th><th>Permissions</th><th>Projects</th><th>Key</th><th>Last used</th><th></th></tr></thead>
+    <tbody>
+    {% for b in bots %}
+    <tr data-bot="{{ b.id }}">
+      <td><b>{{ b.name }}</b>{% if b.test %} <span class="tag">test</span>{% endif %}<br><span class="small faint">{{ b.kind }}{% if b.status != 'active' %} · <span class="tag warn">disabled</span>{% endif %}</span></td>
+      <td><span class="tag">{{ b.preset }}</span><br><span class="small faint" title="{{ b.scopes | join(', ') }}">{{ b.scopes | length }} scope{{ '' if b.scopes | length == 1 else 's' }}{% if 'send.other_chat' in b.scopes %} · <span class="tag warn">other chats</span>{% endif %}</span></td>
+      <td class="small">{% if b.project_names %}{{ b.project_names | join(', ') }}{% else %}<span class="faint">all</span>{% endif %}</td>
+      <td class="small faint"><code>…{{ b.hint }}</code><br>{{ b.calls_last_hour }} call{{ '' if b.calls_last_hour == 1 else 's' }}/hr</td>
+      <td class="small faint">{% if b.last_used_at %}<span data-ago="{{ b.last_used_at }}"></span>{% else %}never{% endif %}</td>
+      <td class="right small">
+        <button type="button" class="link" data-toggle="{{ b.id }}" data-to="{{ 'disabled' if b.status == 'active' else 'active' }}">{{ 'Disable' if b.status == 'active' else 'Enable' }}</button> ·
+        <button type="button" class="link" data-regen="{{ b.id }}">Regenerate</button> ·
+        <button type="button" class="link danger" data-delbot="{{ b.id }}">Delete</button>
+      </td>
+    </tr>
+    <tr class="feat-row">
+      <td colspan="6" style="padding-top:0">
+        {% if b.features %}
+        <details>
+          <summary class="small">Features <span class="count">{{ b.features | selectattr('on') | list | length }}/{{ b.features | length }} on</span></summary>
+          <p class="hint" style="margin:8px 0">This bot announced these itself when it last started. A feature says whether something is <i>present</i>; a <b>scope</b> says whether somebody is <i>allowed</i> to do it — anything that could cause harm stays a scope.</p>
+          <div class="scope-grid">
+            {% for f in b.features %}
+            <div class="feat" title="{{ f.why }}">
+              <label class="tick">
+                <input type="checkbox" data-feat="{{ b.id }}" data-name="{{ f.name }}" {{ 'checked' if f.on else '' }}>
+                <span>{{ f.label }}</span>
+              </label>
+              <div class="small faint" style="padding-left:24px">
+                <code>{{ f.name }}</code>
+                {% if f.override is none %}· bot default ({{ 'on' if f.default_on else 'off' }}){% else %}· set here <button type="button" class="link" data-featreset="{{ b.id }}" data-name="{{ f.name }}">use default</button>{% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </details>
+        {% else %}
+        <span class="small faint">No features announced yet — this bot registers them when it starts.</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 class="card-title">Who acts through them <span class="count">{{ identities | length }}</span></h2>
+  <p class="small">A bot call carries <code>X-Actor: tg:&lt;id&gt;</code>. Until that id is linked to an account it resolves to nobody, and the intersection leaves the caller with nothing — which is the intended default for a stranger who finds the bot.</p>
+  <form id="link-form" class="row" style="align-items:flex-end;gap:10px">
+    <label class="field" style="min-width:200px"><span>Give a colleague a link code</span>
+      <select name="username">{% for u in users %}<option value="{{ u.username }}">{{ u.username }} · {{ u.role }}</option>{% endfor %}</select></label>
+    <button class="btn" type="submit">Make code</button>
+    <span id="link-msg" class="small"></span>
+  </form>
+  {% if identities %}
+  <table class="tbl" style="margin-top:14px">
+    <thead><tr><th>Telegram</th><th>Acts as</th><th>Linked</th><th>Last seen</th><th></th></tr></thead>
+    <tbody>
+    {% for i in identities %}
+    <tr><td><code>{{ i.actor }}</code>{% if i.label %} <span class="small faint">{{ i.label }}</span>{% endif %}</td>
+      <td><b>{{ i.username }}</b></td>
+      <td class="small faint"><span data-ago="{{ i.created_at }}"></span>{% if i.linked_by %} by {{ i.linked_by }}{% endif %}</td>
+      <td class="small faint">{% if i.last_seen_at %}<span data-ago="{{ i.last_seen_at }}"></span>{% else %}—{% endif %}</td>
+      <td class="right"><button type="button" class="link danger" data-unlink="{{ i.actor }}">Unlink</button></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 class="card-title">Recent API calls</h2>
+  <p class="small">Refusals included — a log that only recorded successes could not answer the question it exists for.</p>
+  <table class="tbl" id="call-table">
+    <thead><tr><th>When</th><th>Bot</th><th>Actor</th><th>Scope</th><th>Call</th><th>Result</th></tr></thead>
+    <tbody>
+    {% for c in calls %}
+    <tr>
+      <td class="small faint"><span data-ago="{{ c.ts }}"></span></td>
+      <td class="small">{{ c.bot_name or '—' }}</td>
+      <td class="small faint">{{ c.username or c.actor or '—' }}</td>
+      <td class="small"><code>{{ c.scope or '—' }}</code></td>
+      <td class="small faint">{{ c.method }} {{ c.path }}</td>
+      <td class="small">{% if c.status >= 400 %}<span class="tag warn">{{ c.status }}</span> <span class="faint">{{ c.detail }}</span>{% else %}<span class="tag ok">{{ c.status }}</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if not calls %}<p class="hint">Nothing yet.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2 class="card-title">Using a key</h2>
+  <pre style="overflow-x:auto;padding:12px;border-radius:8px;background:var(--panel);font-size:12px">curl -X POST {{ base_url }}/v1/run \
+  -H "Authorization: Bearer vr_…" \
+  -H "X-Actor: tg:12345678" \
+  -H "Content-Type: application/json" \
+  -d '{"links": ["https://x.com/…/status/…"], "name": "July fake accounts"}'
+
+# → {"run_id": "…", "status": "queued", "link_count": 12}
+
+curl {{ base_url }}/v1/run/&lt;run_id&gt; -H "Authorization: Bearer vr_…" -H "X-Actor: tg:12345678"
+curl -OJ {{ base_url }}/v1/run/&lt;run_id&gt;/download/pdf -H "Authorization: Bearer vr_…" -H "X-Actor: tg:12345678"</pre>
+  <p class="hint">No style, platform or options in the request — those live in the project, which is what keeps an integration one call wide. <code>GET /v1/whoami</code> answers "why was that refused" before it happens.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}<script>initBots();</script>{% endblock %}

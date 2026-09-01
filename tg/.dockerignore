@@ -4,3 +4,6 @@ __pycache__/
 README.md
 .env.example
 data/
+.env.splitter
+.env.splitter.example
+SPLITTER.md

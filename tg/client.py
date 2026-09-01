@@ -13,6 +13,7 @@ Auth shape (see webapp/auth.py):
 """
 from __future__ import annotations
 
+import contextvars
 import re
 from urllib.parse import unquote
 from typing import Iterable
@@ -49,6 +50,19 @@ _X_HOSTS = ("twitter.com", "x.com")
 
 class ApiError(RuntimeError):
     """A refusal the user should read — the server's own wording is kept."""
+
+
+# Who is acting, for the duration of one update. `/v1` wants an `X-Actor`
+# header on every call, and the answer changes with every button press — but it
+# is the same answer for every call made while handling that press. A context
+# variable carries it instead of threading an `actor=` argument through a dozen
+# call sites that have no opinion about it.
+ACTOR = contextvars.ContextVar("actor", default="")
+
+
+def acting_as(telegram_user_id) -> str:
+    """Set the ambient actor for this update. Returns the token it stores."""
+    return ACTOR.set(f"tg:{telegram_user_id}" if telegram_user_id else "")
 
 
 def find_links(text: str) -> list:
@@ -275,6 +289,177 @@ class ReportMaker:
         # Starlette sends RFC 5987 (`filename*=utf-8\'\'July%20report.pdf`)
         # whenever the name is not plain ASCII — a space is enough. Read that
         # form first and percent-decode it, or the charset lands in the name.
+        m = re.search(r"filename\*=\s*([\w-]+)''([^;]+)", disp, re.I)
+        if m:
+            name = unquote(m.group(2))
+        else:
+            m = re.search(r'filename="?([^";]+)"?', disp, re.I)
+            if m:
+                name = m.group(1).strip()
+        return name, r.content
+
+
+class TokenClient:
+    """The same surface as `ReportMaker`, over the scoped `/v1` API.
+
+    This is what the stopgap above was always going to be replaced by. The
+    differences that matter:
+
+    * No sign-in, no cookie, no CSRF. One `Authorization: Bearer vr_…` header
+      that an administrator can revoke in a click.
+    * An `X-Actor: tg:<id>` header on every call, so the server knows WHICH
+      colleague is acting behind the bot. What they get is the token's scopes
+      intersected with that person's own role — the bot cannot lend anybody
+      permissions they do not have.
+    * A refusal comes back as the server's own sentence, naming which half
+      refused, so the person is told whether to ask for a scope or for a role.
+
+    Because the actor changes from message to message, every method takes one.
+    The bot passes the Telegram id of whoever pressed the button.
+    """
+
+    def __init__(self, base_url: str, token: str, timeout: float = 60.0):
+        self.base = base_url.rstrip("/")
+        self.token = token
+        self._http = httpx.AsyncClient(base_url=self.base, timeout=timeout,
+                                       follow_redirects=True)
+
+    async def aclose(self):
+        await self._http.aclose()
+
+    def _headers(self, actor: str = "") -> dict:
+        h = {"Authorization": f"Bearer {self.token}"}
+        who = actor or ACTOR.get()
+        if who:
+            h["X-Actor"] = who
+        return h
+
+    @staticmethod
+    def _detail(r: httpx.Response) -> str:
+        try:
+            return str(r.json().get("detail") or r.text)[:400]
+        except Exception:
+            return (r.text or f"HTTP {r.status_code}")[:400]
+
+    async def _get(self, path: str, actor: str = "", **kw):
+        r = await self._http.get(path, headers=self._headers(actor), **kw)
+        if r.status_code >= 400:
+            raise ApiError(self._detail(r))
+        return r
+
+    async def _post(self, path: str, actor: str = "", *, json=None, data=None,
+                    files=None, ok=(200, 202)):
+        r = await self._http.post(path, headers=self._headers(actor), json=json,
+                                  data=data, files=files)
+        if r.status_code not in ok:
+            raise ApiError(self._detail(r))
+        return r
+
+    # ------------------------------------------------------------------ #
+    # Identity — the call to make first, because it answers "why was that
+    # refused" before it happens.
+    # ------------------------------------------------------------------ #
+    async def whoami(self, actor: str = "") -> dict:
+        return (await self._get("/v1/whoami", actor)).json()
+
+    async def announce_features(self, catalogue: list) -> dict:
+        """Tell the server what this bot can do, and read back what is on.
+
+        Authenticated by the token alone — no actor. A bot announces itself at
+        start-up, before anybody has pressed a button, so an actor requirement
+        here would mean it could never boot until somebody used it.
+        """
+        r = await self._post("/v1/features", json={"features": catalogue},
+                             ok=(200,))
+        return (r.json() or {}).get("features") or {}
+
+    async def features(self) -> dict:
+        r = await self._get("/v1/features")
+        return (r.json() or {}).get("features") or {}
+
+    async def link(self, code: str, actor: str = "") -> dict:
+        return (await self._post("/v1/link", actor, json={"code": code},
+                                 ok=(200,))).json()
+
+    # ------------------------------------------------------------------ #
+    # Projects
+    # ------------------------------------------------------------------ #
+    async def projects(self, actor: str = "") -> tuple:
+        body = (await self._get("/v1/projects", actor)).json() or {}
+        items = body.get("projects") or []
+        # A token has no browser session, so there is no "the dashboard's
+        # current project". A bot scoped to one project has an obvious answer;
+        # otherwise the first is a starting point the user can change.
+        return items, (items[0] if items else {})
+
+    async def project(self, pid: str, actor: str = "") -> dict:
+        return (await self._get(f"/v1/projects/{pid}", actor)).json() or {}
+
+    async def current_project(self, actor: str = "") -> dict:
+        _, current = await self.projects(actor)
+        return current
+
+    # ------------------------------------------------------------------ #
+    # Preview + run
+    # ------------------------------------------------------------------ #
+    async def preview(self, *, text: str = "", file: tuple = None,
+                      platform: str = "x", dedupe: bool = True,
+                      project_id: str = "", styles: list = None,
+                      actor: str = "") -> dict:
+        """`platform` is accepted and ignored: on `/v1` it comes from the
+        project's styles, which is the pairing the server enforces anyway."""
+        if file:
+            r = await self._post("/v1/preview/file", actor,
+                                 data={"project_id": project_id,
+                                       "styles": ",".join(styles or []),
+                                       "dedupe": "1" if dedupe else "0"},
+                                 files={"file": file}, ok=(200,))
+        else:
+            r = await self._post("/v1/preview", actor,
+                                 json={"links": find_links(text),
+                                       "project_id": project_id,
+                                       "styles": list(styles or []),
+                                       "dedupe": dedupe}, ok=(200,))
+        return r.json()
+
+    async def submit(self, *, report_name: str, report_type, platform: str = "",
+                     text: str = "", file: tuple = None, outputs: list = None,
+                     project_id: str = "", dedupe: bool = True,
+                     actor: str = "") -> dict:
+        types = [report_type] if isinstance(report_type, str) else list(report_type or [])
+        if file:
+            r = await self._post("/v1/run/file", actor,
+                                 data={"name": report_name,
+                                       "project_id": project_id,
+                                       "styles": ",".join(types),
+                                       "outputs": ",".join(outputs or []),
+                                       "dedupe": "1" if dedupe else "0"},
+                                 files={"file": file})
+        else:
+            r = await self._post("/v1/run", actor,
+                                 json={"links": find_links(text),
+                                       "name": report_name,
+                                       "project_id": project_id,
+                                       "styles": types,
+                                       "outputs": list(outputs or []),
+                                       "dedupe": dedupe})
+        body = r.json()
+        # The bot speaks in job ids; /v1 speaks in run ids. Same thing, and the
+        # translation belongs here rather than in every caller.
+        body.setdefault("job_id", body.get("run_id"))
+        body.setdefault("job_ids", body.get("run_ids") or [body.get("run_id")])
+        return body
+
+    async def status(self, job_id: str, actor: str = "") -> dict:
+        return (await self._get(f"/v1/run/{job_id}", actor)).json()
+
+    async def cancel(self, job_id: str, actor: str = "") -> None:
+        await self._post(f"/v1/run/{job_id}/cancel", actor, json={}, ok=(200,))
+
+    async def download(self, job_id: str, kind: str, actor: str = "") -> tuple:
+        r = await self._get(f"/v1/run/{job_id}/download/{kind}", actor)
+        name = f"report.{kind}"
+        disp = r.headers.get("content-disposition", "")
         m = re.search(r"filename\*=\s*([\w-]+)''([^;]+)", disp, re.I)
         if m:
             name = unquote(m.group(2))

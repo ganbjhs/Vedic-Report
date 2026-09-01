@@ -98,6 +98,38 @@ services:
       - web
 
   # ---------------------------------------------------------------------------
+  # Bot 2 — the message splitter. Same image as `tg`, different entry point and
+  # a different BotFather token: one bot, one job, one DM window.
+  #
+  # It needs no capture and no Chromium; it does not even need `web` unless a
+  # RM_TOKEN is set, in which case it asks /v1 whether the person driving it may
+  # send into other people's chats.
+  # ---------------------------------------------------------------------------
+  tg-splitter:
+    # Behind a profile, like caddy above, for one reason: `env_file` is read
+    # from the SERVER's disk at container start, and a missing file fails the
+    # whole `docker compose up`, not just this service. A profile means a
+    # server that has not been given tg/.env.splitter yet simply does not start
+    # this bot, instead of refusing to start the web app. deploy.sh turns the
+    # profile on by itself once the file is there.
+    profiles: ["splitter"]
+    build: ./tg
+    image: report-tgbot:latest
+    restart: unless-stopped
+    command: ["python", "splitter.py"]
+    env_file: tg/.env.splitter    # TG_SPLITTER_TOKEN, APP_URL, RM_TOKEN
+    environment:
+      TG_DATA_DIR: /data
+    volumes:
+      # The chat and people registries, and each person's remembered
+      # destination. A bind mount so a rebuild does not make the bot forget
+      # every group it has ever been in — Telegram gives it no way to look them
+      # up again.
+      - ./tg/data-splitter:/data
+    depends_on:
+      - web
+
+  # ---------------------------------------------------------------------------
   # OPTIONAL: Caddy for automatic HTTPS, for a server with nothing else on
   # ports 80/443.
   #

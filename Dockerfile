@@ -25,9 +25,17 @@ WORKDIR /app
 # without a Devanagari face on disk that name prints as black rectangles
 # (RULEBOOK rule 14). `tpl_builder._unicode_font` looks for exactly these paths
 # and says on stdout when it finds none.
+#
+# tesseract-ocr is for `metrics/shot_metrics.py` — the engagement numbers read
+# off the SCREENSHOTS (Facebook, Instagram, and X posts the page reader could
+# not open). The binary is called through subprocess, so no Python package is
+# needed; `-hin` adds Devanagari for a Facebook page in its Hindi UI. Without
+# the package the reader says "NO OCR engine" on the job page and the report
+# prints what the sheet had — nothing else breaks.
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-lohit-deva fonts-freefont-ttf \
+        tesseract-ocr tesseract-ocr-hin \
  && rm -rf /var/lib/apt/lists/*
 
 # Dependencies first so code edits don't invalidate the layer. requirements.txt

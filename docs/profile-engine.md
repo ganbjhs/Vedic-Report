@@ -112,7 +112,13 @@ in a preset.
     "group_by_platform": null         // combined styles only — see below
   },
 
-  "outputs": ["pdf", "docx", "html"]  // xlsx is global, not a profile output
+  "outputs": ["pdf", "docx", "html"],  // xlsx is global, not a profile output
+
+  "read_metrics": {                 // 3.3.0, optional — where a count a reader
+    "likes": ["like"],              // (x_metrics / shot_metrics) goes in the
+    "views": ["reach"],             // sheet; absent = registry.DEFAULT_READ_METRICS
+    "missing": {"views": "hidden"}  // the WORD for a count the post does not show
+  }                                 // (the Kashi deck's map, shown)
 }
 ```
 

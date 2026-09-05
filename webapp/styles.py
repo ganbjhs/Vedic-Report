@@ -40,7 +40,7 @@ _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,40}$")
 # validation, so a hostile body cannot smuggle a key past the registry's
 # allow-list by naming it at the top level.
 _KEEP_TOP = ("schema", "slug", "label", "description", "extends", "platform",
-             "capture", "image", "page", "content", "outputs")
+             "capture", "image", "page", "content", "outputs", "read_metrics")
 
 
 class StyleError(ValueError):

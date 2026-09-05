@@ -95,6 +95,24 @@ PLATFORMS = (
 DEFAULT_PLATFORM = "x"
 
 
+def _as_map(m: dict) -> tuple:
+    """{read_key: [sheet_key…]} -> ((read_key, (sheet_key, …)), …), hashable."""
+    return tuple((k, tuple(v)) for k, v in (m or {}).items())
+
+
+def _default_read_map() -> tuple:
+    """registry.DEFAULT_READ_METRICS — the built-ins and any style that does not
+    name its own map. Spelled out as a fallback so a registry that failed to
+    import (logged above) still leaves the readers doing what they always did."""
+    try:
+        import registry
+        return _as_map(registry.DEFAULT_READ_METRICS)
+    except Exception:
+        return _as_map({"likes": ["like"], "comments": ["comments"],
+                        "shares": ["shares"],
+                        "views": ["views", "reach", "impressions"]})
+
+
 @dataclass(frozen=True)
 class ReportType:
     """One selectable report type.
@@ -136,6 +154,20 @@ class ReportType:
     # profile runners do not take the switch, and passing it to one would fail
     # the job on an unrecognised argument rather than merely be ignored.
     allows_fast: bool = False
+    # True when this style's entrypoint understands `--read-metrics`: after the
+    # capture, the screenshots are read for the engagement numbers they show
+    # (metrics/shot_metrics.py) and blank sheet cells are filled from them.
+    # Only `profiles/run_profile.py` takes the switch; the two frozen built-ins
+    # would fail the job on it (rule 1), so — as with every flag here — it is a
+    # capability and never a slug test.
+    allows_read_metrics: bool = False
+    # Where a number a reader comes back with goes in the sheet — the style's
+    # `read_metrics` map (registry.read_metrics_map), as a tuple of
+    # (read_key, (sheet_key, …)) so this dataclass stays hashable. The default
+    # is what both readers always did; the Kashi deck narrows it to its two
+    # labelled pills. `runner._merge_metrics` and `shot_metrics.fill_results`
+    # both read it, so the page reader and the screenshot reader agree.
+    read_metrics_map: tuple = field(default_factory=_default_read_map)
     # Which network this style captures from. Everything today is X; a style is
     # offered only under its own platform, so the Style step never shows a card
     # that cannot run.
@@ -237,6 +269,9 @@ def _from_profiles() -> list:
             outputs=tuple(p.get("outputs") or ("pdf",)),
             custom=registry.is_user(slug),
             template=bool(p.get("template")),
+            # Every profile runs through run_profile.py, which takes the switch.
+            allows_read_metrics=True,
+            read_metrics_map=_as_map(registry.read_metrics_map(p)),
             # Profiles may name their platform; registry.validate() has already
             # checked it against this module's table, so an unknown value can
             # never reach here.

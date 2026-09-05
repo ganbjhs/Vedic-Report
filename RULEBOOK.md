@@ -802,6 +802,11 @@ before touching the engine.
     Like / Impressions / Views / Reach columns (`netlinks.metric_columns`),
     written through the canonical `input.xlsx` (`uploads.write_canonical_xlsx`
     keeps them). Nothing scrapes Insights numbers — they are not public.
+    Since 3.3.0 the blank cells can be **filled**, never overwritten: from the
+    live X page before the capture (`metrics/x_metrics.py`) and from the
+    **screenshot** after it (`metrics/shot_metrics.py`, `run_profile.py
+    --read-metrics`) — see rule 18d. Both write the platform's public counts
+    only, so this sentence still holds.
     **Its art and every slot position come from the Kashi deck** (Canva,
     10 August 2026, 960x540 pt — the same page size the profile renders at, so
     the deck's own point coordinates ARE the profile's). Page images are that
@@ -863,6 +868,92 @@ before touching the engine.
     are read-only files; `set_background` on one first copies it into a
     project-owned user style (`fork_for_project`, idempotent) and the project
     list swaps to the copy. The original never changes under another project.
+
+## 18d. Engagement numbers off the screenshot (3.3.0) — five rules, each earned
+
+`metrics/shot_metrics.py` reads likes / comments / shares / views out of the
+captured PNG with tesseract, so a Facebook or Instagram post — which has no
+account to read the page with (§18b) — still prints its numbers. It runs
+inside `profiles/run_profile.py` between the capture and the build, behind
+`--read-metrics`, which `report_types.allows_read_metrics` hands only to profile
+types (the frozen built-ins would fail on the switch — rule 1). What it took to
+get 64/64 on the influencer fixtures, so nobody re-learns it:
+
+1. **X's action bar has no words, and a zero prints nothing.** "3 · [blank] ·
+   1" is 3 replies, 0 reposts, 1 like. Counting tokens left to right shifts
+   every number after the gap. Numbers are assigned by WHERE they sit — five
+   x-ranges for reply · repost · like · views/bookmark · share (`_SLOTS`), wide
+   enough to cover both layouts X uses (the detail page spreads the groups edge
+   to edge; the timeline card packs them left with bookmark + share at the
+   right). Slot 4 is views on the card and bookmarks on the detail page, which
+   itself prints views in words on the line above — so slot 4 is bookmarks
+   whenever a labelled "Views" was read, and views otherwise.
+2. **The icons must be erased before the digits are read.** Tesseract reads the
+   heart as "0" (so "1.1K" came back as "0 11K"), the repost arrows as "1" (111
+   became 1111), and the views glyph's bars as more 1s (63K became 163K).
+   Nothing about a threshold on body-text height survived contact: one capture
+   had 9.5px body text against 9px digits. What works is relative to the bar
+   itself — the digits are the commonest height among components clearly
+   shorter than the tallest thing in the band (the icons, ~1.5x a digit); erase
+   anything ≥1.25x that, any stroke ≤0.25x as wide (the views bars), and any
+   wide flat stroke (the share tray). Then a token whose box is not digit-height
+   is a piece of icon and is dropped. A band with no such cluster has no digits
+   — every count is zero — and returns nothing rather than guessing.
+3. **Write what the picture shows, not the parsed integer.** X prints 1,156 as
+   `1.1K` (it truncates; `compact()` rounds to `1.2K`). The picture is the
+   evidence, so the sheet gets `1.1K`; the integer is in `metrics_read.json`
+   for arithmetic. The same rule kept the evaluation honest: a read is right
+   when it matches to the precision X printed, not to the DOM's integer.
+4. **A doubtful number is read twice.** Facebook's reaction glyphs sit against
+   the reactions count and drag it to confidence 23 ("644" → "44"). Any
+   numeric token under confidence 70 is cropped with a margin, cleaned of blobs
+   taller than a digit, and re-read at 4x with a digit-only vocabulary.
+5. **The lower post wins.** A reply shot with its parent has two bars and two
+   "Views" lines; the reply — the post the link points at — is underneath, so
+   the last match is kept.
+6. **Where a read count goes is the style's decision, not the reader's.** Both
+   readers come back with the same six public counts (likes, comments, shares,
+   views, followers, bookmarks); a profile's top-level `read_metrics` map says
+   which sheet column(s) each fills (`registry.read_metrics_map`, validated
+   against `_METRIC_KEYS`). Absent, the default is what the readers always did
+   — views to `views`, `reach` AND `impressions`, because the sheet heads that
+   one column "Reach/views". A style whose pills are LABELLED cannot take that
+   default: the Kashi deck draws Likes · Video views · Post Reach · Impressions
+   · ReTweets, each only when its cell has a value, so the default would light
+   three pills with one number and call it three facts. Its map is
+   `{"likes": ["like"], "views": ["reach"]}` — a read post fills **Likes** and
+   **Post Reach** and nothing else; Video views, Impressions and ReTweets stay
+   the sheet's. Both the page reader (`runner._merge_metrics`, translating
+   x_metrics' replies/reposts first) and the screenshot reader
+   (`shot_metrics.fill_results(sheet_map=…)`) take the same map, so the two
+   cannot disagree about a pill. Verified by building the deck from four read
+   posts and looking at the page (`test_shot_metrics.py` §7 holds the logic).
+   The map may also carry `"missing": {"views": "hidden"}` — the WORD to print
+   where the post shows no such count at all (a Facebook photo post has no
+   view count for anyone). "Never 0" still holds: a word is not a number
+   pretending to be one. Only the screenshot pass writes it, because it is the
+   last reader to run and a blank before it may still be filled; only into a
+   cell still blank; and never when OCR was unavailable — then we do not know,
+   and the honest cell is empty. The evidence column says why the word is there.
+7. **The Handle Name is the account's display name, never the @username.** The
+   X capture returns `@handle` (frozen, `x_capture._read_handle`), Instagram's
+   the username, Facebook's the Page NAME — so a combined deck printed "Banaras
+   Live" on one page and "@myogiadityanath" on the next. `profiles/names.py`
+   reads the display name off the page still open after the capture: the
+   `<title>` first ("Yogi Adityanath on X: …", "Nalini's Kitchen on Instagram:
+   …"), then X's `User-Name` block whose text carries the handle we already know
+   (so a reply URL cannot take the PARENT's name — §6.1), then Instagram's
+   `og:title`. Emoji and flags are stripped: Helvetica and the Devanagari face
+   have no glyph for them and they print as boxes (rule 14). The fallback is the
+   handle without its `@`; a name typed in the sheet always wins, as before.
+   Nothing under `src/` changed.
+
+Two things it is not. It does not read Insights (impressions / reach as the
+dashboard reports them — not in any public picture); a view count fills the
+`views` / `reach` / `impressions` blanks exactly as `x_metrics` does, because
+the sheet heads that one column "Reach/views". And it is not verified on real
+Facebook or Instagram captures yet — only on rendered mock-ups of their rows —
+so the first real run's Engagement CSV is the acceptance test (rule 3).
 
 ## 19. A stray dialog and a cropped reply are the same bug
 

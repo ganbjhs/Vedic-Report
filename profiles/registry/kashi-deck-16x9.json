@@ -3,7 +3,7 @@
   "slug": "kashi-deck-16x9",
   "label": "Kashi deck (16:9)",
   "platform": "combined",
-  "description": "The Kashi daily deck, rebuilt on the team's own page art (no text baked in): cover, summary table of sections, one page per post with platform logo, Handle Name, Social Media Report, date, Top N Posts, two-tone metric pills that appear only for the metrics the sheet has (Likes, Video views, Post Reach, Impressions, ReTweets), a LINK button and the screenshot filling its frame; then counter-comment sections as screenshot grids under a green band; a closing links page.",
+  "description": "The Kashi daily deck, rebuilt on the team's own page art (no text baked in): cover, summary table of sections, one page per post with platform logo, Handle Name, Social Media Report, date, Top N Posts, two-tone metric pills that appear only for the metrics the sheet has (Likes, Video views, Post Reach, Impressions, ReTweets) — with 'Read engagement numbers from the posts' on, Likes and Post Reach are filled from what each post shows (likes, and its public view count) wherever the sheet left them blank, a LINK button and the screenshot filling its frame; then counter-comment sections as screenshot grids under a green band; a closing links page.",
   "capture": {
     "engine": "combined",
     "device_scale_factor": 1,
@@ -45,5 +45,6 @@
       {"field": "title",      "x": 0.02, "y": 0.34, "w": 0.28, "h": 0.06, "size_pt": 22, "color": "#FC4F06", "align": "center", "page": "end", "bold": true}
     ]
   },
-  "outputs": ["pdf", "pptx"]
+  "outputs": ["pdf", "pptx"],
+  "read_metrics": {"likes": ["like"], "views": ["reach"], "missing": {"views": "hidden"}}
 }

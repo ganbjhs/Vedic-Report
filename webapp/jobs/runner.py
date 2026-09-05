@@ -236,7 +236,8 @@ def copy_shots_for_resume(old_job_id: str, new_job_id: str) -> int:
 # --------------------------------------------------------------------------- #
 def build_command(report_type: str, title: str, date: str,
                   keep_engagement: bool = False, workers: int = 0,
-                  outputs=None, fast: bool = False, resume: bool = False) -> list:
+                  outputs=None, fast: bool = False, resume: bool = False,
+                  read_metrics: bool = False) -> list:
     """The exact CLI invocation, identical in shape to what you run by hand.
 
     `--no-date` is what makes the document header read exactly what the user
@@ -296,6 +297,9 @@ def build_command(report_type: str, title: str, date: str,
         cmd.append("--fast")
     if resume and rt.allows_resume:
         cmd.append("--resume")
+    # Same reasoning: the frozen built-ins do not take this switch.
+    if read_metrics and rt.allows_read_metrics:
+        cmd.append("--read-metrics")
     wanted = report_types.clean_outputs(report_type, outputs)
     if not rt.builtin and set(wanted) != set(rt.outputs):
         cmd += ["--outputs", ",".join(wanted)]
@@ -323,6 +327,14 @@ _RE_METRICS = re.compile(r"^\[metrics\]\s+(\d+) post\(s\) had at least one metri
 _RE_WROTE = re.compile(r"^\[report\]\s+wrote\s+(.+?)\s+\(")
 _RE_RESUME = re.compile(r"^\[resume\]\s+(\d+) link\(s\) already captured, (\d+) still")
 _RE_RESUME_ALL = re.compile(r"^\[resume\]\s+every one of the (\d+)")
+# metrics/shot_metrics.py — numbers read off the screenshots, between the
+# capture and the build (profiles/run_profile.py --read-metrics). Its own
+# `[shots]` prefix, so nothing here can collide with the `[metrics]` lines of
+# the page reader below (profiles/progress.py says why).
+_RE_S_READING = re.compile(r"^\[shots\]\s+reading (\d+) screenshot")
+_RE_S_ONE = re.compile(r"^\[shots\]\s+(\d+)/(\d+)\s")
+_RE_S_NO_OCR = re.compile(r"^\[shots\]\s+NO OCR engine")
+_RE_S_FILLED = re.compile(r"^\[shots\]\s+filled (\d+) blank cell\(s\) from (\d+)/(\d+)")
 
 
 class _Progress:
@@ -484,6 +496,43 @@ class _Progress:
             self.note(f"All {m.group(1)} link(s) were already captured by the "
                       f"earlier run — going straight to the document.")
             self.building = True
+            return
+        # Numbers off the screenshots (after the capture, before the build).
+        m = _RE_S_READING.match(text)
+        if m:
+            self.building = True
+            self.set_phase("Reading engagement numbers off the screenshots")
+            self.note(f"Reading likes, comments, shares and views off "
+                      f"{m.group(1)} screenshot(s) — what each picture shows, "
+                      f"no account needed.")
+            return
+        m = _RE_S_ONE.match(text)
+        if m:
+            self.set_phase(f"Reading engagement numbers off the screenshots "
+                           f"({m.group(1)}/{m.group(2)})")
+            return
+        if _RE_S_NO_OCR.match(text):
+            self.note("Engagement numbers could not be read off the screenshots — "
+                      "tesseract is not installed on this server (see "
+                      "metrics/README.md). The report shows what the sheet had.",
+                      "warn")
+            return
+        m = _RE_S_FILLED.match(text)
+        if m:
+            cells, read, total = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if cells:
+                self.note(f"Filled in {cells} engagement value(s) the sheet had "
+                          f"left blank, read off {read} of {total} screenshot(s). "
+                          f"Numbers already typed into the sheet were kept.")
+            elif read:
+                self.note(f"{read} of {total} screenshot(s) showed engagement "
+                          f"numbers, but no sheet cell was blank — nothing "
+                          f"changed. The read numbers are in the CSV download.")
+            else:
+                self.note(f"None of the {total} screenshot(s) showed a readable "
+                          f"engagement number — the report prints what the sheet "
+                          f"had.", "warn")
+            self.set_phase("Building the document")
             return
         m = _RE_WROTE.match(text)
         if m:
@@ -705,25 +754,79 @@ def publish(job_id: str, app: Path, stem: str, wanted=None,
         artifacts["zip"] = zip_dest.name
 
     # The engagement numbers as READ, exact and unrounded — the report shows
-    # X's compact form, and someone will want to add them up.
-    if metrics_csv is not None and Path(metrics_csv).is_file():
+    # X's compact form, and someone will want to add them up. Two readers may
+    # have run (the X page before the capture, the screenshots after it); one
+    # CSV holds both, with a Source column saying which saw what.
+    shot_csv = reports / "metrics_read.csv"
+    have_x = metrics_csv is not None and Path(metrics_csv).is_file()
+    if have_x or shot_csv.is_file():
         dest = out / f"{stem}_metrics.csv"
-        shutil.copy2(metrics_csv, dest)
-        artifacts["csv"] = dest.name
+        try:
+            _write_metrics_csv(dest, Path(metrics_csv) if have_x else None,
+                               shot_csv if shot_csv.is_file() else None)
+            artifacts["csv"] = dest.name
+        except Exception as e:                  # rule 17: say so, keep the report
+            print(f"[publish] metrics CSV not written: {e}", flush=True)
+            if have_x:
+                shutil.copy2(metrics_csv, dest)
+                artifacts["csv"] = dest.name
 
     return artifacts
+
+
+_CSV_HEAD = ("Link", "Source", "Platform", "Status", "Likes", "Comments / Replies",
+             "Shares / Reposts", "Views", "Bookmarks", "Followers", "Shown as",
+             "Evidence")
+
+
+def _write_metrics_csv(dest: Path, x_csv, shot_csv) -> None:
+    """One sheet of every number read, whichever reader read it."""
+    import csv
+    rows = []
+    if x_csv is not None:
+        with open(x_csv, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                rows.append([r.get("Link", ""), "X page", "x", r.get("Status", ""),
+                             r.get("Likes", ""), r.get("Replies", ""),
+                             r.get("Reposts", ""), r.get("Views", ""),
+                             r.get("Bookmarks", ""), "", "", ""])
+    if shot_csv is not None:
+        with open(shot_csv, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                shown = "; ".join(f"{k.lower()} {r.get(k + ' (shown)', '')}"
+                                  for k in ("Likes", "Comments", "Shares", "Views",
+                                            "Followers", "Bookmarks")
+                                  if r.get(k + " (shown)", ""))
+                rows.append([r.get("Link", "") or r.get("Screenshot", ""),
+                             f"Screenshot ({r.get('Engine', '')})".replace(" ()", ""),
+                             r.get("Platform", ""), r.get("Status", ""),
+                             r.get("Likes", ""), r.get("Comments", ""),
+                             r.get("Shares", ""), r.get("Views", ""),
+                             r.get("Bookmarks", ""), r.get("Followers", ""),
+                             shown, r.get("Evidence", "")])
+    with dest.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(_CSV_HEAD)
+        w.writerows(rows)
 
 
 # --------------------------------------------------------------------------- #
 # Engagement metadata — read the numbers off the posts, before the document
 # --------------------------------------------------------------------------- #
 # What X can tell us -> the sheet's own metric keys (profiles/netlinks.py
-# METRIC_HEADERS). Views, reach and impressions are ONE number on X: the sheet
-# itself heads that column "Reach/views", so all three keys get it rather than
-# forcing a choice the platform does not make.
+# METRIC_HEADERS). WHICH keys is the style's decision — its `read_metrics` map
+# (registry.read_metrics_map, carried on ReportType.read_metrics_map), spoken
+# in the readers' shared vocabulary: likes, comments, shares, views, followers,
+# bookmarks. x_metrics.py says "replies" and "reposts" for the same two facts,
+# so its rows are translated first. The default map sends views to views, reach
+# AND impressions — one number on X, and the sheet heads that column
+# "Reach/views"; the Kashi deck's map sends likes to "Likes" and views to "Post
+# Reach", nothing else.
+_X_TO_READ_KEY = {"likes": "likes", "reposts": "shares", "replies": "comments",
+                  "views": "views", "bookmarks": "bookmarks"}
 _METRIC_MAP = (("likes", ("like",)),
-               ("reposts", ("shares",)),
-               ("replies", ("comments",)),
+               ("comments", ("comments",)),
+               ("shares", ("shares",)),
                ("views", ("views", "reach", "impressions")))
 
 _RE_M_READING = re.compile(r"^\[metrics\]\s+reading (\d+) X post")
@@ -736,7 +839,8 @@ _RE_M_UNREAD = re.compile(r"^\[metrics\]\s+(\d+) post\(s\) could not be opened")
 _RE_M_PARTIAL = re.compile(r"^\[metrics\]\s+(\d+) post\(s\) were missing")
 
 
-def _fetch_metrics(job_id: str, app: Path, prog: "_Progress") -> Path:
+def _fetch_metrics(job_id: str, app: Path, prog: "_Progress",
+                   sheet_map=None) -> Path:
     """Read each X post's engagement numbers and fill in the blanks.
 
     Runs the reader as its own subprocess in the job's private code copy, for
@@ -834,7 +938,7 @@ def _fetch_metrics(job_id: str, app: Path, prog: "_Progress") -> Path:
         prog.note(f"Engagement numbers skipped — unreadable result ({e}).", "warn")
         return None
 
-    filled = _merge_metrics(rows, read)
+    filled = _merge_metrics(rows, read, sheet_map)
     if filled:
         from .. import uploads
         try:
@@ -853,13 +957,17 @@ def _fetch_metrics(job_id: str, app: Path, prog: "_Progress") -> Path:
     return app / "metrics.csv"
 
 
-def _merge_metrics(rows: list, read: list) -> int:
+def _merge_metrics(rows: list, read: list, sheet_map=None) -> int:
     """Fill blank `sheet_metrics` from what the reader saw. Returns how many.
 
     Values are written in X's own compact form (984, 1.2K, 45K) because that is
     how the platform states them and how they fit the metric pills the deck
     styles draw. The exact integers are never lost — they are in metrics.json
     and in the CSV download beside the report.
+
+    `sheet_map` — ((read_key, (sheet_key, …)), …) from the style, or the
+    default. A count with no entry in the map is read, kept in the CSV, and
+    written nowhere.
     """
     by_link = {}
     for r in read or []:
@@ -867,6 +975,7 @@ def _merge_metrics(rows: list, read: list) -> int:
             by_link[str(r.get("link") or "").strip()] = r
     if not by_link:
         return 0
+    smap = tuple(sheet_map) if sheet_map else _METRIC_MAP
     filled = 0
     for row in rows:
         got = by_link.get(str(row.get("link") or "").strip())
@@ -874,10 +983,14 @@ def _merge_metrics(rows: list, read: list) -> int:
             continue
         metrics = dict(row.get("sheet_metrics") or {})
         display = got.get("display") or {}
-        for source_key, sheet_keys in _METRIC_MAP:
-            if got.get(source_key) is None:
+        # the reader's own keys -> the shared vocabulary the map is spoken in
+        seen = {_X_TO_READ_KEY[k]: (got.get(k), display.get(k))
+                for k in _X_TO_READ_KEY if k in got}
+        for read_key, sheet_keys in smap:
+            n, shown = seen.get(read_key, (None, None))
+            if n is None:
                 continue                       # X did not say -> leave the gap
-            value = str(display.get(source_key) or "").strip()
+            value = str(shown or "").strip()
             if not value or value == "\u2014":
                 continue
             for key in sheet_keys:
@@ -945,7 +1058,8 @@ def run_job(job_id: str, on_line=None) -> dict:
     cmd = build_command(job["report_type"], job["title"], date, keep_engagement,
                         int(job.get("workers") or 0), outputs,
                         bool(job.get("fast_capture")),
-                        bool(job.get("resumed_from")))
+                        bool(job.get("resumed_from")),
+                        bool(job.get("fetch_metrics")))
 
     store.update(job_id, status="running", started_at=time.time(),
                  phase="Checking the X login", error="")
@@ -983,19 +1097,31 @@ def run_job(job_id: str, on_line=None) -> dict:
         elif "Signed in" in message:
             prog.note("Signed in to X automatically (the saved session was "
                       "missing or expired).")
-    # Engagement numbers BEFORE the capture: the merged values go into
-    # input.xlsx, which the pipeline is about to read.
+    # Engagement numbers, two routes. X posts are read off the live page BEFORE
+    # the capture (exact, needs the shared account): the merged values go into
+    # input.xlsx, which the pipeline is about to read. Everything else — and any
+    # X post that reader could not open — is read off the SCREENSHOT after the
+    # capture, inside the pipeline (`--read-metrics`, profiles/run_profile.py):
+    # what the picture shows, no account needed. Both fill blank cells only.
     metrics_csv = None
     if bool(job.get("fetch_metrics")):
-        if rt is not None and rt.platform not in ("x", "combined"):
-            prog.note(f"Engagement numbers are read from X only, and this is a "
-                      f"{rt.platform} style — skipped.", "warn")
-        else:
+        if rt is not None and rt.platform in ("x", "combined"):
             try:
-                metrics_csv = _fetch_metrics(job_id, app, prog)
+                metrics_csv = _fetch_metrics(job_id, app, prog,
+                                             rt.read_metrics_map)
             except Exception as e:              # rule 17: never silent
                 prog.note(f"Engagement numbers skipped — the reader failed "
                           f"({e}). The report itself is unaffected.", "warn")
+        if rt is not None and rt.allows_read_metrics:
+            prog.note("After the capture, each screenshot is read for the "
+                      "engagement numbers it shows"
+                      + (" — the route for Facebook and Instagram posts, and "
+                         "for any X post the page reader could not open."
+                         if rt.platform == "combined" else ".")
+                      + " Blank sheet cells only; typed numbers are kept.")
+        elif rt is not None and rt.platform not in ("x", "combined"):
+            prog.note(f"Engagement numbers are read from X only for this style "
+                      f"({rt.label}) — skipped.", "warn")
         if (store.get(job_id) or {}).get("status") == "cancelled":
             store.update(job_id, finished_at=time.time(), phase="Cancelled")
             return store.get(job_id)

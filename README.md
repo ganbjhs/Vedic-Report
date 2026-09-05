@@ -59,7 +59,12 @@ The web app's dashboard (`webapp/`, no build step — one CSS file, one JS file)
   (`Section | Handle | Link | Like | Post Impression | Video Views | Reach…`)
   with X, Facebook and Instagram links mixed, in sections. The right engine
   runs per link, sections are kept, and the **metrics print from the sheet's
-  columns** (Insights numbers are not public, so nothing is scraped). The
+  columns** — typed by the team, or, with **Read engagement numbers from the
+  posts** on in Project settings, filled in for the blank cells: X posts off
+  the live page before the capture, Facebook and Instagram posts (and any X
+  post the page would not open) **off their screenshot** after it, exactly as
+  the picture shows them (`metrics/README.md`). Insights numbers are not
+  public and are never scraped; a typed number is never overwritten. The
   shipped style **Combined report (16:9)** produces cover → summary table of
   sections → one landscape page per post (handle, section, date, platform
   logo, *Post i / Top N posts*, metric pills, LINK button, screenshot) → links.
@@ -324,6 +329,9 @@ check it (this project's rule 3, and it has been earned).
 │   └── tpl_preview.py        the design kit: Canva slot guide + one-page preview
 ├── facebook/                 the Facebook capture engine (public posts, logged-out) — via profiles/
 ├── instagram/                the Instagram capture engine (public posts, logged-out) — via profiles/
+├── metrics/                  engagement numbers, no pixels — see metrics/README.md
+│   ├── x_metrics.py          off the live X page (logged in), before the capture
+│   └── shot_metrics.py       off the SCREENSHOT (tesseract), after it — FB / IG / any platform
 │
 ├── webapp/                   the web layer
 │   ├── main.py               app, pages, auth routes

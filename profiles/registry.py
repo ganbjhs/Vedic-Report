@@ -105,7 +105,49 @@ _ALLOWED = {
                 "links_table", "group_by_platform"},
 }
 _TOP = {"schema", "slug", "label", "description", "extends", "platform",
-        "capture", "image", "page", "content", "outputs", "template"}
+        "capture", "image", "page", "content", "outputs", "template",
+        "read_metrics"}
+
+# `read_metrics` (3.3.0): WHERE a number read off a post goes in the sheet.
+# The two readers (metrics/x_metrics.py on the live X page, shot_metrics.py on
+# the screenshot) both come back with the same six public counts; this says
+# which sheet column(s) each one fills — and only blank cells are ever filled.
+# Absent = the default below, which is what the readers did before styles could
+# say otherwise: views is one public number that the sheet heads "Reach/views",
+# so it fills whichever of the three is blank. A style whose pills are LABELLED
+# ("Likes", "Post Reach", "Impressions"…) names its own map so a read count
+# lands under the one label it belongs to, not under all three — the Kashi deck
+# says {"likes": ["like"], "views": ["reach"]} and its other pills stay the
+# sheet's to fill.
+READ_KEYS = ("likes", "comments", "shares", "views", "followers", "bookmarks")
+DEFAULT_READ_METRICS = {"likes": ["like"], "comments": ["comments"],
+                        "shares": ["shares"],
+                        "views": ["views", "reach", "impressions"]}
+# `read_metrics.missing` — {read_key: text}: what to PRINT when the post does
+# not show that count at all. The readers' rule is "a number not shown stays
+# blank, never 0"; this lets a style put a word there instead — the Kashi deck
+# prints "hidden" in Post Reach for a Facebook photo post, which shows no view
+# count to anyone. Written by the LAST reader to run (the screenshot pass),
+# and only into a cell still blank after every number that could be read was.
+MISSING_KEY = "missing"
+
+
+def read_metrics_map(profile: dict) -> dict:
+    """{read_key: [sheet_key, …]} for this profile — its own or the default.
+    Copied, so a caller may mutate it. `missing` is not part of the map."""
+    m = profile.get("read_metrics") if isinstance(profile, dict) else None
+    src = m if isinstance(m, dict) else DEFAULT_READ_METRICS
+    return {k: list(v) for k, v in src.items() if k != MISSING_KEY}
+
+
+def read_missing_map(profile: dict) -> dict:
+    """{read_key: text} — what a style prints for a count the post did not
+    show. Empty by default: a blank stays a blank."""
+    m = profile.get("read_metrics") if isinstance(profile, dict) else None
+    if not isinstance(m, dict):
+        return {}
+    miss = m.get(MISSING_KEY)
+    return dict(miss) if isinstance(miss, dict) else {}
 
 # A "template" style: pages designed elsewhere (Canva, Figma, anything that
 # exports a PNG) with SLOTS drawn on top of them in the app. Presentation only:
@@ -442,6 +484,41 @@ def validate(p: dict) -> dict:
         if not isinstance(p.get(section), dict):
             raise ProfileError(f"{slug}: missing '{section}' section")
         _unknown(section, p[section], slug)
+
+    if "read_metrics" in p:
+        rm = p["read_metrics"]
+        if not isinstance(rm, dict):
+            raise ProfileError(f"{slug}: read_metrics must be an object like "
+                               f"{{\"likes\": [\"like\"], \"views\": [\"reach\"]}}")
+        bad = sorted(set(rm) - set(READ_KEYS) - {MISSING_KEY})
+        if bad:
+            raise ProfileError(f"{slug}: read_metrics has unknown read key(s) "
+                               f"{bad}; a reader comes back with {list(READ_KEYS)}")
+        miss = rm.get(MISSING_KEY, {})
+        if not isinstance(miss, dict):
+            raise ProfileError(f"{slug}: read_metrics.missing must be an object "
+                               f"like {{\"views\": \"hidden\"}}")
+        for k, text in miss.items():
+            if k not in READ_KEYS:
+                raise ProfileError(f"{slug}: read_metrics.missing has unknown read "
+                                   f"key {k!r}; one of {list(READ_KEYS)}")
+            if k not in rm:
+                raise ProfileError(f"{slug}: read_metrics.missing.{k} has nowhere "
+                                   f"to go — read_metrics does not map {k!r}")
+            if not isinstance(text, str) or not text.strip():
+                raise ProfileError(f"{slug}: read_metrics.missing.{k} must be the "
+                                   f"text to print, e.g. \"hidden\"")
+        for k, cols in rm.items():
+            if k == MISSING_KEY:
+                continue
+            if (not isinstance(cols, list) or not cols
+                    or not all(isinstance(c, str) for c in cols)):
+                raise ProfileError(f"{slug}: read_metrics.{k} must be a non-empty "
+                                   f"list of sheet metric keys")
+            extra = sorted(set(cols) - set(_METRIC_KEYS))
+            if extra:
+                raise ProfileError(f"{slug}: read_metrics.{k} names unknown sheet "
+                                   f"metric(s) {extra}; allowed: {list(_METRIC_KEYS)}")
 
     cap = p["capture"]
     if cap.get("engine") not in ENGINES:

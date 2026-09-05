@@ -161,6 +161,40 @@ def metrics_partial(count: int) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Numbers off the screenshots  (_RE_S_READING, _RE_S_ONE, _RE_S_NO_OCR,
+#                               _RE_S_FILLED)
+#
+# `metrics/shot_metrics.py` reads likes / comments / shares / views out of the
+# captured PICTURES, after the capture and before the document — the route for
+# Facebook and Instagram, where there is no account to read the page with, and
+# for an X post the page reader could not open. Its own prefix, `[shots]`, so
+# none of these can ever be mistaken for a `[metrics]` line above: a shared
+# prefix with different words is the 'dropping' vs 'dropped' trap again.
+# --------------------------------------------------------------------------- #
+def shots_reading(count: int) -> str:
+    """MUST be emitted: it is where the screenshot reader's own count starts."""
+    return _say(f"[shots] reading {count} screenshot(s) for engagement numbers")
+
+
+def shots_one(n: int, total_: int, status: str, likes: str, comments: str,
+              shares: str, views: str, name: str) -> str:
+    """One per screenshot, as it is read."""
+    return _say(f"[shots] {n}/{total_} {status} · {likes} likes · "
+                f"{comments} comments · {shares} shares · {views} views · {name}")
+
+
+def shots_no_ocr() -> str:
+    return _say("[shots] NO OCR engine — tesseract is not installed, so nothing "
+                "was read off the screenshots")
+
+
+def shots_filled(cells: int, read: int, total_: int) -> str:
+    """How many blank sheet cells the pictures filled, from how many shots."""
+    return _say(f"[shots] filled {cells} blank cell(s) from {read}/{total_} "
+                "screenshot(s) that showed a number")
+
+
+# --------------------------------------------------------------------------- #
 # Resume  (_RE_RESUME, _RE_RESUME_ALL)
 #
 # `src/run_report.py --resume` prints these literally, the way the frozen

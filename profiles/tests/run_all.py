@@ -15,7 +15,8 @@ SUITES = ("test_shapes.py", "test_parity.py",
           "test_progress_contract.py", "test_builder.py",
           "test_dispatch.py", "test_inputs.py",
           "test_sheets.py", "test_sectioned_sheet.py",
-          "test_projects.py", "test_smartsheet.py")
+          "test_projects.py", "test_smartsheet.py",
+          "test_shot_metrics.py")
 
 
 def main() -> int:

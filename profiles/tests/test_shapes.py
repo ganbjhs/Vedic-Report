@@ -146,6 +146,38 @@ raises("missing max_in", lambda: registry.validate(
 raises("bad schema version", lambda: registry.validate(
     {**registry.load("twitter"), "schema": 99}), "schema must be 1")
 raises("unknown profile", lambda: registry.load("nope"), "no such profile")
+# read_metrics (3.3.0): where a count a reader comes back with goes in the sheet
+raises("read_metrics must be an object", lambda: registry.validate(
+    {**registry.load("kashi-deck-16x9"), "read_metrics": ["likes"]}), "must be an object")
+raises("read_metrics rejects a key no reader produces", lambda: registry.validate(
+    {**registry.load("kashi-deck-16x9"), "read_metrics": {"impressions": ["reach"]}}),
+       "unknown read key")
+raises("read_metrics rejects an unknown sheet metric", lambda: registry.validate(
+    {**registry.load("kashi-deck-16x9"), "read_metrics": {"likes": ["hearts"]}}),
+       "unknown sheet metric")
+raises("read_metrics rejects an empty target list", lambda: registry.validate(
+    {**registry.load("kashi-deck-16x9"), "read_metrics": {"likes": []}}), "non-empty list")
+raises("read_metrics.missing must be an object", lambda: registry.validate(
+    {**registry.load("kashi-deck-16x9"),
+     "read_metrics": {"views": ["reach"], "missing": "hidden"}}), "must be an object")
+raises("read_metrics.missing rejects a key the map does not send anywhere",
+       lambda: registry.validate(
+    {**registry.load("kashi-deck-16x9"),
+     "read_metrics": {"likes": ["like"], "missing": {"views": "hidden"}}}), "nowhere to go")
+raises("read_metrics.missing wants text", lambda: registry.validate(
+    {**registry.load("kashi-deck-16x9"),
+     "read_metrics": {"views": ["reach"], "missing": {"views": 0}}}), "text to print")
+check("the Kashi deck maps likes -> Likes, views -> Post Reach, nothing else",
+      registry.read_metrics_map(registry.load("kashi-deck-16x9")),
+      {"likes": ["like"], "views": ["reach"]})
+check("…and prints 'hidden' where the post shows no view count",
+      registry.read_missing_map(registry.load("kashi-deck-16x9")), {"views": "hidden"})
+check("no missing texts by default", registry.read_missing_map(registry.load("combined-16x9")), {})
+check("a style without a map gets the default",
+      registry.read_metrics_map(registry.load("combined-16x9")),
+      registry.DEFAULT_READ_METRICS)
+check("the default is a copy, not the constant",
+      registry.read_metrics_map({}) is not registry.DEFAULT_READ_METRICS, True)
 
 print("\n7. extends merges per-section and keeps the child's identity")
 import json, tempfile                       # noqa: E402

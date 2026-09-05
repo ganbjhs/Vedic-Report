@@ -14,6 +14,12 @@ shape. `--profile <slug>` is the only addition, plus `--outputs pdf,pptx` — a
 FILTER over the documents the style already declares, never a way to ask for
 one it does not build.
 
+`--read-metrics` is the other addition: between the capture and the build, the
+screenshots are read for the numbers they show (`metrics/shot_metrics.py`) and
+any blank metric cell is filled from them — the Facebook / Instagram route to
+engagement numbers, where no account exists to read the page with. Off by
+default, so a CLI run behaves exactly as before.
+
 `run.py` and everything under `src/` are untouched.
 """
 import datetime
@@ -58,6 +64,7 @@ def _take_switch(argv, flag):
 def main():
     argv = sys.argv[:]
     bare = _take_switch(argv, "--no-date")
+    read_metrics = _take_switch(argv, "--read-metrics")
     slug = _take_flag(argv, "--profile") or "twitter"
     outputs = _take_flag(argv, "--outputs") or ""
 
@@ -82,6 +89,20 @@ def main():
     #    --headed / --profile), so --profile goes back on for it.
     sys.argv = argv + ["--profile", slug]
     prof_runner.main()
+
+    # 1b) the numbers the pictures show, into the blank metric cells. Never
+    #     fatal: a reader that fails costs the report its filled-in numbers,
+    #     not the report (rule 17 — but say so on stdout).
+    if read_metrics:
+        try:
+            sys.path.insert(0, str(HERE.parent / "metrics"))
+            import shot_metrics                                   # noqa: E402
+            shot_metrics.fill_results(prof_runner.OUT / "results.json",
+                                      sheet_map=registry.read_metrics_map(profile),
+                                      missing=registry.read_missing_map(profile))
+        except Exception as e:
+            print(f"[shots] reading the screenshots failed ({e}) — the report "
+                  f"prints what the sheet already had", flush=True)
 
     # 2) build the documents this profile asks for
     sys.argv = ["prof_builder", header, stem, slug, outputs]

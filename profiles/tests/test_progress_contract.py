@@ -82,6 +82,13 @@ CASES = [
     ("metrics_no_session",  lambda: emitted(P.metrics_no_session),     RN._RE_M_NO_SESSION, None),
     ("metrics_unread",      lambda: emitted(P.metrics_unread, 4),      RN._RE_M_UNREAD, ("4",)),
     ("metrics_partial",     lambda: emitted(P.metrics_partial, 5),     RN._RE_M_PARTIAL, ("5",)),
+    # metrics/shot_metrics.py — numbers read off the screenshots after the capture
+    ("shots_reading",       lambda: emitted(P.shots_reading, 9),        RN._RE_S_READING, ("9",)),
+    ("shots_one",           lambda: emitted(P.shots_one, 2, 9, "ok", "644", "45",
+                                            "11", "—", "03_fb_post.png"),
+                                                                      RN._RE_S_ONE, ("2", "9")),
+    ("shots_no_ocr",        lambda: emitted(P.shots_no_ocr),            RN._RE_S_NO_OCR, None),
+    ("shots_filled",        lambda: emitted(P.shots_filled, 14, 7, 9),  RN._RE_S_FILLED, ("14", "7", "9")),
     # src/run_report.py --resume
     ("resume_reusing",      lambda: emitted(P.resume_reusing, 1100, 132), RN._RE_RESUME, ("1100", "132")),
     ("resume_complete",     lambda: emitted(P.resume_complete, 1232),   RN._RE_RESUME_ALL, ("1232",)),
@@ -108,6 +115,16 @@ check("too-small line does NOT match the parent regex",
       matches(RN._RE_PARENT_LOST, small), False)
 check("too-small line does NOT match the overlay regex",
       matches(RN._RE_BLOCKED, small), False)
+# the two readers' per-post lines share a shape ("N/M status · …") and differ
+# only by prefix — the prefix is the whole contract, so prove it holds
+shot_line = emitted(P.shots_one, 1, 3, "ok", "1", "2", "3", "4", "a.png")
+page_line = emitted(P.metrics_one, 1, 3, "ok", "1", "2", "3", "4", "https://x.com/a/status/1")
+check("screenshot line does NOT match the page reader's regex",
+      matches(RN._RE_M_ONE, shot_line), False)
+check("page line does NOT match the screenshot reader's regex",
+      matches(RN._RE_S_ONE, page_line), False)
+check("'filled … cell(s)' does NOT match the influencer's metrics regex",
+      matches(RN._RE_METRICS, emitted(P.shots_filled, 1, 1, 1)), False)
 
 # --------------------------------------------------------------------------- #
 print("\n3. no emitter accidentally matches a DIFFERENT regex")

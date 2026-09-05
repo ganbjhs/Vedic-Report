@@ -13,6 +13,9 @@ profile that wants a capture knob must have it as a parameter of `capture()`
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import names                                        # noqa: E402  (profiles/)
+
 _MISSING_METRICS = {"followers": "—", "reactions": "—", "comments": "—",
                     "reach": "—", "shares": "—"}
 
@@ -120,13 +123,29 @@ def run_chunk(chunk, headless, storage_state, ctx_kwargs, src_path, inf_path,
             res.update({"idx": t["idx"], "category": t["category"],
                         "account_name": t["account"],
                         "post_link": t["post_link"]})
+            # The account's display name, off the page still open on the post
+            # ("Yogi Adityanath", not "@myogiadityanath") — profiles/names.py.
+            # The X and Instagram captures return the @handle; Facebook's
+            # already returns the Page name, so it is left as it came.
+            if (not influencer and plat in ("x", "instagram")
+                    and res.get("status") == "ok"):
+                try:
+                    res["display_name"] = names.display_name(
+                        page, plat, res.get("handle") or "")
+                except Exception as e:           # rule 17: never silent
+                    print(f"[worker] display name not read ({e})", flush=True)
+                    res["display_name"] = ""
             # A sheet with no handle column gives every row a placeholder name
             # derived from its URL ("Facebook post", a numeric page id, "X
             # post"). The capture just read the real one off the page — the FB
-            # Page name, the IG @username, the X @handle — so use it. Only for
-            # rows the reader flagged: a name the user typed always wins.
-            if t.get("account_auto") and (res.get("handle") or "").strip():
-                res["account_name"] = res["handle"].strip()
+            # Page name, the X / IG display name — so use it. Never the
+            # "@username": the team prints the handle NAME as the platform shows
+            # it, and a name the user typed always wins.
+            if t.get("account_auto"):
+                real = names.account_name(res.get("display_name") or "",
+                                          res.get("handle") or "")
+                if real:
+                    res["account_name"] = real
             if t.get("sheet_metrics"):
                 res["sheet_metrics"] = dict(t["sheet_metrics"])
             if influencer:

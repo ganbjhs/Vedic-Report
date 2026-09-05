@@ -1,0 +1,70 @@
+# Deploy to the server on every push to main.
+#
+# What it does: SSH into the VPS and run the repo's own `deploy.sh` there —
+# `git pull --ff-only`, `docker compose up -d --build`, then wait for
+# /health. Nothing is built on GitHub's side; the server pulls the code it
+# already has credentials for, exactly as a hand-run `bash deploy.sh` does.
+# If the health check fails, deploy.sh exits 1, this job goes red and GitHub
+# emails you — the old containers keep running only if the build itself
+# failed; a healthy build that fails /health is investigated with
+# `docker compose logs web` on the server.
+#
+# Secrets (repo → Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST      the server's IP or hostname        (e.g. 200.97.175.12)
+#   DEPLOY_USER      the SSH user                        (root, per HANDOVER.md)
+#   DEPLOY_SSH_KEY   the PRIVATE half of a key whose public half is in that
+#                    user's ~/.ssh/authorized_keys — a key made only for this
+#   DEPLOY_PORT      optional, default 22
+#   DEPLOY_PATH      optional, default $HOME/app (where HANDOVER.md unzips the code)
+#
+# Plain `ssh`, no third-party action: one fewer thing that can change under us,
+# and the whole mechanism is readable in this file.
+name: Deploy to server
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:          # the "Run workflow" button, for a manual redeploy
+
+concurrency:
+  group: deploy-production    # two pushes in a row deploy one after the other,
+  cancel-in-progress: false   # never two `docker compose up` at once
+
+jobs:
+  deploy:
+    name: Pull, build and restart on the server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30       # a cold Docker build with Chromium can take a while
+
+    steps:
+      - name: Load the deploy key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_SSH_KEY" || { echo "::error::DEPLOY_SSH_KEY secret is not set"; exit 1; }
+          test -n "$DEPLOY_HOST"    || { echo "::error::DEPLOY_HOST secret is not set"; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${DEPLOY_PORT:-22}" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Run deploy.sh on the server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          echo "Deploying ${GITHUB_SHA::7} to ${DEPLOY_USER:-root}@$DEPLOY_HOST"
+          ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT:-22}" \
+              -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+              "${DEPLOY_USER:-root}@$DEPLOY_HOST" \
+              "set -euo pipefail; cd \"${DEPLOY_PATH:-\$HOME/app}\"; bash deploy.sh main"
+
+      - name: Summary
+        if: success()
+        run: echo "Deployed ${GITHUB_SHA::7} — health check passed on the server." >> "$GITHUB_STEP_SUMMARY"

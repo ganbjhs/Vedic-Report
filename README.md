@@ -569,6 +569,34 @@ Reboot the server once (`reboot`) and confirm it comes back on its own —
 
 ---
 
+### Automatic deploy on push
+
+`.github/workflows/deploy.yml` deploys **every push to `main`**: GitHub Actions
+SSHes into the server and runs the repo's own `deploy.sh` there (pull, `docker
+compose up -d --build`, wait for `/health`). Nothing is built on GitHub's side.
+A failed health check turns the run red and GitHub emails you; the **Actions**
+tab has a *Run workflow* button for a manual redeploy.
+
+One-time setup — a key made only for this, and three secrets:
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/vedicreport_deploy -N ""
+ssh-copy-id -i ~/.ssh/vedicreport_deploy.pub root@<SERVER_IP>
+ssh -i ~/.ssh/vedicreport_deploy root@<SERVER_IP> 'cd ~/app && git log -1 --oneline'   # must work non-interactively
+
+gh secret set DEPLOY_HOST    --body "<SERVER_IP>"
+gh secret set DEPLOY_USER    --body "root"
+gh secret set DEPLOY_SSH_KEY < ~/.ssh/vedicreport_deploy
+```
+
+(Without the `gh` CLI: repo → Settings → Secrets and variables → Actions → *New
+repository secret*, same three names; `DEPLOY_SSH_KEY` is the whole private key
+file.) Optional: `DEPLOY_PORT` (default 22) and `DEPLOY_PATH` as an **absolute**
+path (default `$HOME/app`).
+
+The server keeps pulling with whatever git credentials it already has — the
+workflow only runs `deploy.sh`, it never copies code or a token onto the server.
+
 ## Operations and troubleshooting
 
 | Task | Command (on the server, in `~/app`) |

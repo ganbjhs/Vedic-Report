@@ -3,7 +3,7 @@
 {% block body %}
 <main class="auth">
   {% if token %}
-  <form class="auth-box" method="post" action="/invite/{{ token }}" autocomplete="on">
+  <form class="auth-box" method="post" action="{{ base }}/invite/{{ token }}" autocomplete="on">
     <div class="eyebrow">Client Portal{% if client %} · {{ client.display_name or client.name }}{% endif %}</div>
     <h1>Welcome</h1>
     <p class="sub">Choose a password for <b>{{ email }}</b>. At least 10 characters.</p>
@@ -18,7 +18,7 @@
     <div class="eyebrow">Client Portal</div>
     <h1>Link expired</h1>
     <div class="alert">{{ error }}</div>
-    <p class="hint"><a href="/login">Back to sign in</a></p>
+    <p class="hint"><a href="{{ base }}/login">Back to sign in</a></p>
   </div>
   {% endif %}
 </main>

@@ -20,6 +20,15 @@ report.vedictech.in {
 		reverse_proxy wa:8010
 	}
 
+	# --- Client Portal at /portal (no separate subdomain needed) -------------
+	# handle_path strips the prefix; the app is told its public prefix with
+	# PORTAL_BASE_PATH=/portal in .env, so every link it emits stays under
+	# /portal. Move it to its own subdomain later by clearing that env var.
+	redir /portal /portal/
+	handle_path /portal/* {
+		reverse_proxy portal:8020
+	}
+
 	# --- Report Maker: unchanged, still every other path ---------------------
 	# Wrapped in handle{} only so the two routes are explicitly ordered rather
 	# than relying on Caddy's implicit directive order. Same upstream, same
@@ -34,7 +43,9 @@ report.vedictech.in {
 	}
 }
 
-# --- Client Portal: its own hostname, its own container --------------------------
+# --- Client Portal: its own hostname (needs a DNS A record; unused until then) ---
+# While PORTAL_BASE_PATH=/portal is set, use report.vedictech.in/portal above; this
+# block only starts working once clients.vedictech.in resolves AND base path is cleared.
 # Point the DNS A record for clients.vedictech.in at this server; Caddy issues
 # the certificate on first start. The portal sets its own security headers.
 clients.vedictech.in {

@@ -2,7 +2,7 @@
 {% block title %}Sign in — Client Portal{% endblock %}
 {% block body %}
 <main class="auth">
-  <form class="auth-box" method="post" action="/login" autocomplete="on">
+  <form class="auth-box" method="post" action="{{ base }}/login" autocomplete="on">
     <div class="eyebrow">Client Portal</div>
     <h1>Sign in</h1>
     <p class="sub">Your daily social report, prepared by {{ agency }}.</p>

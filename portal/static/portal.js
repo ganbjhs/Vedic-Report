@@ -45,6 +45,7 @@ window.Portal = (function () {
 
   /* ---------------- state ---------------- */
   let META = null;
+  let BASE = '';
   let CATS = [];                                  // META.categories + a url slug each
   const VIEWS = ['today', 'categories', 'growth', 'feed'];
   const state = { view:'today', cat:'', day:'', dur:'7', durFrom:null, durTo:null, metric:'engagement', gDur:'30', gMetric:'engagement', gSplit:'platform', feed:{cat:'',plat:'',sort:'eng',q:'',page:1} };
@@ -55,8 +56,8 @@ window.Portal = (function () {
   const catOf = (raw) => CATS.find(c => c.raw === raw);
 
   async function api(url) {
-    const r = await fetch(url, { headers:{ 'Accept':'application/json' }, credentials:'same-origin' });
-    if (r.status === 401) { window.location.href = '/login'; throw new Error('signed out'); }
+    const r = await fetch(BASE + url, { headers:{ 'Accept':'application/json' }, credentials:'same-origin' });
+    if (r.status === 401) { window.location.href = BASE + '/login'; throw new Error('signed out'); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.detail || `Request failed (${r.status})`);
     return data;
@@ -297,7 +298,7 @@ window.Portal = (function () {
   function redraw(view) { dirty[view] = true; if (state.view === view) draw(view); }
 
   /* ---------------- day + export ---------------- */
-  function exportHref() { const [a, b] = durRange(); const g = Number(state.gDur); const end = parseISO(state.day); return `/api/export.xlsx?day=${state.day}&from=${iso(a)}&to=${iso(b)}&gfrom=${iso(addDays(end, -(g-1)))}&gto=${state.day}&metric=${state.gMetric}&split=${state.gSplit}`; }
+  function exportHref() { const [a, b] = durRange(); const g = Number(state.gDur); const end = parseISO(state.day); return `${BASE}/api/export.xlsx?day=${state.day}&from=${iso(a)}&to=${iso(b)}&gfrom=${iso(addDays(end, -(g-1)))}&gto=${state.day}&metric=${state.gMetric}&split=${state.gSplit}`; }
   function setDay(s) {
     const lo = META.data_from, hi = META.data_through; if (s < lo) s = lo; if (s > hi) s = hi;
     state.day = s; const dp = $('dayPick'); dp.value = s; dp.min = lo; dp.max = hi; $('prevDay').disabled = s <= lo; $('nextDay').disabled = s >= hi; state.feed.page = 1;
@@ -342,6 +343,7 @@ window.Portal = (function () {
 
   function boot() {
     META = JSON.parse($('meta').textContent);
+    BASE = META.base || '';
     const seen = new Set();
     CATS = (META.categories || []).map((c, i) => { let s = slugify(c.label) || slugify(c.raw) || `cat-${i+1}`; while (seen.has(s)) s = `${s}-${i+1}`; seen.add(s); return { ...c, slug:s }; });
     buildNav();

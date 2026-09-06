@@ -4,7 +4,7 @@
 <div class="app">
   <aside class="side" id="side">
     <div class="brand">
-      {% if meta.client.logo %}<img class="logo" src="/logo" alt="">{% else %}<div class="mark" aria-hidden="true">{{ (meta.client.display_name or 'C')[:2] | upper }}</div>{% endif %}
+      {% if meta.client.logo %}<img class="logo" src="{{ base }}/logo" alt="">{% else %}<div class="mark" aria-hidden="true">{{ (meta.client.display_name or 'C')[:2] | upper }}</div>{% endif %}
       <div class="t">
         <h1>{{ meta.client.display_name }}</h1>
         <div class="sub">Daily social report</div>
@@ -21,7 +21,7 @@
     </nav>
     <div class="side-foot">
       <div class="who" title="{{ user.email }}">{{ user.email }}</div>
-      <form method="post" action="/logout" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm" type="submit">Sign out</button></form>
+      <form method="post" action="{{ base }}/logout" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm" type="submit">Sign out</button></form>
     </div>
   </aside>
 
@@ -35,7 +35,7 @@
         <span class="lagnote" id="lagNote"></span>
       </div>
       <div class="right">
-        <a class="btn primary" id="exportBtn" href="/api/export.xlsx" title="Download this report as an Excel workbook">
+        <a class="btn primary" id="exportBtn" href="{{ base }}/api/export.xlsx" title="Download this report as an Excel workbook">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 12v1.5h10V12"/></svg>
           Export to Excel
         </a>

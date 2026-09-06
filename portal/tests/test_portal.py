@@ -257,6 +257,12 @@ class TestHttp(unittest.TestCase):
             from portal.main import app
         except Exception as e:                                   # pragma: no cover
             raise unittest.SkipTest(f"fastapi not installed: {e}")
+        # This flow drives the app directly, with no prefix-stripping proxy in
+        # front, so it must run at the root. Neutralise any PORTAL_BASE_PATH from
+        # the environment (e.g. the server's .env sets /portal) — otherwise the
+        # session cookie is scoped to /portal and these root-path calls omit it.
+        from portal import config as _cfg
+        _cfg.BASE_PATH = ""
         cls.client = TestClient(app, base_url="http://portal.test")
         cls.client.__enter__()
         from portal import auth, db

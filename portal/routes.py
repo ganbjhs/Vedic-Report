@@ -27,6 +27,7 @@ def _asset_version() -> str:
 
 templates.env.globals["asset_v"] = _asset_version()
 templates.env.globals["agency"] = config.AGENCY_NAME
+templates.env.globals["base"] = config.BASE_PATH
 
 
 def _safe_next(raw: str) -> str:
@@ -40,7 +41,7 @@ def _safe_next(raw: str) -> str:
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, next: str = "/"):
     if auth.session_of(request):
-        return RedirectResponse(_safe_next(next), status_code=303)
+        return RedirectResponse(config.BASE_PATH + _safe_next(next), status_code=303)
     resp = templates.TemplateResponse(request, "login.html", {"next": _safe_next(next), "error": ""})
     return resp
 
@@ -63,7 +64,7 @@ async def login_submit(request: Request, email: str = Form(""), password: str = 
     auth.clear_failures(ip)
     token = auth.start_session(request, user)
     db.audit("login", client_id=user["client_id"], user_id=user["id"], email=user["email"], ip=ip)
-    resp = RedirectResponse(_safe_next(next), status_code=303)
+    resp = RedirectResponse(config.BASE_PATH + _safe_next(next), status_code=303)
     auth.set_cookie(resp, token)
     return resp
 
@@ -76,7 +77,7 @@ async def logout(request: Request, csrf_token: str = Form("")):
         auth.verify_csrf(auth.Viewer(s, u, c), csrf_token)
         db.audit("logout", client_id=c["id"], user_id=u["id"], email=u["email"], ip=auth.client_ip(request))
         auth.end_session(request)
-    resp = RedirectResponse("/login", status_code=303)
+    resp = RedirectResponse(config.BASE_PATH + "/login", status_code=303)
     auth.clear_cookie(resp)
     return resp
 
@@ -104,7 +105,7 @@ async def invite_submit(request: Request, token: str, password: str = Form(""), 
     auth.end_all_sessions(user["id"])
     db.audit("invite_accepted", client_id=user["client_id"], user_id=user["id"], email=user["email"], ip=auth.client_ip(request))
     tok = auth.start_session(request, user)
-    resp = RedirectResponse("/", status_code=303)
+    resp = RedirectResponse(config.BASE_PATH + "/", status_code=303)
     auth.set_cookie(resp, tok)
     return resp
 

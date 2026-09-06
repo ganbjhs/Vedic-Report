@@ -121,3 +121,35 @@ dmesg -T | grep -c 'Out of memory'           # should stop increasing
 ```
 
 Today's finished report is on the server at `/root/app/reports/5-9-26_Daily_Tweet_Report.pdf` (+ `.docx`).
+
+---
+
+## Client Portal — first deploy (added)
+
+The portal ships as its own container (`portal` service) and is served at
+**`https://report.vedictech.in/portal`** — no new subdomain / DNS needed.
+Three things on the **server** (all gitignored, so they don't arrive with a pull):
+
+1. Add to the server `.env` (same file the web app uses):
+   ```
+   PORTAL_BASE_PATH=/portal
+   PORTAL_PUBLIC_URL=https://report.vedictech.in/portal
+   PORTAL_SESSION_SECRET=<python3 -c 'import secrets;print(secrets.token_urlsafe(48))'>
+   PORTAL_KEY_SECRET=<another one>
+   PORTAL_COOKIE_SECURE=1
+   ```
+   Without `PORTAL_BASE_PATH=/portal` the app emits root-absolute links and the
+   subpath breaks; without `PORTAL_SESSION_SECRET` clients are signed out on
+   every restart.
+2. `deploy.sh` now creates `data/portal.db` and health-checks the portal, so a
+   plain push-to-deploy brings the container up. Verify after:
+   ```
+   docker compose ps portal && curl -s -o /dev/null -w '%{http_code}\n' localhost:8020/login
+   ```
+3. First client: **report tool → Admin → Clients → New client**, tick its
+   projects, then **Invite** the client's e-mail. Finished runs of those
+   projects publish to the portal automatically.
+
+To move it onto its own subdomain later: point `clients.vedictech.in` at the
+server, clear `PORTAL_BASE_PATH` (and set `PORTAL_PUBLIC_URL` to the subdomain),
+redeploy. The `clients.vedictech.in` block is already in the Caddyfile.

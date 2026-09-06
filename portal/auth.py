@@ -151,11 +151,11 @@ def session_of(request: Request):
 
 def set_cookie(response, token: str) -> None:
     response.set_cookie(COOKIE, token, max_age=config.SESSION_HOURS * 3600, httponly=True,
-                        samesite="lax", secure=config.COOKIE_SECURE, path="/")
+                        samesite="lax", secure=config.COOKIE_SECURE, path=(config.BASE_PATH or "/"))
 
 
 def clear_cookie(response) -> None:
-    response.delete_cookie(COOKIE, path="/")
+    response.delete_cookie(COOKIE, path=(config.BASE_PATH or "/"))
 
 
 # --------------------------------------------------------------------------- #
@@ -176,7 +176,7 @@ def require_viewer(request: Request) -> Viewer:
         if request.url.path.startswith("/api/"):
             raise HTTPException(status_code=401, detail="Not signed in")
         raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, detail="login required",
-                            headers={"Location": f"/login?next={request.url.path}"})
+                            headers={"Location": f"{config.BASE_PATH}/login?next={request.url.path}"})
     return Viewer(*got)
 
 

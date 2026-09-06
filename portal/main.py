@@ -56,7 +56,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     if request.url.path.startswith("/api/"):
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
     if exc.status_code == 401:
-        return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
+        return RedirectResponse(f"{config.BASE_PATH}/login?next={request.url.path}", status_code=303)
     return routes.templates.TemplateResponse(request, "error.html",
                                              {"code": exc.status_code, "detail": exc.detail},
                                              status_code=exc.status_code)

@@ -45,6 +45,12 @@ INVITE_HOURS = int(os.environ.get("PORTAL_INVITE_HOURS", "72") or 72)
 MAX_TREND_DAYS = int(os.environ.get("PORTAL_MAX_TREND_DAYS", "120") or 120)
 AGENCY_NAME = os.environ.get("PORTAL_AGENCY_NAME", "Vedic Tech").strip() or "Vedic Tech"
 
+# Serve under a path prefix on a shared host (e.g. report.vedictech.in/portal,
+# with Caddy stripping the prefix): set PORTAL_BASE_PATH=/portal. Every link the
+# app emits is prefixed with it and the cookie is scoped to it. Empty (default)
+# serves at the root, e.g. on its own subdomain clients.vedictech.in.
+BASE_PATH = ("/" + os.environ.get("PORTAL_BASE_PATH", "").strip().strip("/")).rstrip("/")
+
 _EPHEMERAL = secrets.token_urlsafe(48)
 
 

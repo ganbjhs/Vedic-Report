@@ -63,6 +63,7 @@ def meta(client: dict) -> dict:
         "categories": [{"raw": c["raw"], "label": c["label"]} for c in visible_categories(client)],
         "platforms": [{"id": p, "name": PLATFORM_NAMES[p]} for p in PLATFORMS],
         "agency": config.AGENCY_NAME,
+        "base": config.BASE_PATH,
         "show_screenshots": bool(client.get("show_screenshots")),
     }
 
@@ -88,7 +89,7 @@ def _post_public(r: dict, client: dict) -> dict:
         "likes": r.get("likes"), "comments": r.get("comments"), "shares": r.get("shares"),
         "views": r.get("views"),
         "metric_source": r.get("metric_source") or "none",
-        "screenshot": (f"/media/{r['id']}" if client.get("show_screenshots") and r.get("screenshot_path") else ""),
+        "screenshot": (f"{config.BASE_PATH}/media/{r['id']}" if client.get("show_screenshots") and r.get("screenshot_path") else ""),
     }
 
 

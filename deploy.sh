@@ -39,11 +39,32 @@ else
 fi
 docker compose "${PROFILES[@]}" up -d --build
 
-echo "== waiting for health"
+echo "== waiting for web health"
+web_ok=0
 for i in $(seq 1 30); do
   if curl -fs localhost:8000/health >/dev/null 2>&1; then
-    echo "OK: $(curl -s localhost:8000/health)"; docker compose ps; exit 0
+    echo "OK web: $(curl -s localhost:8000/health)"; web_ok=1; break
   fi
   sleep 2
 done
-echo "!! health check failed — last logs:"; docker compose logs --tail=40 web; exit 1
+if [ "$web_ok" != 1 ]; then
+  echo "!! web health check failed — last logs:"; docker compose logs --tail=40 web; exit 1
+fi
+
+# The portal is its own container; the web check above never touches it, so a
+# portal that built but does not serve (bad mount, missing runtime dep) would
+# otherwise pass unnoticed. /login is a plain 200, no auth — a good liveness probe.
+echo "== waiting for portal health"
+portal_ok=0
+for i in $(seq 1 20); do
+  if curl -fs -o /dev/null localhost:8020/login 2>/dev/null; then
+    echo "OK portal: /login is serving"; portal_ok=1; break
+  fi
+  sleep 2
+done
+if [ "$portal_ok" != 1 ]; then
+  echo "!! portal health check failed — last logs:"; docker compose logs --tail=40 portal; exit 1
+fi
+
+docker compose ps
+exit 0

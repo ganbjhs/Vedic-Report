@@ -14,10 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (api_v1, auth, config, health, previews, projects,
-               report_types, routes_bots, routes_extras, routes_jobs,
-               routes_projects, routes_sources, sources, styles, uploads,
-               x_login)
+from . import (api_v1, auth, config, health, portal_publish, previews,
+               projects, report_types, routes_bots, routes_clients,
+               routes_extras, routes_jobs, routes_projects, routes_sources,
+               sources, styles, uploads, x_login)
 from .jobs import cleanup, queue, store
 
 HERE = Path(__file__).resolve().parent
@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
         queue.start()
     cleanup.start_scheduler()
     sources.start_scheduler()          # v3: watch every project's sheet sources
+    portal_publish.start_scheduler()   # Client Portal: scraper sync (needs PORTAL_KEY_SECRET)
     # Free hosts wipe the disk on restart, so sign in to X now (in the
     # background) rather than making the first report wait for it.
     x_login.warm_up_async()
@@ -64,6 +65,7 @@ async def lifespan(app: FastAPI):
           flush=True)
     yield
     sources.stop_scheduler()
+    portal_publish.stop_scheduler()
     queue.shutdown()
 
 
@@ -85,6 +87,7 @@ app.include_router(routes_extras.router)
 app.include_router(routes_projects.router)
 app.include_router(routes_sources.router)
 app.include_router(routes_bots.router)
+app.include_router(routes_clients.router)
 # The scoped token API. Beside /api, never instead of it: a token call is
 # not a browser call, and the two authenticate differently on purpose.
 app.include_router(api_v1.router)
@@ -369,6 +372,24 @@ async def users_page(request: Request, user: str = Depends(auth.require_admin)):
         request, "users.html",
         _shell(request, user, "users", users=routes_extras._public_users(),
                roles=list(store.ROLES), env_admins=sorted(config.APP_ADMINS)))
+
+
+@app.get("/admin/clients", response_class=HTMLResponse)
+async def clients_page(request: Request, user: str = Depends(auth.require_admin)):
+    """The Client Portal's admin side: clients, their projects, their people,
+    their scraper, and what was published to them."""
+    conn = portal_publish.connect()
+    try:
+        clients = routes_clients._list(conn)
+    finally:
+        conn.close()
+    return templates.TemplateResponse(
+        request, "clients.html",
+        _shell(request, user, "clients", clients=clients,
+               project_list=[{"id": p["id"], "name": p["name"], "client": p.get("client") or ""}
+                             for p in projects.all_projects()],
+               portal_url=(config.PORTAL_PUBLIC_URL or "http://127.0.0.1:8020"),
+               key_secret_set=bool(config.PORTAL_KEY_SECRET)))
 
 
 @app.get("/admin/bots", response_class=HTMLResponse)

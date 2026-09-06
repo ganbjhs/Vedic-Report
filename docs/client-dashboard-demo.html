@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Client Portal prototype v3 (daily report + category trends + growth, sample data). Companion to docs/client-portal-plan.md. Published copy: "Varanasi Social Pulse" artifact. -->
+</head><body>
+<title>Varanasi Social Pulse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  color-scheme:light;
+  --ground:#f6f4f1; --surface:#fdfcfb; --surface-2:#f1eeea; --ink:#1a1717; --ink-2:#5c5654; --muted:#8b8482;
+  --hair:#e5e1dc; --axis:#c9c3bd; --shadow:0 1px 2px rgba(26,23,23,.06),0 8px 24px -16px rgba(26,23,23,.18);
+  --accent:#7a1f4b; --accent-ink:#ffffff; --accent-soft:#f3e3ea; --accent-2:#c98db0;
+  --fb:#2a78d6; --ig:#eb6834; --x:#1baf7a; --c4:#eda100;
+  --pill-ig:#fbe4e1; --pill-ig-ink:#b3261e; --pill-fb:#dfeafb; --pill-fb-ink:#1d4f9c; --pill-x:#e8e6e3; --pill-x-ink:#2a2727;
+  --up:#006300; --down:#b23434; --warn-soft:#fbf1dc; --warn-ink:#6b4a00; --ok-soft:#e3f3e3; --ok-ink:#155215;
+  --hero:linear-gradient(135deg,#fdfcfb 0%,#f7eef3 100%);
+  --serif:"Newsreader",Georgia,"Times New Roman",serif;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#121010; --surface:#1c1919; --surface-2:#252121; --ink:#f5f1ee; --ink-2:#c4bcb8; --muted:#8b8482;
+    --hair:#2e2a29; --axis:#3d3836; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.6);
+    --accent:#d98ab4; --accent-ink:#1a1010; --accent-soft:#3a2230; --accent-2:#a2557f;
+    --fb:#3987e5; --ig:#d95926; --x:#199e70; --c4:#c98500;
+    --pill-ig:#4a2320; --pill-ig-ink:#f3a099; --pill-fb:#1d2f4c; --pill-fb-ink:#9cc0f5; --pill-x:#302c2b; --pill-x-ink:#e6e1dd;
+    --up:#3fbf3f; --down:#ee7a7a; --warn-soft:#3a2f14; --warn-ink:#f0c86a; --ok-soft:#1c3320; --ok-ink:#9fdca4;
+    --hero:linear-gradient(135deg,#1c1919 0%,#2a1c23 100%);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#121010; --surface:#1c1919; --surface-2:#252121; --ink:#f5f1ee; --ink-2:#c4bcb8; --muted:#8b8482;
+  --hair:#2e2a29; --axis:#3d3836; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.6);
+  --accent:#d98ab4; --accent-ink:#1a1010; --accent-soft:#3a2230; --accent-2:#a2557f;
+  --fb:#3987e5; --ig:#d95926; --x:#199e70; --c4:#c98500;
+  --pill-ig:#4a2320; --pill-ig-ink:#f3a099; --pill-fb:#1d2f4c; --pill-fb-ink:#9cc0f5; --pill-x:#302c2b; --pill-x-ink:#e6e1dd;
+  --up:#3fbf3f; --down:#ee7a7a; --warn-soft:#3a2f14; --warn-ink:#f0c86a; --ok-soft:#1c3320; --ok-ink:#9fdca4;
+  --hero:linear-gradient(135deg,#1c1919 0%,#2a1c23 100%);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.5 var(--sans)}
+a{color:inherit}
+button,select,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+h1,h2,h3{font-family:var(--serif);font-weight:500;letter-spacing:-.005em;text-wrap:balance;margin:0}
+h1{font-size:26px;line-height:1.15}
+h2{font-size:22px;line-height:1.2}
+h3{font-size:17px;line-height:1.25}
+.eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.num{font-variant-numeric:tabular-nums}
+.wrap{max-width:1240px;margin:0 auto;padding:0 24px}
+/* ---- top bar ---- */
+.top{border-bottom:1px solid var(--hair);background:var(--surface)}
+.top .wrap{display:flex;align-items:center;gap:18px;min-height:68px;padding-top:12px;padding-bottom:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px}
+.mark{width:38px;height:38px;border-radius:9px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-family:var(--serif);font-weight:600;font-size:17px}
+.brand .sub{color:var(--ink-2);font-size:12.5px;margin-top:1px}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:8px;border:1px solid var(--hair);background:var(--surface);font-weight:500;font-size:13.5px;line-height:1;text-decoration:none}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.sm{padding:6px 10px;font-size:12.5px}
+.btn svg{width:15px;height:15px}
+.btn[disabled]{opacity:.5;cursor:default}
+/* ---- banner ---- */
+.banner{font-size:12.5px;border-bottom:1px solid var(--hair)}
+.banner.sample{background:var(--warn-soft);color:var(--warn-ink)}
+.banner.live{background:var(--ok-soft);color:var(--ok-ink)}
+.banner .wrap{padding-top:7px;padding-bottom:7px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.banner b{font-weight:600}
+.banner .lnk{margin-left:auto;background:none;border:0;text-decoration:underline;padding:0;color:inherit;font-size:12.5px}
+/* ---- day bar (sticky) ---- */
+.daybar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--ground) 92%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--hair)}
+.daybar .wrap{display:flex;align-items:center;gap:10px;min-height:54px;flex-wrap:wrap;padding-top:8px;padding-bottom:8px}
+.daybar .day{display:flex;align-items:center;gap:8px}
+.daybar .day .lbl{font-size:12.5px;color:var(--ink-2)}
+.ctl{padding:6px 9px;border-radius:7px;border:1px solid var(--hair);background:var(--surface);font-size:13px;min-height:32px}
+select.ctl{padding-right:26px;appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 13px) 13px,calc(100% - 9px) 13px;background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+.iconbtn{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--hair);border-radius:7px;background:var(--surface);padding:0}
+.iconbtn:hover{background:var(--surface-2)}
+.iconbtn[disabled]{opacity:.4;cursor:default}
+.daybar .tabs{margin-left:auto;display:flex;gap:2px}
+.tabs a{text-decoration:none;padding:7px 12px;border-radius:7px;color:var(--ink-2);font-weight:500;font-size:13.5px}
+.tabs a:hover{background:var(--surface-2);color:var(--ink)}
+.tabs a.on{color:var(--ink);background:var(--surface);box-shadow:inset 0 0 0 1px var(--hair)}
+/* ---- sections ---- */
+section.block{padding:30px 0 8px;scroll-margin-top:64px}
+.sec-head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.sec-head p{margin:2px 0 0;color:var(--ink-2);max-width:66ch}
+.sec-head .tools{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tools .lbl{font-size:12.5px;color:var(--ink-2)}
+.custom{display:none;gap:6px;align-items:center}
+.custom.show{display:flex}
+/* ---- Today hero ---- */
+.hero{background:var(--hero);border:1px solid var(--hair);border-radius:16px;box-shadow:var(--shadow);padding:22px 24px 20px;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:22px 32px}
+.hero .date{font-family:var(--serif);font-size:30px;line-height:1.1;letter-spacing:-.01em}
+.hero .lag{color:var(--ink-2);font-size:13px;margin-top:6px;max-width:60ch}
+.kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:18px}
+.kpi{background:color-mix(in srgb,var(--surface) 72%,transparent);border:1px solid var(--hair);border-radius:12px;padding:12px 14px 10px;min-width:0}
+.kpi .l{font-size:12.5px;color:var(--ink-2)}
+.kpi .v{font-size:28px;font-weight:600;line-height:1.1;margin-top:2px;letter-spacing:-.01em}
+.kpi .d{font-size:12.5px;color:var(--ink-2);margin-top:3px;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.kpi .d b{font-weight:600}.kpi .d b.up{color:var(--up)}.kpi .d b.down{color:var(--down)}
+.kpi svg.spark{width:100%;height:36px;margin-top:8px;display:block;overflow:visible}
+.hero .right{display:flex;flex-direction:column;gap:12px;min-width:0}
+.sharebar{display:flex;height:14px;border-radius:7px;overflow:hidden;gap:2px;background:var(--surface-2)}
+.sharebar i{display:block;height:100%}
+.sharebar i.fb{background:var(--fb)}.sharebar i.ig{background:var(--ig)}.sharebar i.x{background:var(--x)}
+.platrows{display:flex;flex-direction:column;gap:0;border:1px solid var(--hair);border-radius:12px;background:color-mix(in srgb,var(--surface) 72%,transparent);overflow:hidden}
+.platrow{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--hair);font-size:13px}
+.platrow:last-child{border-bottom:0}
+.platrow .n{font-weight:600}
+.platrow .n small{font-weight:400;color:var(--muted);margin-left:6px}
+.platrow .v{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+.platrow .v small{display:block;font-weight:400;color:var(--muted);font-size:11.5px}
+.platrow .d{font-size:12px;font-weight:600;min-width:52px;text-align:right}
+.platrow .d.up{color:var(--up)}.platrow .d.down{color:var(--down)}.platrow .d.flat{color:var(--muted)}
+/* platform pills */
+.pp{display:inline-flex;align-items:center;justify-content:center;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:.03em;line-height:16px}
+.pp.ig{background:var(--pill-ig);color:var(--pill-ig-ink)}.pp.fb{background:var(--pill-fb);color:var(--pill-fb-ink)}.pp.x{background:var(--pill-x);color:var(--pill-x-ink)}
+/* top posts of the day */
+.subhead{display:flex;align-items:baseline;gap:12px;margin:22px 0 10px}
+.subhead h3{font-size:18px}
+.subhead .m{color:var(--ink-2);font-size:13px}
+.topgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.tp{background:var(--surface);border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.tp .media{position:relative;aspect-ratio:2/1;background:linear-gradient(135deg,var(--surface-2),var(--hair));display:grid;place-items:center;color:var(--muted);font-size:12px}
+.tp .media img{width:100%;height:100%;object-fit:cover;display:block}
+.tp .media .kind{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;font-size:11px;font-weight:600;padding:2px 7px;border-radius:5px}
+.tp .media .rank{position:absolute;top:8px;right:8px;background:var(--accent);color:var(--accent-ink);font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+.tp .media .play{width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,.55);display:grid;place-items:center}
+.tp .media .play::after{content:"";border-left:12px solid #fff;border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px}
+.tp .body{padding:12px 14px 12px;display:flex;flex-direction:column;gap:6px;flex:1}
+.tp .who{display:flex;align-items:center;gap:8px;font-size:13px}
+.tp .who .ava{width:26px;height:26px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:600;font-size:10.5px;flex:none}
+.tp .who b{font-weight:600}
+.tp .who .h{color:var(--muted)}
+.tp .cap{font-size:13.5px;line-height:1.45;color:var(--ink);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tp .catl{font-size:11.5px;color:var(--muted)}
+.tp .stat{display:flex;gap:14px;font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;margin-top:auto;padding-top:6px;border-top:1px solid var(--hair)}
+.tp .stat b{color:var(--ink);font-weight:600}
+.tp .stat span{display:inline-flex;align-items:center;gap:5px}
+.tp .stat svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+/* ---- category blocks ---- */
+.filterbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--hair);border-radius:12px;padding:10px 14px;box-shadow:var(--shadow)}
+.filterbar .lbl{font-size:12.5px;color:var(--ink-2)}
+.filterbar .seg{margin-left:0}
+.seg{display:inline-flex;border:1px solid var(--hair);border-radius:8px;background:var(--ground);padding:2px}
+.seg button{border:0;background:transparent;padding:5px 10px;border-radius:6px;font-size:12.5px;color:var(--ink-2);font-weight:500}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.filterbar .range{margin-left:auto;font-size:12.5px;color:var(--muted)}
+.cat{margin-top:16px;background:var(--surface);border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow)}
+.cat-head{display:flex;align-items:center;gap:14px;padding:13px 18px;border-bottom:1px solid var(--hair);flex-wrap:wrap}
+.cat-head h3{font-size:18px}
+.cat-head .stats{display:flex;gap:16px;color:var(--ink-2);font-size:13px;margin-left:auto}
+.cat-head .stats b{color:var(--ink);font-weight:600}
+.cat-head .stats .up{color:var(--up)}.cat-head .stats .down{color:var(--down)}
+.plats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+.plat{padding:12px 14px 8px;border-right:1px solid var(--hair);min-width:0}
+.plat:last-child{border-right:0}
+.plat .ph{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px}
+.plat .ph .n{margin-left:auto;font-weight:500;color:var(--ink-2);font-size:12.5px;white-space:nowrap}
+.plat .tot{display:flex;align-items:baseline;gap:10px;margin:4px 0 2px}
+.plat .tot .v{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.plat .tot .d{font-size:12.5px;font-weight:600}
+.plat .tot .d.up{color:var(--up)}.plat .tot .d.down{color:var(--down)}.plat .tot .d.flat{color:var(--muted);font-weight:500}
+.plat .tot .s{font-size:12px;color:var(--muted)}
+svg.chart{width:100%;height:auto;display:block;overflow:visible}
+svg.chart text{font-family:var(--sans);font-size:11px;fill:var(--muted)}
+svg.chart text.v{fill:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums}
+svg.chart text.ink{fill:var(--ink)}
+svg.chart .grid line{stroke:var(--hair);stroke-width:1}
+svg.chart .base{stroke:var(--axis);stroke-width:1}
+svg.chart .hit{fill:transparent}
+.empty{display:grid;place-items:center;min-height:150px;color:var(--muted);font-size:13px;text-align:center;padding:12px;border:1px dashed var(--hair);border-radius:9px;margin-top:6px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
+.sw.line{width:14px;height:3px;border-radius:2px}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--ground);padding:7px 10px;border-radius:7px;font-size:12px;line-height:1.35;box-shadow:0 6px 20px -8px rgba(0,0,0,.5);opacity:0;transform:translate(-50%,-100%);transition:opacity .08s;z-index:60;white-space:nowrap;max-width:300px}
+.tip.show{opacity:1}
+.tip b{font-weight:600}
+.tip .row{display:flex;justify-content:space-between;gap:14px}
+/* ---- growth ---- */
+.gcard{background:var(--surface);border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow)}
+.gcard .gh{display:flex;align-items:flex-start;gap:16px;padding:16px 18px 0;flex-wrap:wrap}
+.gcard .gh .big{font-size:30px;font-weight:600;letter-spacing:-.01em;line-height:1.1}
+.gcard .gh .l{font-size:12.5px;color:var(--ink-2)}
+.gcard .gh .d{font-size:13px;margin-top:4px;color:var(--ink-2)}
+.gcard .gh .d b.up{color:var(--up)}.gcard .gh .d b.down{color:var(--down)}
+.gcard .gh .legend{margin-left:auto;align-self:flex-end;padding-bottom:4px}
+.gcard .cb{padding:10px 14px 8px}
+.gtable{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));border-top:1px solid var(--hair)}
+.gtable .gi{padding:12px 16px;border-right:1px solid var(--hair);min-width:0}
+.gtable .gi:last-child{border-right:0}
+.gtable .gi .n{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2)}
+.gtable .gi .v{font-size:18px;font-weight:600;margin-top:2px}
+.gtable .gi .v small{font-size:12px;font-weight:600;margin-left:6px}
+.gtable .gi .v small.up{color:var(--up)}.gtable .gi .v small.down{color:var(--down)}.gtable .gi .v small.flat{color:var(--muted);font-weight:500}
+.gtable .gi .s{font-size:11.5px;color:var(--muted)}
+/* ---- feed cards ---- */
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.filters input.ctl{min-width:220px}
+.filters .count{margin-left:auto;color:var(--ink-2);font-size:13px}
+.cards{display:flex;flex-direction:column;gap:12px}
+.post{background:var(--surface);border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow);padding:16px 18px 12px;display:grid;grid-template-columns:minmax(0,1fr) 168px;gap:16px 22px}
+.post .who{display:flex;align-items:center;gap:12px;grid-column:1;grid-row:1;min-width:0}
+.post .who > div{min-width:0}
+.post .body{grid-column:1;grid-row:2;min-width:0}
+.post .ava{width:44px;height:44px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:600;font-size:14px;flex:none;overflow:hidden}
+.post .ava img{width:100%;height:100%;object-fit:cover;display:block}
+.post .name{font-weight:600;font-size:15px}
+.post .handle{color:var(--ink-2);font-size:13px;margin-left:8px}
+.post .cat-chip{margin-left:auto;font-size:11.5px;color:var(--ink-2);background:var(--surface-2);padding:2px 8px;border-radius:999px;white-space:nowrap}
+.post .text{margin:10px 0 6px;font-size:15px;line-height:1.55;max-width:78ch;overflow-wrap:anywhere}
+.post .when{font-size:12.5px;color:var(--muted)}
+.post .metrics{display:flex;gap:18px;margin-top:8px;font-size:14px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.post .metrics span{display:inline-flex;align-items:center;gap:5px}
+.post .metrics svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.post .metrics .dash{color:var(--muted)}
+.post .media{grid-column:2;grid-row:1 / span 2;align-self:start;position:relative;width:168px;aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:linear-gradient(135deg,var(--surface-2),var(--hair));display:grid;place-items:center;color:var(--muted);font-size:12px}
+.post .media img{width:100%;height:100%;object-fit:cover;display:block}
+.post .media .kind{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;font-size:11px;font-weight:600;padding:2px 7px;border-radius:5px}
+.post .media .play{width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,.55);display:grid;place-items:center}
+.post .media .play::after{content:"";border-left:12px solid #fff;border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px}
+.post .acts{grid-column:1 / -1;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--hair);padding-top:10px;margin-top:4px}
+.post.nomedia{grid-template-columns:1fr}
+.post.nomedia .media{display:none}
+.pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;padding:12px 0;font-size:13px;color:var(--ink-2)}
+.dash{color:var(--muted)}
+/* ---- footer ---- */
+footer{border-top:1px solid var(--hair);padding:22px 0 40px;color:var(--muted);font-size:12.5px;margin-top:30px}
+footer .wrap{display:flex;gap:20px;flex-wrap:wrap;justify-content:space-between}
+/* ---- modals ---- */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;place-items:center;z-index:50;padding:20px}
+.modal.show{display:grid}
+.modal .box{background:var(--surface);border:1px solid var(--hair);border-radius:14px;max-width:560px;width:100%;padding:22px 24px;box-shadow:0 30px 80px -30px rgba(0,0,0,.6);max-height:92vh;overflow:auto}
+.modal .box h3{font-size:19px;margin-bottom:6px}
+.modal .box p{margin:6px 0 0;color:var(--ink-2)}
+.modal ul{margin:12px 0 0;padding-left:18px;color:var(--ink-2)}
+.modal ul li{margin:3px 0}
+.modal .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
+.modal .status{font-size:12.5px;color:var(--muted);margin-right:auto;align-self:center}
+.field{display:flex;flex-direction:column;gap:4px;margin-top:12px}
+.field label{font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.field .help{font-size:12px;color:var(--muted)}
+.field input.ctl,.field textarea.ctl{width:100%}
+.field textarea.ctl{min-height:96px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.field code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+details.map{margin-top:12px;font-size:12.5px;color:var(--ink-2)}
+details.map summary{cursor:pointer;font-weight:600}
+details.map pre{background:var(--surface-2);padding:10px;border-radius:8px;overflow:auto;font-size:11.5px;margin:8px 0 0}
+@media (max-width:980px){
+  .hero{grid-template-columns:1fr}
+  .plats{grid-template-columns:1fr}
+  .plat{border-right:0;border-bottom:1px solid var(--hair)}
+  .plat:last-child{border-bottom:0}
+  .topgrid{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  .wrap{padding:0 14px}
+  h1{font-size:22px}
+  .kpis{grid-template-columns:1fr}
+  .post{grid-template-columns:1fr}
+  .post .media{grid-row:auto;grid-column:1;width:100%;aspect-ratio:16/9}
+}
+@media (prefers-reduced-motion:reduce){.tip{transition:none}}
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">VC</div>
+      <div>
+        <h1>Varanasi Campaign</h1>
+        <div class="sub">Daily social report · Facebook, Instagram and X</div>
+      </div>
+    </div>
+    <div class="right">
+      <button class="btn" id="sourceBtn" type="button" title="Connect the scraper that supplies the posts">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5 2.5 13.5M9 4l3 3M5 8l3 3M12.5 2.5l1 1-3.5 3.5 1 1-2 2-4-4 2-2 1 1z"/></svg>
+        <span id="sourceLabel">Data source</span>
+      </button>
+      <button class="btn primary" id="exportBtn" type="button" title="Download this report as an Excel workbook">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 12v1.5h10V12"/></svg>
+        Export to Excel
+      </button>
+    </div>
+  </div>
+</header>
+<div class="banner sample" id="banner"><div class="wrap"><span id="bannerText"><b>Sample data.</b> Categories and the daily rhythm mirror the sheet; handles, captions and every number are generated for illustration.</span><button class="lnk" id="bannerLink" type="button">Connect your scraper →</button></div></div>
+
+<nav class="daybar" aria-label="Day">
+  <div class="wrap">
+    <div class="day">
+      <span class="lbl">Report day</span>
+      <button class="iconbtn" id="prevDay" type="button" aria-label="Previous day">‹</button>
+      <input type="date" class="ctl" id="dayPick" aria-label="Report day">
+      <button class="iconbtn" id="nextDay" type="button" aria-label="Next day">›</button>
+    </div>
+    <div class="tabs" id="tabs">
+      <a href="#today" class="on">Today</a>
+      <a href="#categories">Categories</a>
+      <a href="#growth">Growth</a>
+      <a href="#feed">Feed</a>
+    </div>
+  </div>
+</nav>
+
+<main class="wrap">
+  <!-- ================= TODAY ================= -->
+  <section class="block" id="today">
+    <div class="hero">
+      <div class="left">
+        <div class="eyebrow">Daily report</div>
+        <div class="date" id="heroDate">—</div>
+        <div class="lag" id="heroLag"></div>
+        <div class="kpis" id="kpis"></div>
+      </div>
+      <div class="right">
+        <div class="eyebrow">Share of engagement by platform</div>
+        <div class="sharebar" id="sharebar"></div>
+        <div class="platrows" id="platrows"></div>
+      </div>
+    </div>
+    <div class="subhead"><h3>Top posts of the day</h3><span class="m" id="topSub">the strongest post on each platform, by engagement</span></div>
+    <div class="topgrid" id="topgrid"></div>
+  </section>
+
+  <!-- ================= CATEGORIES ================= -->
+  <section class="block" id="categories">
+    <div class="sec-head">
+      <div>
+        <div class="eyebrow">By category</div>
+        <h2>Trends by category and platform</h2>
+        <p>One graph per platform for each heading in the sheet. The duration and the metric below apply to every graph; the trend ends on the report day.</p>
+      </div>
+    </div>
+    <div class="filterbar">
+      <span class="lbl">Duration</span>
+      <div class="seg" id="durSeg">
+        <button type="button" data-d="7" class="on">7 days</button>
+        <button type="button" data-d="14">14 days</button>
+        <button type="button" data-d="30">30 days</button>
+        <button type="button" data-d="custom">Custom</button>
+      </div>
+      <span class="custom" id="durCustom"><input type="date" class="ctl" id="durFrom" aria-label="From"><span style="color:var(--muted)">→</span><input type="date" class="ctl" id="durTo" aria-label="To"></span>
+      <span class="lbl" style="margin-left:6px">Metric</span>
+      <select class="ctl" id="metricSel">
+        <option value="eng">Engagement</option>
+        <option value="likes">Likes</option>
+        <option value="comments">Comments / replies</option>
+        <option value="shares">Shares / reposts</option>
+        <option value="views">Views</option>
+      </select>
+      <span class="range" id="durRange">—</span>
+    </div>
+    <div id="cats"></div>
+  </section>
+
+  <!-- ================= GROWTH ================= -->
+  <section class="block" id="growth">
+    <div class="sec-head">
+      <div>
+        <div class="eyebrow">Growth</div>
+        <h2>How the numbers are moving</h2>
+        <p>The chosen metric per day, up to the report day, compared with the same length of time just before it.</p>
+      </div>
+      <div class="tools">
+        <span class="lbl">Duration</span>
+        <div class="seg" id="gDurSeg">
+          <button type="button" data-d="7">7 days</button>
+          <button type="button" data-d="14">14 days</button>
+          <button type="button" data-d="30" class="on">30 days</button>
+          <button type="button" data-d="60">60 days</button>
+        </div>
+        <select class="ctl" id="gMetric">
+          <option value="eng">Engagement</option>
+          <option value="likes">Likes</option>
+          <option value="comments">Comments / replies</option>
+          <option value="shares">Shares / reposts</option>
+          <option value="views">Views</option>
+        </select>
+        <div class="seg" id="gSplit"><button type="button" data-s="platform" class="on">By platform</button><button type="button" data-s="category">By category</button></div>
+      </div>
+    </div>
+    <div class="gcard">
+      <div class="gh">
+        <div><div class="l" id="gLabel">—</div><div class="big" id="gBig">—</div><div class="d" id="gDelta"></div></div>
+        <div class="legend" id="gLegend"></div>
+      </div>
+      <div class="cb" id="gChart"></div>
+      <div class="gtable" id="gTable"></div>
+    </div>
+  </section>
+
+  <!-- ================= FEED ================= -->
+  <section class="block" id="feed">
+    <div class="sec-head">
+      <div>
+        <div class="eyebrow">Feed</div>
+        <h2 id="feedTitle">Posts on —</h2>
+        <p>Every post the sheet listed for the report day, with the caption and media as the scraper collected them.</p>
+      </div>
+    </div>
+    <div class="filters">
+      <select class="ctl" id="fCat"><option value="">All categories</option></select>
+      <select class="ctl" id="fPlat"><option value="">All platforms</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="x">X (Twitter)</option></select>
+      <select class="ctl" id="fSort"><option value="eng">Most engagement</option><option value="views">Most views</option><option value="time">Newest first</option></select>
+      <input class="ctl" id="fQ" type="search" placeholder="Search name, handle or caption">
+      <span class="count" id="fCount">—</span>
+    </div>
+    <div class="cards" id="cards"></div>
+    <div class="pager" id="pager"></div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>Engagement = likes + comments + shares (replies and reposts on X). Views are shown separately. Counts are as the scraper read them; platform-only insights (impressions, reach) are not included.</div>
+    <div>Prepared by Vedic Tech · <span id="footAsOf"></span></div>
+  </div>
+</footer>
+
+<!-- Export modal -->
+<div class="modal" id="exportModal" role="dialog" aria-modal="true" aria-labelledby="exTitle">
+  <div class="box">
+    <h3 id="exTitle">Export to Excel</h3>
+    <p id="exDesc">—</p>
+    <ul>
+      <li><b>Day</b> — one row per post for the report day: category, platform, name, handle, caption, likes, comments, shares, views, link</li>
+      <li><b>Day summary</b> — posts, engagement and views per category and platform</li>
+      <li><b>Trend</b> — every day of the chosen duration, per category and platform, all metrics</li>
+      <li><b>Growth</b> — the growth table as shown</li>
+    </ul>
+    <div class="acts">
+      <span class="status" id="exStatus"></span>
+      <button class="btn" type="button" id="exCancel">Cancel</button>
+      <button class="btn primary" type="button" id="exGo">Download .xlsx</button>
+    </div>
+  </div>
+</div>
+
+<!-- Data source modal -->
+<div class="modal" id="sourceModal" role="dialog" aria-modal="true" aria-labelledby="srcTitle">
+  <div class="box">
+    <h3 id="srcTitle">Data source</h3>
+    <p>Connect the scraper that supplies the posts. The key is kept in this browser only and is never shown again once saved. In the deployed portal the key lives on the server; clients never see it.</p>
+    <div class="field"><label for="srcName">Signature name</label><input class="ctl" id="srcName" placeholder="e.g. varanasi-collector" autocomplete="off"><span class="help">A label for this key. Shown in the header and sent as the <code>X-Signature-Name</code> header.</span></div>
+    <div class="field"><label for="srcUrl">API URL</label><input class="ctl" id="srcUrl" placeholder="https://scraper.example.com/api/posts?from={from}&amp;to={to}" autocomplete="off"><span class="help"><code>{from}</code> and <code>{to}</code> are replaced with dates as <code>YYYY-MM-DD</code> (<code>{date}</code> = the report day). Must return a JSON array of posts (or <code>{"posts":[…]}</code>).</span></div>
+    <div class="field"><label for="srcKey">API key</label><input class="ctl" id="srcKey" type="password" placeholder="Paste the key here" autocomplete="off"><span class="help">Sent as <code>Authorization: Bearer …</code> and <code>X-API-Key</code>.</span></div>
+    <details class="map"><summary>Fields the page reads from each post</summary>
+<pre id="mapPre"></pre>
+      <div>Field names are matched loosely (e.g. <code>like_count</code>, <code>likes</code>, <code>favorite_count</code> all work). If a field is missing, that metric shows as —.</div>
+    </details>
+    <div class="field"><label for="srcPaste">Or paste JSON from the scraper</label><textarea class="ctl" id="srcPaste" placeholder='[{"platform":"instagram","username":"…","caption":"…","posted_at":"2026-09-04T09:12:00+05:30","like_count":142,"comment_count":4,"view_count":0,"media":[{"type":"video","thumbnail_url":"…"}],"url":"https://www.instagram.com/reel/…","category":"Hyper Local Pages Posting"}]'></textarea><span class="help">Use this when the API can't be reached from here — the posts load exactly as they would from the API.</span></div>
+    <div class="acts">
+      <span class="status" id="srcStatus"></span>
+      <button class="btn" type="button" id="srcSample">Back to sample data</button>
+      <button class="btn" type="button" id="srcCancel">Close</button>
+      <button class="btn" type="button" id="srcPasteGo">Load pasted JSON</button>
+      <button class="btn primary" type="button" id="srcSave">Save &amp; fetch</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+/* =====================================================================
+   Fixed facts: categories (the sheet's headings), platforms, the lag
+   ===================================================================== */
+const AS_OF = new Date(2026, 8, 6);                 // the day this prototype pretends to be
+const LAG_DAYS = 2;                                  // the report day is AS_OF − 2 by default
+const DATA_THROUGH = addDays(AS_OF, -LAG_DAYS);      // 4 Sep 2026
+const DATA_FROM = new Date(2026, 6, 21);             // first daily tab in the sheet: 21/7/26
+
+const PLATS = { facebook:{id:'facebook',name:'Facebook',pill:'FB',cls:'fb',v:'--fb'}, instagram:{id:'instagram',name:'Instagram',pill:'IG',cls:'ig',v:'--ig'}, x:{id:'x',name:'X (Twitter)',pill:'X',cls:'x',v:'--x'} };
+const PLAT_ORDER = ['facebook','instagram','x'];
+const CATS = [
+  { id:'hyper',    name:'Hyper Local Pages Posting', v:'--fb',  mix:{ facebook:[8,12], instagram:[8,12], x:[2,4] } },
+  { id:'national', name:'National X Influencers',    v:'--ig',  mix:{ x:[4,8] } },
+  { id:'third',    name:'3 Party Pages Posting',     v:'--x',   mix:{ facebook:[1,3], instagram:[1,3] } },
+  { id:'counter',  name:'Counter Comments Links',    v:'--c4',  mix:{ x:[14,22] } },
+];
+const CAT_BY_ID = Object.fromEntries(CATS.map(c=>[c.id,c]));
+const CAT_BY_NAME = Object.fromEntries(CATS.map(c=>[c.name.toLowerCase(),c.id]));
+const METRIC_NAME = { eng:'Engagement', likes:'Likes', comments:'Comments', shares:'Shares', views:'Views' };
+const mLabel = (pl,k)=> k==='eng'?'Engagement': pl==='x' ? ({comments:'Replies',shares:'Reposts'}[k]||METRIC_NAME[k]) : METRIC_NAME[k];
+const NOT_PUBLIC = { 'instagram.shares':'Shares are not public on Instagram.' };
+
+/* =====================================================================
+   Helpers
+   ===================================================================== */
+function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x}
+const iso = d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const parseISO = s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)};
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'], DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DOWL=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'], MONL=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const fmtD=d=>`${d.getDate()} ${MON[d.getMonth()]}`, fmtDL=d=>`${DOW[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]} ${d.getFullYear()}`;
+const fmtN=n=>n==null?'—':n.toLocaleString('en-US');
+const fmtC=n=>{ if(n==null)return '—'; const a=Math.abs(n); if(a>=1e6)return (n/1e6).toFixed(a>=1e7?0:1)+'M'; if(a>=1e4)return Math.round(n/1e3)+'K'; if(a>=1e3)return (n/1e3).toFixed(1)+'K'; return String(Math.round(n)) };
+const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const engagement=p=>(p.likes||0)+(p.comments||0)+(p.shares||0);
+const metricVal=(p,m)=> m==='eng'?engagement(p):p[m];
+function sum(arr,f){let s=0;for(const x of arr){const v=f(x);if(v!=null)s+=v}return s}
+function pct(a,b){ if(!b) return null; return (a-b)/b*100 }
+const deltaHtml=(d,cls='')=> d==null?`<b class="flat ${cls}">new</b>`:`<b class="${d>=0?'up':'down'} ${cls}">${d>=0?'▲':'▼'} ${Math.abs(d).toFixed(0)}%</b>`;
+function ago(ts, ref){ if(!ts) return ''; const h=Math.max(0,Math.round((ref-ts)/36e5)); return h<1?'just now':h<48?`${h}h ago`:`${Math.round(h/24)}d ago` }
+function niceTicks(max,n=4){ if(max<=0) return [0]; const raw=max/n, mag=Math.pow(10,Math.floor(Math.log10(raw))); const step=[1,2,2.5,5,10].map(m=>m*mag).find(s=>raw<=s); const out=[]; for(let v=0;v<=max+1e-9;v+=step) out.push(+v.toFixed(6)); if(out[out.length-1]<max) out.push(out[out.length-1]+step); return out }
+function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim() }
+const initials=s=>(s||'?').replace(/^@/,'').split(/[\s._-]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')||'?';
+function eachDay(a,b){const out=[];for(let d=new Date(a);d<=b;d=addDays(d,1))out.push(iso(d));return out}
+let _uid=0; const uid=()=>'u'+(++_uid).toString(36);
+
+/* =====================================================================
+   Sample data — shaped like the sheet: per day, per heading, mixed links
+   ===================================================================== */
+const RANGES = {
+  'hyper.facebook':  { likes:[40,1800],  comments:[3,200],  shares:[2,350],   views:[800,60000],    photo:.35 },
+  'hyper.instagram': { likes:[80,3200],  comments:[5,260],  shares:null,      views:[1500,95000],   photo:.30 },
+  'hyper.x':         { likes:[10,400],   comments:[1,60],   shares:[2,150],   views:[500,25000],    photo:0 },
+  'national.x':      { likes:[400,9000], comments:[20,800], shares:[100,3500],views:[15000,450000], photo:0 },
+  'third.facebook':  { likes:[60,2500],  comments:[5,300],  shares:[5,500],   views:[2000,80000],   photo:.3 },
+  'third.instagram': { likes:[120,4000], comments:[8,350],  shares:null,      views:[3000,120000],  photo:.25 },
+  'counter.x':       { likes:[3,120],    comments:[0,25],   shares:[0,40],    views:[200,9000],     photo:0 },
+};
+const HANDLES = {
+  'hyper.facebook':  ['Kashi Live Updates','Banaras Buzz','Ghat Diaries','Purvanchal Post','Sarnath Samvad','Assi Ghat Times','Varanasi Vibes','Lanka Local','Godowlia Gossip','Cantt Chronicle'],
+  'hyper.instagram': ['kashi.frames','banaras.reels','ghat.stories','varanasi.daily','purvanchal.pics','assi.mornings','lanka.lens','bhu.corner','dashashwamedh.diaries','sigra.snaps'],
+  'hyper.x':         ['KashiVoice_','BanarasWala','VNSUpdates_','GhatSideTalk'],
+  'national.x':      Array.from({length:9},(_,i)=>'national_voice_'+String(i+1).padStart(2,'0')),
+  'third.facebook':  ['Sample Page A','Sample Page B','Sample Page C'],
+  'third.instagram': ['sample.page.a','sample.page.b','sample.page.c'],
+  'counter.x':       Array.from({length:40},(_,i)=>'reply_handle_'+String(i+1).padStart(2,'0')),
+};
+const CAPTIONS = [
+  'Sample caption — the scraper supplies the real text here. आज सुबह अस्सी घाट से एक झलक।',
+  'Sample caption: weekend community meet-up, photos from the ground.',
+  'नमूना पोस्ट — यह टेक्स्ट और मीडिया आपके स्क्रैपर से आएंगे।',
+  'Sample caption: quick update from Lanka crossing, more later today.',
+  'Sample caption — reel from the evening aarti, collected by the scraper.',
+  'Sample reply text: short comment under a larger post (counter thread).',
+];
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rnd=mulberry32(20260906), ri=(a,b)=>a+Math.floor(rnd()*(b-a+1)), skew=(min,max,p=2.3)=>Math.round(min+(max-min)*Math.pow(rnd(),p));
+function dayFactor(d){ let f=1; const dow=d.getDay(); if(dow===0)f*=.72; if(dow===6)f*=.85; const k=iso(d); if(k==='2026-08-15')f*=2.4; if(k==='2026-08-14'||k==='2026-08-16')f*=1.5; if(k==='2026-08-27')f*=1.9; if(k==='2026-08-28')f*=1.3; if(k==='2026-07-29')f*=1.35; if(k==='2026-09-02')f*=1.4; const t=(d-DATA_FROM)/(DATA_THROUGH-DATA_FROM); return f*(0.8+0.45*t) }
+function fakeUrl(plat,i){ if(plat==='x') return `https://x.com/i/status/20${String(93000000000000000+i*7919).slice(0,16)}`; if(plat==='instagram') return `https://www.instagram.com/reel/Dc${(i*2654435761>>>0).toString(36).slice(0,8)}/`; return `https://www.facebook.com/reel/${String(3460000000000000+i*104729).slice(0,16)}/` }
+function buildSample(){
+  const out=[]; let id=0;
+  for(let d=new Date(DATA_FROM); d<=DATA_THROUGH; d=addDays(d,1)){
+    const f=dayFactor(d);
+    for(const cat of CATS) for(const plat of PLAT_ORDER){
+      const mix=cat.mix[plat]; if(!mix) continue;
+      let n=ri(mix[0],mix[1]); if(iso(d)==='2026-08-15') n=Math.round(n*1.3);
+      const R=RANGES[`${cat.id}.${plat}`], pool=HANDLES[`${cat.id}.${plat}`];
+      for(let k=0;k<n;k++){
+        id++; const photo=rnd()<R.photo; const h=pool[ri(0,pool.length-1)];
+        const posted=new Date(d); posted.setHours(ri(7,22),ri(0,59));
+        out.push({ id, date:iso(d), cat:cat.id, plat, name: plat==='facebook'?h:h.replace(/[._]/g,' ').replace(/\b\w/g,c=>c.toUpperCase()), handle:'@'+h.replace(/\s+/g,'').toLowerCase(),
+          avatar:null, text:CAPTIONS[cat.id==='counter'?5:ri(0,4)], mediaType: photo?'image':(plat==='x'?(rnd()<.5?'image':null):'video'), thumb:null,
+          postedAt:posted, collectedAt:new Date(posted.getTime()+ri(2,20)*36e5), url:fakeUrl(plat,id),
+          likes:Math.round(skew(...R.likes)*f), comments:Math.round(skew(...R.comments)*f), shares:R.shares?Math.round(skew(...R.shares)*f):null, views:photo?null:Math.round(skew(...R.views)*f) });
+      }
+    }
+  }
+  return out;
+}
+
+/* =====================================================================
+   Scraper adapter — turns the scraper's JSON into the shape above
+   ===================================================================== */
+const FIELD_MAP = {
+  platform:   ['platform','network','source'],
+  name:       ['name','display_name','full_name','author_name','page_name','user.full_name','user.name','author.name'],
+  handle:     ['handle','username','screen_name','user.username','author.username','account'],
+  avatar:     ['avatar','profile_pic_url','profile_image_url','user.profile_pic_url','author.avatar'],
+  text:       ['text','caption','content','message','full_text'],
+  postedAt:   ['posted_at','created_at','timestamp','taken_at','date'],
+  collectedAt:['collected_at','scraped_at','fetched_at'],
+  url:        ['url','permalink','link','post_url'],
+  likes:      ['likes','like_count','favorite_count','reactions','reaction_count'],
+  comments:   ['comments','comment_count','reply_count','replies'],
+  shares:     ['shares','share_count','repost_count','retweet_count','reposts'],
+  views:      ['views','view_count','play_count','video_view_count','impressions'],
+  category:   ['category','classification','section','label'],
+  mediaType:  ['media_type','type','media.0.type','media.0.media_type'],
+  thumb:      ['thumbnail_url','thumbnail','media.0.thumbnail_url','media.0.url','image_url','display_url'],
+};
+document.getElementById('mapPre').textContent = Object.entries(FIELD_MAP).map(([k,v])=>`${k.padEnd(12)} ← ${v.join(' | ')}`).join('\n');
+const dig=(o,path)=>path.split('.').reduce((a,k)=>a==null?undefined:a[k],o);
+const pick=(o,keys)=>{ for(const k of keys){ const v=dig(o,k); if(v!==undefined&&v!==null&&v!=='') return v } return undefined };
+const toInt=v=>{ if(v==null||v==='') return null; if(typeof v==='number') return Math.round(v); const s=String(v).trim().replace(/,/g,'').toLowerCase(); const m=s.match(/^([\d.]+)\s*(k|m|lakh|l|cr)?$/); if(!m) return null; const n=parseFloat(m[1]); const mult={k:1e3,m:1e6,lakh:1e5,l:1e5,cr:1e7}[m[2]]||1; return Math.round(n*mult) };
+function platformOf(raw, url){ const s=String(raw||'').toLowerCase()+' '+String(url||'').toLowerCase(); if(/instagram|\big\b/.test(s)) return 'instagram'; if(/facebook|fb\.|\bfb\b/.test(s)) return 'facebook'; return 'x' }
+function categoryOf(raw){ const s=String(raw||'').toLowerCase().trim(); if(CAT_BY_NAME[s]) return CAT_BY_NAME[s]; if(/hyper/.test(s)) return 'hyper'; if(/national|influenc/.test(s)) return 'national'; if(/3|third|party/.test(s)) return 'third'; if(/counter|comment/.test(s)) return 'counter'; return 'hyper' }
+function normalizePost(raw, i){
+  const url=pick(raw,FIELD_MAP.url); const plat=platformOf(pick(raw,FIELD_MAP.platform),url);
+  const pr=pick(raw,FIELD_MAP.postedAt); const posted=pr?new Date(typeof pr==='number'&&pr<2e10?pr*1000:pr):null;
+  const cr=pick(raw,FIELD_MAP.collectedAt); const collected=cr?new Date(typeof cr==='number'&&cr<2e10?cr*1000:cr):null;
+  const handle=String(pick(raw,FIELD_MAP.handle)||'').replace(/^@/,''); const mt=String(pick(raw,FIELD_MAP.mediaType)||'').toLowerCase();
+  return { id:i+1, date: posted&&!isNaN(posted)?iso(posted):iso(DATA_THROUGH), cat:categoryOf(pick(raw,FIELD_MAP.category)), plat,
+    name:String(pick(raw,FIELD_MAP.name)||handle||'Unknown'), handle:handle?'@'+handle:'', avatar:pick(raw,FIELD_MAP.avatar)||null,
+    text:String(pick(raw,FIELD_MAP.text)||''), mediaType:/video|reel|clip/.test(mt)?'video':/image|photo|carousel|sidecar/.test(mt)?'image':(pick(raw,FIELD_MAP.thumb)?'image':null), thumb:pick(raw,FIELD_MAP.thumb)||null,
+    postedAt:posted&&!isNaN(posted)?posted:null, collectedAt:collected&&!isNaN(collected)?collected:null, url:url||'',
+    likes:toInt(pick(raw,FIELD_MAP.likes)), comments:toInt(pick(raw,FIELD_MAP.comments)), shares:toInt(pick(raw,FIELD_MAP.shares)), views:toInt(pick(raw,FIELD_MAP.views)) };
+}
+function ingest(json){ const arr=Array.isArray(json)?json:(json&&(json.posts||json.data||json.items||json.results)); if(!Array.isArray(arr)) throw new Error('Expected a JSON array of posts (or {"posts":[…]}).'); return arr.map(normalizePost) }
+
+/* =====================================================================
+   State + indexes
+   ===================================================================== */
+let POSTS = buildSample(); let BY_DATE = new Map();
+function reindex(){ BY_DATE=new Map(); for(const p of POSTS){ if(!BY_DATE.has(p.date)) BY_DATE.set(p.date,[]); BY_DATE.get(p.date).push(p) } }
+reindex();
+let SOURCE = { mode:'sample', signature:'', url:'', key:'' };
+const state = { day: iso(DATA_THROUGH), dur:'7', durFrom:null, durTo:null, metric:'eng', gDur:'30', gMetric:'eng', gSplit:'platform', feed:{cat:'',plat:'',sort:'eng',q:'',page:1} };
+try{ const s=JSON.parse(localStorage.getItem('vsp.source')||'null'); if(s&&s.url){ SOURCE={mode:'api',signature:s.signature||'',url:s.url,key:s.key||''} } }catch(e){}
+const onDay = d=>BY_DATE.get(d)||[];
+const dayPosts = ()=>onDay(state.day);
+function dataBounds(){ const ds=[...BY_DATE.keys()].sort(); return [ds[0]||iso(DATA_FROM), ds[ds.length-1]||iso(DATA_THROUGH)] }
+function rangeDays(n, endISO){ const end=parseISO(endISO); return eachDay(addDays(end,-(n-1)), end) }
+function seriesOf(days, filter, metric){ return days.map(d=>sum(onDay(d).filter(filter), p=>metricVal(p,metric))) }
+function countOf(days, filter){ return days.map(d=>onDay(d).filter(filter).length) }
+
+/* =====================================================================
+   Tooltip
+   ===================================================================== */
+const tip=document.createElement('div'); tip.className='tip'; document.body.appendChild(tip);
+function showTip(html,x,y){ tip.innerHTML=html; tip.classList.add('show'); tip.style.left=x+'px'; tip.style.top=(y-10)+'px' }
+function hideTip(){ tip.classList.remove('show') }
+document.addEventListener('mousemove',e=>{ const el=e.target.closest('[data-tip]'); if(!el){ if(!e.target.closest('.xh')) hideTip(); return } showTip(el.dataset.tip,e.pageX,e.pageY) });
+
+/* =====================================================================
+   Charts
+   ===================================================================== */
+/* Area trend — one series, gradient wash, crosshair */
+function areaChart(days, values, color, opts={}){
+  const W=opts.w||400, H=opts.h||170, m={t:16,r:opts.endLabel===false?12:46,b:24,l:40};
+  const iw=W-m.l-m.r, ih=H-m.t-m.b, n=days.length;
+  const max=Math.max(1,...values); const ticks=niceTicks(max,3); const top=ticks[ticks.length-1];
+  const x=i=>m.l+(n===1?iw/2:i*(iw/(n-1))), y=v=>m.t+ih-(v/top)*ih;
+  const id=uid(); const pts=values.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+  let s=`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label||'Trend')}"><defs><linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity=".02"/></linearGradient></defs>`;
+  s+=`<g class="grid">${ticks.map(t=>`<line x1="${m.l}" x2="${W-m.r}" y1="${y(t)}" y2="${y(t)}"/>`).join('')}</g>`;
+  s+=ticks.map(t=>`<text x="${m.l-6}" y="${y(t)+3.5}" text-anchor="end" class="num">${fmtC(t)}</text>`).join('');
+  const every=Math.max(1,Math.ceil(n/(W>380?7:5)));
+  days.forEach((d,i)=>{ if(i===n-1||(i%every===0&&n-1-i>=every/2)) s+=`<text x="${x(i)}" y="${H-7}" text-anchor="middle">${fmtD(parseISO(d))}</text>` });
+  s+=`<path d="M${pts.join('L')}L${x(n-1)},${y(0)}L${x(0)},${y(0)}Z" fill="url(#${id}g)"/>`;
+  s+=`<path d="M${pts.join('L')}" fill="none" stroke="${color}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const li=n-1, peak=values.indexOf(Math.max(...values));
+  if(peak!==li&&values[peak]>0) s+=`<circle cx="${x(peak)}" cy="${y(values[peak])}" r="3.5" fill="${color}" stroke="var(--surface)" stroke-width="2"/>`;
+  s+=`<circle cx="${x(li)}" cy="${y(values[li])}" r="4.5" fill="${color}" stroke="var(--surface)" stroke-width="2"/>`;
+  if(opts.endLabel!==false) s+=`<text x="${x(li)+8}" y="${y(values[li])+3.5}" class="v">${fmtC(values[li])}</text>`;
+  s+=`<line class="base" x1="${m.l}" x2="${W-m.r}" y1="${y(0)}" y2="${y(0)}"/>`;
+  s+=`<line id="${id}x" x1="0" x2="0" y1="${m.t}" y2="${y(0)}" stroke="var(--axis)" stroke-width="1" style="display:none"/><circle id="${id}c" r="5" fill="${color}" stroke="var(--surface)" stroke-width="2" style="display:none"/>`;
+  s+=`<rect class="xh hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" data-xh="${id}"/></svg>`;
+  queueMicrotask(()=>{ const r=document.querySelector(`rect[data-xh="${id}"]`); if(!r) return; const svg=r.ownerSVGElement, xl=svg.querySelector('#'+id+'x'), c=svg.querySelector('#'+id+'c');
+    r.addEventListener('mousemove',e=>{ const pt=svg.createSVGPoint(); pt.x=e.clientX; pt.y=e.clientY; const p=pt.matrixTransform(svg.getScreenCTM().inverse()); const i=Math.max(0,Math.min(n-1,Math.round((p.x-m.l)/(iw/(n-1||1)))));
+      xl.setAttribute('x1',x(i)); xl.setAttribute('x2',x(i)); xl.style.display=''; c.setAttribute('cx',x(i)); c.setAttribute('cy',y(values[i])); c.style.display='';
+      showTip(`<b>${fmtDL(parseISO(days[i]))}</b>${opts.tipRows?opts.tipRows(i):`<div class=row><span>${esc(opts.metricName||'Value')}</span><b>${fmtN(values[i])}</b></div>`}`, e.pageX, e.pageY) });
+    r.addEventListener('mouseleave',()=>{ xl.style.display='none'; c.style.display='none'; hideTip() }) });
+  return s;
+}
+/* Multi-line — growth chart */
+function multiLine(days, series, opts={}){
+  const W=opts.w||1100, H=opts.h||300, m={t:16,r:64,b:26,l:48}; const iw=W-m.l-m.r, ih=H-m.t-m.b, n=days.length;
+  const max=Math.max(1,...series.flatMap(s=>s.values)); const ticks=niceTicks(max,4); const top=ticks[ticks.length-1];
+  const x=i=>m.l+(n===1?iw/2:i*(iw/(n-1))), y=v=>m.t+ih-(v/top)*ih; const id=uid();
+  let s=`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label||'Growth')}">`;
+  s+=`<g class="grid">${ticks.map(t=>`<line x1="${m.l}" x2="${W-m.r}" y1="${y(t)}" y2="${y(t)}"/>`).join('')}</g>`;
+  s+=ticks.map(t=>`<text x="${m.l-6}" y="${y(t)+3.5}" text-anchor="end" class="num">${fmtC(t)}</text>`).join('');
+  const every=Math.max(1,Math.ceil(n/12));
+  days.forEach((d,i)=>{ if(i===n-1||(i%every===0&&n-1-i>=every/2)) s+=`<text x="${x(i)}" y="${H-7}" text-anchor="middle">${fmtD(parseISO(d))}</text>` });
+  if(opts.prevBoundary!=null){ /* nothing drawn: the previous period is described in the header */ }
+  series.forEach(sr=>{ const pts=sr.values.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+    if(series.length===1) s+=`<path d="M${pts.join('L')}L${x(n-1)},${y(0)}L${x(0)},${y(0)}Z" fill="${sr.color}" opacity=".10"/>`;
+    s+=`<path d="M${pts.join('L')}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    s+=`<circle cx="${x(n-1)}" cy="${y(sr.values[n-1])}" r="4" fill="${sr.color}" stroke="var(--surface)" stroke-width="2"/>` });
+  // end labels, nudged apart when they collide
+  const ends=series.map((sr,k)=>({k,y:y(sr.values[n-1]),v:sr.values[n-1]})).sort((a,b)=>a.y-b.y);
+  for(let i=1;i<ends.length;i++) if(ends[i].y-ends[i-1].y<12) ends[i].y=ends[i-1].y+12;
+  ends.forEach(e=>{ s+=`<text x="${x(n-1)+9}" y="${e.y+3.5}" class="v">${fmtC(e.v)}</text>` });
+  s+=`<line class="base" x1="${m.l}" x2="${W-m.r}" y1="${y(0)}" y2="${y(0)}"/>`;
+  s+=`<line id="${id}x" x1="0" x2="0" y1="${m.t}" y2="${y(0)}" stroke="var(--axis)" stroke-width="1" style="display:none"/>`+series.map((sr,k)=>`<circle id="${id}c${k}" r="5" fill="${sr.color}" stroke="var(--surface)" stroke-width="2" style="display:none"/>`).join('');
+  s+=`<rect class="xh hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" data-xh="${id}"/></svg>`;
+  queueMicrotask(()=>{ const r=document.querySelector(`rect[data-xh="${id}"]`); if(!r) return; const svg=r.ownerSVGElement, xl=svg.querySelector('#'+id+'x'), cs=series.map((_,k)=>svg.querySelector(`#${id}c${k}`));
+    r.addEventListener('mousemove',e=>{ const pt=svg.createSVGPoint(); pt.x=e.clientX; pt.y=e.clientY; const p=pt.matrixTransform(svg.getScreenCTM().inverse()); const i=Math.max(0,Math.min(n-1,Math.round((p.x-m.l)/(iw/(n-1||1)))));
+      xl.setAttribute('x1',x(i)); xl.setAttribute('x2',x(i)); xl.style.display=''; series.forEach((sr,k)=>{ cs[k].setAttribute('cx',x(i)); cs[k].setAttribute('cy',y(sr.values[i])); cs[k].style.display='' });
+      showTip(`<b>${fmtDL(parseISO(days[i]))}</b>`+series.map(sr=>`<div class=row><span><i class="sw" style="background:${sr.color};vertical-align:-1px;margin-right:5px"></i>${esc(sr.name)}</span><b>${fmtN(sr.values[i])}</b></div>`).join(''), e.pageX, e.pageY) });
+    r.addEventListener('mouseleave',()=>{ xl.style.display='none'; cs.forEach(c=>c.style.display='none'); hideTip() }) });
+  return s;
+}
+function sparkline(values, color){ const W=120,H=36,n=values.length; const max=Math.max(1,...values); const x=i=>n===1?W/2:i*(W/(n-1)), y=v=>H-4-(v/max)*(H-10); const pts=values.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('L'); const li=n-1;
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><path d="M${pts}L${W},${H}L0,${H}Z" fill="${color}" opacity=".12"/><path d="M${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>` }
+
+/* =====================================================================
+   Render: Today (hero + top posts)
+   ===================================================================== */
+const ICON={ heart:'<svg viewBox="0 0 16 16"><path d="M8 13.5S2.5 10 2.5 6.2A2.9 2.9 0 0 1 8 4.6a2.9 2.9 0 0 1 5.5 1.6C13.5 10 8 13.5 8 13.5z"/></svg>', repost:'<svg viewBox="0 0 16 16"><path d="M4 6V4.5A1.5 1.5 0 0 1 5.5 3H12M10 1l2 2-2 2M12 10v1.5A1.5 1.5 0 0 1 10.5 13H4M6 15l-2-2 2-2"/></svg>', comment:'<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v7h-6L4 13v-2.5H2.5z"/></svg>', eye:'<svg viewBox="0 0 16 16"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>' };
+function renderToday(){
+  const d=parseISO(state.day), posts=dayPosts(), prev=onDay(iso(addDays(d,-1)));
+  document.getElementById('heroDate').textContent=`${DOWL[d.getDay()]}, ${d.getDate()} ${MONL[d.getMonth()]} ${d.getFullYear()}`;
+  document.getElementById('heroLag').textContent = state.day===iso(DATA_THROUGH) ? `Latest available. Reports are published ${LAG_DAYS} days after posting, once the counts have settled.` : `Reports go up to ${fmtD(DATA_THROUGH)} (${LAG_DAYS}-day delay). Use the day picker to move.`;
+  document.getElementById('feedTitle').textContent=`Posts on ${fmtD(d)}`;
+  const week=rangeDays(7,state.day); const accent=cssVar('--accent');
+  const kp=[{l:'Engagement',f:a=>sum(a,engagement),t:'likes + comments + shares'},{l:'Views',f:a=>sum(a,p=>p.views)},{l:'Posts',f:a=>a.length}];
+  document.getElementById('kpis').innerHTML=kp.map(k=>{ const v=k.f(posts), pv=k.f(prev), dd=pct(v,pv); const spark=week.map(x=>k.f(onDay(x)));
+    return `<div class="kpi"><div class="l" ${k.t?`title="${k.t}"`:''}>${k.l}</div><div class="v" title="${fmtN(v)}">${fmtC(v)}</div><div class="d">${deltaHtml(dd)}<span>vs ${fmtD(addDays(d,-1))}</span></div>${sparkline(spark,accent)}</div>` }).join('');
+  const eTot=Math.max(1,sum(posts,engagement));
+  document.getElementById('sharebar').innerHTML=PLAT_ORDER.map(pl=>{ const e=sum(posts.filter(p=>p.plat===pl),engagement); return e?`<i class="${PLATS[pl].cls}" style="width:${(e/eTot*100).toFixed(1)}%" data-tip="<b>${PLATS[pl].name}</b><div class=row><span>Engagement</span><b>${fmtN(e)}</b></div><div class=row><span>Share</span><b>${Math.round(e/eTot*100)}%</b></div>"></i>`:'' }).join('');
+  document.getElementById('platrows').innerHTML=PLAT_ORDER.map(pl=>{ const pp=posts.filter(p=>p.plat===pl), pv=prev.filter(p=>p.plat===pl); const e=sum(pp,engagement), pe=sum(pv,engagement), dd=pct(e,pe);
+    return `<div class="platrow"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span><span class="n">${PLATS[pl].name}<small>${fmtN(pp.length)} post${pp.length===1?'':'s'} · ${fmtC(sum(pp,p=>p.views))} views</small></span><span class="v">${fmtC(e)}<small>${Math.round(e/eTot*100)}% of engagement</small></span><span class="d ${dd==null?'flat':dd>=0?'up':'down'}">${dd==null?'—':(dd>=0?'▲':'▼')+' '+Math.abs(dd).toFixed(0)+'%'}</span></div>` }).join('');
+  // top post per platform
+  document.getElementById('topgrid').innerHTML=PLAT_ORDER.map(pl=>{ const best=posts.filter(p=>p.plat===pl).sort((a,b)=>engagement(b)-engagement(a))[0];
+    if(!best) return `<div class="tp"><div class="media">No ${PLATS[pl].name} posts</div><div class="body"><div class="who"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span><b>${PLATS[pl].name}</b></div><div class="cap dash">Nothing posted on ${fmtD(d)}.</div></div></div>`;
+    const media = `<div class="media">${best.thumb?`<img src="${esc(best.thumb)}" alt="">`:(best.mediaType?'':'<span>No media</span>')}${best.mediaType?`<span class="kind">${best.mediaType}</span>`:''}${best.mediaType==='video'?'<span class="play"></span>':''}<span class="rank">Top ${PLATS[pl].pill}</span></div>`;
+    return `<a class="tp" href="${esc(best.url)}" target="_blank" rel="noopener" style="text-decoration:none">${media}<div class="body"><div class="who"><span class="ava">${best.avatar?`<img src="${esc(best.avatar)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`:initials(best.name)}</span><b>${esc(best.name)}</b><span class="h">${esc(best.handle)}</span><span class="pp ${PLATS[pl].cls}" style="margin-left:auto">${PLATS[pl].pill}</span></div><div class="cap">${esc(best.text)||'<span class="dash">No caption</span>'}</div><div class="catl">${esc(CAT_BY_ID[best.cat].name)}</div>
+      <div class="stat"><span title="Engagement"><b>${fmtC(engagement(best))}</b> engagement</span><span title="${mLabel(pl,'likes')}">${ICON.heart}${fmtC(best.likes)}</span><span title="${mLabel(pl,'comments')}">${ICON.comment}${fmtC(best.comments)}</span><span title="Views">${ICON.eye}${fmtC(best.views)}</span></div></div></a>` }).join('');
+}
+
+/* =====================================================================
+   Render: categories (parent duration + metric → 3 trend graphs each)
+   ===================================================================== */
+function durDays(){
+  const end=state.day;
+  if(state.dur==='custom'){ const [lo,hi]=dataBounds(); let a=state.durFrom||iso(addDays(parseISO(end),-6)), b=state.durTo||end; if(a<lo)a=lo; if(b>hi)b=hi; if(a>b)[a,b]=[b,a]; return eachDay(parseISO(a),parseISO(b)) }
+  const [lo]=dataBounds(); const days=rangeDays(Number(state.dur),end); return days.filter(d=>d>=lo);
+}
+function renderCats(){
+  const days=durDays(); const n=days.length; const met=state.metric; const first=parseISO(days[0]), last=parseISO(days[n-1]);
+  const prevDays=eachDay(addDays(first,-n),addDays(first,-1)).filter(d=>BY_DATE.has(d));
+  document.getElementById('durRange').textContent=`${fmtD(first)} – ${fmtD(last)} · ${n} day${n>1?'s':''}`;
+  document.getElementById('durCustom').classList.toggle('show',state.dur==='custom');
+  document.getElementById('cats').innerHTML=CATS.map(c=>{
+    const inCat=p=>p.cat===c.id; const tot=sum(days.flatMap(onDay).filter(inCat),p=>metricVal(p,met)), ptot=sum(prevDays.flatMap(onDay).filter(inCat),p=>metricVal(p,met));
+    const dd=prevDays.length?pct(tot/n,ptot/prevDays.length):null; const nposts=days.flatMap(onDay).filter(inCat).length;
+    const panels=PLAT_ORDER.map(pl=>{
+      const f=p=>p.cat===c.id&&p.plat===pl; const all=days.flatMap(onDay).filter(f); const color=cssVar(PLATS[pl].v);
+      const np=NOT_PUBLIC[`${pl}.${met}`];
+      let body, head;
+      if(!all.length){ body=`<div class="empty">No ${PLATS[pl].name} posts in this category${c.mix[pl]?' in this period':''}.</div>`; head='' }
+      else if(np){ body=`<div class="empty">${np}</div>`; head=`<div class="tot"><span class="v">—</span><span class="s">${fmtN(all.length)} posts</span></div>` }
+      else {
+        const vals=seriesOf(days,f,met), cnt=countOf(days,f); const t=sum(all,p=>metricVal(p,met)); const pt=sum(prevDays.flatMap(onDay).filter(f),p=>metricVal(p,met)); const d=prevDays.length?pct(t/n,pt/prevDays.length):null;
+        const peak=Math.max(...vals), pi=vals.indexOf(peak);
+        head=`<div class="tot"><span class="v" title="${fmtN(t)}">${fmtC(t)}</span><span class="d ${d==null?'flat':d>=0?'up':'down'}">${d==null?'':(d>=0?'▲':'▼')+' '+Math.abs(d).toFixed(0)+'%'}</span><span class="s">${fmtN(all.length)} posts · avg ${fmtC(t/all.length)} / post</span></div>`;
+        body=areaChart(days,vals,color,{w:400,h:170,label:`${c.name} · ${PLATS[pl].name} · ${mLabel(pl,met)} per day`,tipRows:i=>`<div class=row><span>${mLabel(pl,met)}</span><b>${fmtN(vals[i])}</b></div><div class=row><span>Posts</span><b>${cnt[i]}</b></div>${cnt[i]?`<div class=row><span>Per post</span><b>${fmtN(Math.round(vals[i]/cnt[i]))}</b></div>`:''}${i===pi&&peak>0?'<div class=row><span>Best day of the period</span></div>':''}`});
+      }
+      return `<div class="plat"><div class="ph"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span>${PLATS[pl].name}<span class="n">${mLabel(pl,met)} per day</span></div>${head}${body}</div>`;
+    }).join('');
+    return `<div class="cat"><div class="cat-head"><h3>${esc(c.name)}</h3><div class="stats"><span><b>${fmtN(nposts)}</b> posts</span><span><b title="${fmtN(tot)}">${fmtC(tot)}</b> ${METRIC_NAME[met].toLowerCase()}</span><span title="per-day average vs the ${prevDays.length} days before">${dd==null?'<span class="dash">no earlier period</span>':`<b class="${dd>=0?'up':'down'}">${dd>=0?'▲':'▼'} ${Math.abs(dd).toFixed(0)}%</b> vs previous ${prevDays.length}d`}</span></div></div><div class="plats">${panels}</div></div>`;
+  }).join('');
+}
+document.getElementById('durSeg').addEventListener('click',e=>{ const b=e.target.closest('button[data-d]'); if(!b) return; state.dur=b.dataset.d; document.querySelectorAll('#durSeg button').forEach(x=>x.classList.toggle('on',x===b)); if(state.dur==='custom'){ const [lo,hi]=dataBounds(); const f=document.getElementById('durFrom'), t=document.getElementById('durTo'); f.min=t.min=lo; f.max=t.max=state.day; f.value=state.durFrom||iso(addDays(parseISO(state.day),-6)); t.value=state.durTo||state.day; state.durFrom=f.value; state.durTo=t.value } renderCats() });
+document.getElementById('durFrom').addEventListener('change',e=>{ if(e.target.value){ state.durFrom=e.target.value; renderCats() } });
+document.getElementById('durTo').addEventListener('change',e=>{ if(e.target.value){ state.durTo=e.target.value; renderCats() } });
+document.getElementById('metricSel').addEventListener('change',e=>{ state.metric=e.target.value; renderCats() });
+
+/* =====================================================================
+   Render: growth
+   ===================================================================== */
+function renderGrowth(){
+  const n=Number(state.gDur), met=state.gMetric; const [lo]=dataBounds(); const days=rangeDays(n,state.day).filter(d=>d>=lo); const first=parseISO(days[0]);
+  const prevDays=eachDay(addDays(first,-days.length),addDays(first,-1)).filter(d=>BY_DATE.has(d));
+  const split = state.gSplit==='platform' ? PLAT_ORDER.map(pl=>({key:pl,name:PLATS[pl].name,color:cssVar(PLATS[pl].v),f:p=>p.plat===pl})) : CATS.map(c=>({key:c.id,name:c.name,color:cssVar(c.v),f:p=>p.cat===c.id}));
+  const series=split.map(s=>({...s,values:seriesOf(days,s.f,met)})).filter(s=>s.values.some(v=>v>0)||true);
+  const tot=sum(days.flatMap(onDay),p=>metricVal(p,met)), ptot=sum(prevDays.flatMap(onDay),p=>metricVal(p,met));
+  const dd=prevDays.length?pct(tot/days.length,ptot/prevDays.length):null;
+  document.getElementById('gLabel').textContent=`${METRIC_NAME[met]} · ${fmtD(first)} – ${fmtD(parseISO(days[days.length-1]))} (${days.length} days)`;
+  document.getElementById('gBig').textContent=fmtC(tot); document.getElementById('gBig').title=fmtN(tot);
+  document.getElementById('gDelta').innerHTML = dd==null ? `<span class="dash">No earlier period to compare — the data starts ${fmtD(parseISO(lo))}.</span>` : `${deltaHtml(dd)} per day vs the ${prevDays.length} days before (${fmtC(ptot)} total)`;
+  document.getElementById('gLegend').innerHTML=series.map(s=>`<span><i class="sw line" style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
+  document.getElementById('gChart').innerHTML=multiLine(days,series,{w:1100,h:300,label:`${METRIC_NAME[met]} per day, ${state.gSplit==='platform'?'by platform':'by category'}`});
+  document.getElementById('gTable').innerHTML=series.map(s=>{ const t=sum(days.flatMap(onDay).filter(s.f),p=>metricVal(p,met)), pt=sum(prevDays.flatMap(onDay).filter(s.f),p=>metricVal(p,met)); const d=prevDays.length?pct(t/days.length,pt/prevDays.length):null; const cnt=days.flatMap(onDay).filter(s.f).length;
+    return `<div class="gi"><div class="n"><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</div><div class="v" title="${fmtN(t)}">${fmtC(t)}<small class="${d==null?'flat':d>=0?'up':'down'}">${d==null?'':(d>=0?'▲':'▼')+' '+Math.abs(d).toFixed(0)+'%'}</small></div><div class="s">${fmtN(cnt)} posts · ${fmtC(t/days.length)} per day${cnt?` · ${fmtC(t/cnt)} per post`:''}</div></div>` }).join('');
+}
+document.getElementById('gDurSeg').addEventListener('click',e=>{ const b=e.target.closest('button[data-d]'); if(!b) return; state.gDur=b.dataset.d; document.querySelectorAll('#gDurSeg button').forEach(x=>x.classList.toggle('on',x===b)); renderGrowth() });
+document.getElementById('gSplit').addEventListener('click',e=>{ const b=e.target.closest('button[data-s]'); if(!b) return; state.gSplit=b.dataset.s; document.querySelectorAll('#gSplit button').forEach(x=>x.classList.toggle('on',x===b)); renderGrowth() });
+document.getElementById('gMetric').addEventListener('change',e=>{ state.gMetric=e.target.value; renderGrowth() });
+
+/* =====================================================================
+   Render: feed cards (unchanged)
+   ===================================================================== */
+const PAGE=20;
+function feedRows(){ const f=state.feed, q=f.q.trim().toLowerCase(); let rows=dayPosts().filter(p=>(!f.cat||p.cat===f.cat)&&(!f.plat||p.plat===f.plat)&&(!q||(p.name+' '+p.handle+' '+p.text).toLowerCase().includes(q)));
+  if(f.sort==='eng') rows.sort((a,b)=>engagement(b)-engagement(a)); else if(f.sort==='views') rows.sort((a,b)=>(b.views||0)-(a.views||0)); else rows.sort((a,b)=>(b.postedAt||0)-(a.postedAt||0)); return rows }
+function renderFeed(){
+  const rows=feedRows(), f=state.feed; const pages=Math.max(1,Math.ceil(rows.length/PAGE)); if(f.page>pages)f.page=pages; const slice=rows.slice((f.page-1)*PAGE,f.page*PAGE);
+  document.getElementById('fCount').textContent=`${fmtN(rows.length)} post${rows.length===1?'':'s'}`;
+  document.getElementById('cards').innerHTML = slice.map(p=>{
+    const when=[p.collectedAt?`collected ${ago(p.collectedAt,AS_OF)}`:'', p.postedAt?`posted ${ago(p.postedAt,AS_OF)}`:''].filter(Boolean).join(' · ');
+    const media = p.mediaType ? `<div class="media">${p.thumb?`<img src="${esc(p.thumb)}" alt="" loading="lazy">`:''}<span class="kind">${p.mediaType}</span>${p.mediaType==='video'?'<span class="play"></span>':''}</div>` : '';
+    const open = {facebook:'Open on Facebook',instagram:'Open on Instagram',x:'Open on X'}[p.plat];
+    return `<article class="post ${p.mediaType?'':'nomedia'}">
+      <div class="who"><div class="ava">${p.avatar?`<img src="${esc(p.avatar)}" alt="">`:initials(p.name)}</div><div><span class="name">${esc(p.name)}</span><span class="handle">${esc(p.handle)}</span> <span class="pp ${PLATS[p.plat].cls}">${PLATS[p.plat].pill}</span></div><span class="cat-chip">${esc(CAT_BY_ID[p.cat].name)}</span></div>
+      ${media}
+      <div class="body"><div class="text">${esc(p.text)||'<span class="dash">No caption</span>'}</div><div class="when">${when}</div>
+        <div class="metrics"><span title="${mLabel(p.plat,'likes')}">${ICON.heart}${fmtN(p.likes)}</span><span title="${mLabel(p.plat,'shares')}">${ICON.repost}${p.shares==null?'<span class=dash>—</span>':fmtN(p.shares)}</span><span title="${mLabel(p.plat,'comments')}">${ICON.comment}${fmtN(p.comments)}</span><span title="Views">${ICON.eye}${p.views==null?'<span class=dash>—</span>':fmtN(p.views)}</span></div></div>
+      <div class="acts"><a class="btn sm" href="${esc(p.url)}" target="_blank" rel="noopener">${open}</a><button class="btn sm" type="button" data-copy="${esc(p.url)}">Copy link</button></div>
+    </article>`;
+  }).join('') || `<div class="empty">No posts match these filters on ${fmtD(parseISO(state.day))}.</div>`;
+  document.getElementById('pager').innerHTML = pages>1 ? `<span>Page ${f.page} of ${pages}</span><button class="btn sm" type="button" data-pg="-1" ${f.page<=1?'disabled':''}>Previous</button><button class="btn sm" type="button" data-pg="1" ${f.page>=pages?'disabled':''}>Next</button>` : '';
+}
+document.getElementById('cards').addEventListener('click',async e=>{ const b=e.target.closest('button[data-copy]'); if(!b) return; try{ await navigator.clipboard.writeText(b.dataset.copy); const t=b.textContent; b.textContent='Copied'; setTimeout(()=>b.textContent=t,1200) }catch(err){ b.textContent='Copy failed' } });
+document.getElementById('pager').addEventListener('click',e=>{ const b=e.target.closest('button[data-pg]'); if(!b) return; state.feed.page+=Number(b.dataset.pg); renderFeed(); document.getElementById('feed').scrollIntoView({behavior:'smooth'}) });
+document.getElementById('fCat').addEventListener('change',e=>{state.feed.cat=e.target.value;state.feed.page=1;renderFeed()});
+document.getElementById('fPlat').addEventListener('change',e=>{state.feed.plat=e.target.value;state.feed.page=1;renderFeed()});
+document.getElementById('fSort').addEventListener('change',e=>{state.feed.sort=e.target.value;state.feed.page=1;renderFeed()});
+document.getElementById('fQ').addEventListener('input',e=>{state.feed.q=e.target.value;state.feed.page=1;renderFeed()});
+CATS.forEach(c=>document.getElementById('fCat').add(new Option(c.name,c.id)));
+
+/* =====================================================================
+   Day picker + nav
+   ===================================================================== */
+const dayPick=document.getElementById('dayPick');
+function renderAll(){ renderToday(); renderCats(); renderGrowth(); renderFeed() }
+function setDay(s){ const [lo,hi]=dataBounds(); if(s<lo)s=lo; if(s>hi)s=hi; state.day=s; dayPick.value=s; dayPick.min=lo; dayPick.max=hi; document.getElementById('prevDay').disabled=s<=lo; document.getElementById('nextDay').disabled=s>=hi; state.feed.page=1; renderAll() }
+dayPick.addEventListener('change',()=>{ if(dayPick.value) setDay(dayPick.value) });
+document.getElementById('prevDay').addEventListener('click',()=>setDay(iso(addDays(parseISO(state.day),-1))));
+document.getElementById('nextDay').addEventListener('click',()=>setDay(iso(addDays(parseISO(state.day),1))));
+const tabLinks=[...document.querySelectorAll('#tabs a')];
+document.querySelectorAll('section.block').forEach(s=>new IntersectionObserver(es=>es.forEach(en=>{ if(en.isIntersecting) tabLinks.forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+s.id)) }),{rootMargin:'-40% 0px -55% 0px'}).observe(s));
+document.getElementById('footAsOf').textContent=`Viewed as of ${fmtDL(AS_OF)} · reports published with a ${LAG_DAYS}-day delay`;
+
+/* =====================================================================
+   Data source: API key + signature, or pasted JSON
+   ===================================================================== */
+const srcModal=document.getElementById('sourceModal');
+function openSource(){ document.getElementById('srcName').value=SOURCE.signature||''; document.getElementById('srcUrl').value=SOURCE.url||''; document.getElementById('srcKey').value=''; document.getElementById('srcKey').placeholder=SOURCE.key?'Saved — leave blank to keep':'Paste the key here'; document.getElementById('srcStatus').textContent=''; srcModal.classList.add('show'); document.getElementById('srcName').focus() }
+document.getElementById('sourceBtn').addEventListener('click',openSource);
+document.getElementById('bannerLink').addEventListener('click',openSource);
+document.getElementById('srcCancel').addEventListener('click',()=>srcModal.classList.remove('show'));
+srcModal.addEventListener('click',e=>{ if(e.target===srcModal) srcModal.classList.remove('show') });
+function setBanner(kind, html, link){ const b=document.getElementById('banner'); b.className='banner '+kind; document.getElementById('bannerText').innerHTML=html; document.getElementById('bannerLink').textContent=link }
+function applyPosts(list, label){ POSTS=list; reindex(); setDay(dataBounds()[1]); document.getElementById('sourceLabel').textContent=label }
+document.getElementById('srcSample').addEventListener('click',()=>{ SOURCE={mode:'sample',signature:'',url:'',key:''}; try{localStorage.removeItem('vsp.source')}catch(e){} applyPosts(buildSample(),'Data source'); setBanner('sample','<b>Sample data.</b> Categories and the daily rhythm mirror the sheet; handles, captions and every number are generated for illustration.','Connect your scraper →'); srcModal.classList.remove('show') });
+document.getElementById('srcPasteGo').addEventListener('click',()=>{ const st=document.getElementById('srcStatus'); try{ const list=ingest(JSON.parse(document.getElementById('srcPaste').value)); if(!list.length) throw new Error('The array is empty.'); const sig=document.getElementById('srcName').value.trim()||'pasted JSON'; SOURCE={mode:'paste',signature:sig,url:'',key:''}; applyPosts(list,sig); setBanner('live',`<b>Live data from ${esc(sig)}.</b> ${fmtN(list.length)} posts loaded from pasted JSON, ${dataBounds()[0]} → ${dataBounds()[1]}.`,'Change source'); srcModal.classList.remove('show') }catch(e){ st.textContent='Could not read that JSON: '+e.message } });
+async function fetchRange(from,to){
+  const url=SOURCE.url.replace('{date}',to).replace('{from}',from).replace('{to}',to); const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(),15000);
+  const headers={'Accept':'application/json'}; if(SOURCE.key){ headers['Authorization']='Bearer '+SOURCE.key; headers['X-API-Key']=SOURCE.key } if(SOURCE.signature) headers['X-Signature-Name']=SOURCE.signature;
+  try{ const r=await fetch(url,{headers,signal:ctrl.signal}); if(!r.ok) throw new Error(`HTTP ${r.status}`); return ingest(await r.json()) } finally{ clearTimeout(t) }
+}
+document.getElementById('srcSave').addEventListener('click',async()=>{
+  const st=document.getElementById('srcStatus'); const sig=document.getElementById('srcName').value.trim(), url=document.getElementById('srcUrl').value.trim(), key=document.getElementById('srcKey').value;
+  if(!url){ st.textContent='Enter the API URL.'; return }
+  SOURCE={mode:'api',signature:sig,url,key:key||SOURCE.key||''}; try{ localStorage.setItem('vsp.source',JSON.stringify(SOURCE)) }catch(e){}
+  const to=iso(DATA_THROUGH), from=iso(addDays(DATA_THROUGH,-59)); st.textContent=`Fetching ${from} → ${to}…`;
+  try{ const list=await fetchRange(from,to); if(!list.length) throw new Error('the API returned no posts'); applyPosts(list,sig||'Connected'); setBanner('live',`<b>Live data from ${esc(sig||url)}.</b> ${fmtN(list.length)} posts, ${dataBounds()[0]} → ${dataBounds()[1]}.`,'Change source'); srcModal.classList.remove('show') }
+  catch(e){ st.textContent = (e.name==='AbortError') ? 'The API did not answer within 15 s.' : /Failed to fetch|NetworkError|Load failed/.test(String(e.message)) ? 'This page cannot reach that URL from here (the viewer blocks outside requests, or the API has no CORS header). Paste the JSON below instead — the deployed portal fetches server-side, so this only affects the prototype.' : 'Could not load: '+e.message }
+});
+
+/* =====================================================================
+   Export — SheetJS, handed to the viewer through the downloads capability
+   ===================================================================== */
+const exModal=document.getElementById('exportModal');
+document.getElementById('exportBtn').addEventListener('click',()=>{ document.getElementById('exDesc').textContent=`${fmtDL(parseISO(state.day))} · ${fmtN(dayPosts().length)} posts, plus the ${durDays().length}-day trend and the ${state.gDur}-day growth table. Four sheets:`; document.getElementById('exStatus').textContent=''; exModal.classList.add('show'); document.getElementById('exGo').focus() });
+document.getElementById('exCancel').addEventListener('click',()=>exModal.classList.remove('show'));
+exModal.addEventListener('click',e=>{ if(e.target===exModal) exModal.classList.remove('show') });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){exModal.classList.remove('show');srcModal.classList.remove('show')} });
+function buildWorkbook(){
+  const posts=dayPosts().slice().sort((a,b)=>a.cat<b.cat?-1:a.cat>b.cat?1:engagement(b)-engagement(a)); const wb=XLSX.utils.book_new();
+  const rows=posts.map(p=>({Date:p.date,Category:CAT_BY_ID[p.cat].name,Platform:PLATS[p.plat].name,Name:p.name,Handle:p.handle,Caption:p.text,Likes:p.likes??'',Comments:p.comments??'',Shares:p.shares??'',Views:p.views??'',Engagement:engagement(p),'Posted at':p.postedAt?p.postedAt.toISOString():'',Link:p.url}));
+  const ws1=XLSX.utils.json_to_sheet(rows); ws1['!cols']=[{wch:11},{wch:28},{wch:12},{wch:22},{wch:20},{wch:50},{wch:8},{wch:10},{wch:8},{wch:10},{wch:11},{wch:22},{wch:60}]; XLSX.utils.book_append_sheet(wb,ws1,'Day');
+  const sumRows=[['Varanasi Campaign — daily social report'],['Day',state.day],['Exported (as of)',iso(AS_OF)],[],['Category','Platform','Posts','Likes','Comments','Shares','Views','Engagement']];
+  for(const c of CATS) for(const pl of PLAT_ORDER){ const r=posts.filter(p=>p.cat===c.id&&p.plat===pl); if(!r.length) continue; sumRows.push([c.name,PLATS[pl].name,r.length,sum(r,p=>p.likes),sum(r,p=>p.comments),sum(r,p=>p.shares),sum(r,p=>p.views),sum(r,engagement)]) }
+  sumRows.push(['All','',posts.length,sum(posts,p=>p.likes),sum(posts,p=>p.comments),sum(posts,p=>p.shares),sum(posts,p=>p.views),sum(posts,engagement)]);
+  const ws2=XLSX.utils.aoa_to_sheet(sumRows); ws2['!cols']=[{wch:28},{wch:12},{wch:7},{wch:9},{wch:10},{wch:9},{wch:10},{wch:11}]; XLSX.utils.book_append_sheet(wb,ws2,'Day summary');
+  const trend=[]; for(const d of durDays()) for(const c of CATS) for(const pl of PLAT_ORDER){ const r=onDay(d).filter(p=>p.cat===c.id&&p.plat===pl); if(!r.length&&!c.mix[pl]) continue; trend.push({Date:d,Category:c.name,Platform:PLATS[pl].name,Posts:r.length,Likes:sum(r,p=>p.likes),Comments:sum(r,p=>p.comments),Shares:sum(r,p=>p.shares),Views:sum(r,p=>p.views),Engagement:sum(r,engagement)}) }
+  const ws3=XLSX.utils.json_to_sheet(trend); ws3['!cols']=[{wch:11},{wch:28},{wch:12},{wch:7},{wch:9},{wch:10},{wch:9},{wch:10},{wch:11}]; XLSX.utils.book_append_sheet(wb,ws3,'Trend');
+  const n=Number(state.gDur), met=state.gMetric; const [lo]=dataBounds(); const days=rangeDays(n,state.day).filter(d=>d>=lo); const first=parseISO(days[0]); const prevDays=eachDay(addDays(first,-days.length),addDays(first,-1)).filter(d=>BY_DATE.has(d));
+  const g=[[`${METRIC_NAME[met]} — ${days[0]} to ${days[days.length-1]} (${days.length} days) vs the ${prevDays.length} days before`],['Series','Posts',`${METRIC_NAME[met]} (period)`,`${METRIC_NAME[met]} (previous)`,'Per day (period)','Per day (previous)','Change % (per day)']];
+  const split = state.gSplit==='platform' ? PLAT_ORDER.map(pl=>({name:PLATS[pl].name,f:p=>p.plat===pl})) : CATS.map(c=>({name:c.name,f:p=>p.cat===c.id}));
+  for(const s of split){ const t=sum(days.flatMap(onDay).filter(s.f),p=>metricVal(p,met)), pt=sum(prevDays.flatMap(onDay).filter(s.f),p=>metricVal(p,met)); const a=t/days.length, b=prevDays.length?pt/prevDays.length:null; const d=b?pct(a,b):null; g.push([s.name,days.flatMap(onDay).filter(s.f).length,t,pt,Math.round(a),b==null?'':Math.round(b),d==null?'':Math.round(d)]) }
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(g),'Growth');
+  return XLSX.write(wb,{type:'array',bookType:'xlsx'});
+}
+document.getElementById('exGo').addEventListener('click',async()=>{
+  const st=document.getElementById('exStatus'); const filename=`varanasi-daily_${state.day}.xlsx`; st.textContent='Building workbook…';
+  let buf; try{ buf=buildWorkbook() }catch(e){ st.textContent='Could not build the workbook — the spreadsheet library did not load.'; return }
+  const dl = window.claude&&window.claude.use ? await window.claude.use('downloads').catch(()=>null) : null;
+  if(dl){ try{ st.textContent='Waiting for your confirmation…'; await dl.save({filename,data:buf}); st.textContent='Saved.'; setTimeout(()=>exModal.classList.remove('show'),700) }catch(e){ st.textContent=e&&e.code==='declined'?'Download cancelled.':e&&e.code==='rate_limited'?'A download prompt is already open.':'Download is not available in this view.' } return }
+  try{ const url=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),4000); st.textContent='Downloaded.'; setTimeout(()=>exModal.classList.remove('show'),700) }catch(e){ st.textContent='Download is not available in this view.' }
+});
+
+/* =====================================================================
+   Boot
+   ===================================================================== */
+setDay(iso(DATA_THROUGH));
+if(SOURCE.mode==='api'){ document.getElementById('sourceLabel').textContent=SOURCE.signature||'Connected'; setBanner('sample',`<b>Sample data.</b> A source (${esc(SOURCE.signature||SOURCE.url)}) is saved in this browser — open <b>Data source</b> and press <b>Save &amp; fetch</b> to load it.`,'Open data source →') }
+const mq=window.matchMedia('(prefers-color-scheme: dark)'); mq.addEventListener?.('change',renderAll);
+new MutationObserver(renderAll).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+</script>
+</body></html>

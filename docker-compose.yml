@@ -34,6 +34,33 @@ services:
       start_period: 40s
 
   # ---------------------------------------------------------------------------
+  # Client Portal — https://clients.vedictech.in
+  #
+  # Its own image (python:3.12-slim — no Chromium, no tesseract), its own
+  # hostname, its own cookie and secret. It shares exactly ONE thing with the
+  # report tool: data/portal.db, which `web` writes and this container reads.
+  #
+  #   docker compose up -d --build portal
+  # ---------------------------------------------------------------------------
+  portal:
+    build:
+      context: .
+      dockerfile: Dockerfile.portal
+    image: report-portal:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORTAL_DB: /app/data/portal.db
+      PORTAL_MEDIA_DIR: /app/data/portal/media
+    ports:
+      - "127.0.0.1:8020:8020"
+    volumes:
+      - ./data/portal.db:/app/data/portal.db
+      - ./data/portal:/app/data/portal:ro
+    depends_on:
+      - web
+
+  # ---------------------------------------------------------------------------
   # WA Toolkit — https://report.vedictech.in/wa
   #
   # Deliberately its own service: its own image, its own Chromium, its own
@@ -153,6 +180,7 @@ services:
     depends_on:
       - web
       - wa
+      - portal
 
 volumes:
   caddydata:

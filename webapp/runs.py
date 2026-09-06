@@ -20,7 +20,8 @@ def create_run(project: dict, rows: list, raw: bytes, upload_name: str,
                report_name: str, types: list = None, outputs=None,
                keep_engagement: bool = False, workers: int = 0,
                user: str = "auto", note: str = "", notes: list = None,
-               fetch_metrics: bool = False, fast_capture: bool = False) -> list:
+               fetch_metrics: bool = False, fast_capture: bool = False,
+               sheet_date: str = "") -> list:
     """Create + queue one job per style. Returns the job ids.
 
     `types` — style slugs; None means every runnable style of the project.
@@ -72,6 +73,8 @@ def create_run(project: dict, rows: list, raw: bytes, upload_name: str,
                               workers=want_workers, outputs=want_outputs,
                               project_id=project["id"],
                               fetch_metrics=want_metrics, fast_capture=want_fast)
+        if sheet_date:
+            store.update(job_id, sheet_date=str(sheet_date)[:10])
         try:
             runner.build_job_dir(job_id, rows, raw, upload_name)
         except Exception as e:

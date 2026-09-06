@@ -33,3 +33,14 @@ report.vedictech.in {
 		max_size 10MB
 	}
 }
+
+# --- Client Portal: its own hostname, its own container --------------------------
+# Point the DNS A record for clients.vedictech.in at this server; Caddy issues
+# the certificate on first start. The portal sets its own security headers.
+clients.vedictech.in {
+	encode gzip
+	reverse_proxy portal:8020
+	request_body {
+		max_size 1MB
+	}
+}

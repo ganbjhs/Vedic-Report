@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.client.display_name }} — Daily social report{% endblock %}
+{% block body %}
+<div class="app">
+  <aside class="side" id="side">
+    <div class="brand">
+      {% if meta.client.logo %}<img class="logo" src="/logo" alt="">{% else %}<div class="mark" aria-hidden="true">{{ (meta.client.display_name or 'C')[:2] | upper }}</div>{% endif %}
+      <div class="t">
+        <h1>{{ meta.client.display_name }}</h1>
+        <div class="sub">Daily social report</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav" aria-label="Sections">
+      <div class="grp">Report</div>
+      <a href="#today" data-view="today"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 7h12M5.5 1.5v3M10.5 1.5v3"/></svg>Today</a>
+      <div class="grp">Categories</div>
+      <div id="navCats"></div>
+      <div class="grp">Analysis</div>
+      <a href="#growth" data-view="growth"><svg viewBox="0 0 16 16"><path d="M2 12l4-5 3 3 5-6"/><path d="M11 4h3v3"/></svg>Growth</a>
+      <a href="#feed" data-view="feed"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="5" rx="1.5"/><rect x="2" y="9" width="12" height="5" rx="1.5"/></svg>Feed</a>
+    </nav>
+    <div class="side-foot">
+      <div class="who" title="{{ user.email }}">{{ user.email }}</div>
+      <form method="post" action="/logout" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm" type="submit">Sign out</button></form>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="day">
+        <span class="lbl">Report day</span>
+        <button class="iconbtn" id="prevDay" type="button" aria-label="Previous day">‹</button>
+        <input type="date" class="ctl" id="dayPick" aria-label="Report day">
+        <button class="iconbtn" id="nextDay" type="button" aria-label="Next day">›</button>
+        <span class="lagnote" id="lagNote"></span>
+      </div>
+      <div class="right">
+        <a class="btn primary" id="exportBtn" href="/api/export.xlsx" title="Download this report as an Excel workbook">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 12v1.5h10V12"/></svg>
+          Export to Excel
+        </a>
+      </div>
+    </header>
+    <nav class="strip" id="strip" aria-label="Sections">
+      <a href="#today" data-view="today">Today</a>
+      <a href="#categories" data-view="categories">Categories</a>
+      <a href="#growth" data-view="growth">Growth</a>
+      <a href="#feed" data-view="feed">Feed</a>
+    </nav>
+    <div class="banner" id="banner" hidden><span id="bannerText"></span></div>
+
+    <div class="content">
+      <!-- ===== Today ===== -->
+      <section class="view" id="today" hidden>
+        <div class="hero">
+          <div class="left">
+            <div class="eyebrow">Daily report</div>
+            <div class="date" id="heroDate">—</div>
+            <div class="lag" id="heroLag"></div>
+            <div class="kpis" id="kpis"></div>
+          </div>
+          <div class="right">
+            <div class="eyebrow">Share of engagement by platform</div>
+            <div class="sharebar" id="sharebar"></div>
+            <div class="platrows" id="platrows"></div>
+          </div>
+        </div>
+        <div class="subhead"><h3>Top posts of the day</h3><span class="m">the strongest post on each platform, by engagement</span></div>
+        <div class="topgrid" id="topgrid"></div>
+        <div class="subhead"><h3>Categories on this day</h3><span class="m">click one to open its trends</span></div>
+        <div class="catgrid" id="catgrid"></div>
+      </section>
+
+      <!-- ===== One category ===== -->
+      <section class="view" id="categories" hidden>
+        <div class="catnav" id="catnav" aria-label="Category"></div>
+        <div class="sec-head">
+          <div>
+            <div class="eyebrow">Category</div>
+            <h2 id="catTitle">—</h2>
+            <p>One graph per platform for this heading in the sheet. The duration and the metric apply to every graph; the trend ends on the report day.</p>
+          </div>
+          <div class="tools">
+            <button class="btn" type="button" id="catPosts">View posts</button>
+          </div>
+        </div>
+        <div class="filterbar">
+          <span class="lbl">Duration</span>
+          <div class="seg" id="durSeg">
+            <button type="button" data-d="7" class="on">7 days</button>
+            <button type="button" data-d="14">14 days</button>
+            <button type="button" data-d="30">30 days</button>
+            <button type="button" data-d="custom">Custom</button>
+          </div>
+          <span class="custom" id="durCustom"><input type="date" class="ctl" id="durFrom" aria-label="From"><span class="arrow">→</span><input type="date" class="ctl" id="durTo" aria-label="To"></span>
+          <span class="lbl gap">Metric</span>
+          <select class="ctl" id="metricSel">
+            <option value="engagement">Engagement</option>
+            <option value="likes">Likes</option>
+            <option value="comments">Comments / replies</option>
+            <option value="shares">Shares / reposts</option>
+            <option value="views">Views</option>
+          </select>
+          <span class="range" id="durRange">—</span>
+        </div>
+        <div id="cats"></div>
+      </section>
+
+      <!-- ===== Growth ===== -->
+      <section class="view" id="growth" hidden>
+        <div class="sec-head">
+          <div>
+            <div class="eyebrow">Growth</div>
+            <h2>How the numbers are moving</h2>
+            <p>The chosen metric per day, up to the report day, compared with the same length of time just before it.</p>
+          </div>
+          <div class="tools">
+            <span class="lbl">Duration</span>
+            <div class="seg" id="gDurSeg">
+              <button type="button" data-d="7">7 days</button>
+              <button type="button" data-d="14">14 days</button>
+              <button type="button" data-d="30" class="on">30 days</button>
+              <button type="button" data-d="60">60 days</button>
+            </div>
+            <select class="ctl" id="gMetric">
+              <option value="engagement">Engagement</option>
+              <option value="likes">Likes</option>
+              <option value="comments">Comments / replies</option>
+              <option value="shares">Shares / reposts</option>
+              <option value="views">Views</option>
+            </select>
+            <div class="seg" id="gSplit"><button type="button" data-s="platform" class="on">By platform</button><button type="button" data-s="category">By category</button></div>
+          </div>
+        </div>
+        <div class="gcard">
+          <div class="gh">
+            <div><div class="l" id="gLabel">—</div><div class="big" id="gBig">—</div><div class="d" id="gDelta"></div></div>
+            <div class="legend" id="gLegend"></div>
+          </div>
+          <div class="cb" id="gChart"></div>
+          <div class="gtable" id="gTable"></div>
+        </div>
+      </section>
+
+      <!-- ===== Feed ===== -->
+      <section class="view" id="feed" hidden>
+        <div class="sec-head">
+          <div>
+            <div class="eyebrow">Feed</div>
+            <h2 id="feedTitle">Posts on —</h2>
+            <p>Every post the sheet listed for the report day, with the caption and media as collected.</p>
+          </div>
+        </div>
+        <div class="filters">
+          <select class="ctl" id="fCat"><option value="">All categories</option></select>
+          <select class="ctl" id="fPlat"><option value="">All platforms</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="x">X (Twitter)</option></select>
+          <select class="ctl" id="fSort"><option value="eng">Most engagement</option><option value="views">Most views</option><option value="time">Newest first</option></select>
+          <input class="ctl" id="fQ" type="search" placeholder="Search name, handle or caption">
+          <span class="count" id="fCount">—</span>
+        </div>
+        <div class="cards" id="cards"></div>
+        <div class="pager" id="pager"></div>
+      </section>
+
+      <footer>
+        <div>Engagement = likes + comments + shares (replies and reposts on X). Views are shown separately. Counts are as collected from the public post; platform-only insights (impressions, reach) are not included.</div>
+        <div>Prepared by {{ meta.agency }} · reports are published with a {{ meta.lag_days }}-day delay</div>
+      </footer>
+    </div>
+  </div>
+</div>
+<script id="meta" type="application/json">{{ meta | tojson }}</script>
+{% endblock %}

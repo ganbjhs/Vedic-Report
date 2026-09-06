@@ -66,6 +66,7 @@
       <span class="dot {{ 'bad' if ('invalid' in worst or 'missing' in worst) else ('warn' if 'expiring' in worst else 'ok') }}" style="margin-left:auto" title="Capture account health"></span></a>
     <a href="/admin/users" class="{{ 'active' if nav == 'users' else '' }}"><span class="ico">👥</span> Users &amp; roles</a>
     <a href="/admin/bots" class="{{ 'active' if nav == 'bots' else '' }}"><span class="ico">⌘</span> Bots &amp; API keys</a>
+    <a href="/admin/clients" class="{{ 'active' if nav == 'clients' else '' }}"><span class="ico">◈</span> Clients</a>
     <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}"><span class="ico">⚙</span> Server settings</a>
     {% if budget %}
     <div class="quota" title="Posts captured today on the shared X account. Quality degrades past the ceiling (RULEBOOK rule 21).">

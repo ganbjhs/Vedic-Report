@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Clients — Report Maker{% endblock %}
+{% block app_class %} no-rail{% endblock %}
+
+{% block content %}
+<h1>Clients</h1>
+<p class="sub">Who sees a Client Portal, which projects feed it, and the scraper that supplies the posts. A client only ever sees what is published for them, two days after the sheet's date. <a href="{{ portal_url }}" target="_blank" rel="noopener">Open the portal ↗</a></p>
+{% if not key_secret_set %}<div class="card" style="border-color:var(--warn,#c90)"><b>PORTAL_KEY_SECRET is not set.</b> Add <code>PORTAL_KEY_SECRET</code> and <code>PORTAL_SESSION_SECRET</code> to <code>.env</code> (long random strings, the same values for the portal container) before saving a scraper API key.</div>{% endif %}
+
+<div class="row" style="align-items:flex-start;gap:16px">
+  <div style="flex:0 0 280px">
+    <div class="card">
+      <h2 class="card-title">Clients <span class="count" id="cl-count">{{ clients | length }}</span></h2>
+      <ul class="plain" id="cl-list" style="margin:0;padding:0;list-style:none">
+        {% for c in clients %}<li><button type="button" class="link cl-pick" data-id="{{ c.id }}" style="display:block;width:100%;text-align:left;padding:6px 0"><b>{{ c.name }}</b>{% if c.archived %} <span class="tag">archived</span>{% endif %}<br><span class="small faint">{{ c.posts }} posts · {{ c.users }} users · {{ c.projects }} projects</span></button></li>{% endfor %}
+      </ul>
+    </div>
+    <div class="card">
+      <h2 class="card-title">New client</h2>
+      <form id="cl-new" class="col" style="gap:8px">
+        <label class="field"><span>Name</span><input name="name" type="text" required placeholder="Varanasi Campaign"></label>
+        <label class="field"><span>Shown on the portal as</span><input name="display_name" type="text" placeholder="same as name"></label>
+        <div class="row" style="gap:8px">
+          <label class="field" style="flex:1"><span>Delay (days)</span><input name="lag_days" type="number" min="0" max="30" value="2"></label>
+          <label class="field" style="flex:1"><span>Accent</span><input name="accent_hex" type="text" placeholder="#7a1f4b"></label>
+        </div>
+        <label class="check"><input type="checkbox" name="show_screenshots"> Clients may see screenshots</label>
+        <button class="btn primary" type="submit">Create</button>
+        <span id="cl-new-msg" class="small"></span>
+      </form>
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:0" id="cl-detail">
+    <div class="card"><p class="faint">Pick a client on the left, or create one.</p></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const PROJECTS = {{ project_list | tojson }};
+  const PORTAL_URL = {{ portal_url | tojson }};
+  const detail = document.getElementById('cl-detail');
+  let CUR = null;
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const when = t => t ? new Date(t * 1000).toLocaleString() : '—';
+  const say = (id, msg, ok) => { const el = document.getElementById(id); if (el) { el.textContent = msg; el.style.color = ok === false ? 'var(--danger,#c33)' : ''; } };
+
+  async function refreshList(list) {
+    const data = list ? { clients: list } : await api('/api/clients');
+    const ul = document.getElementById('cl-list');
+    ul.innerHTML = data.clients.map(c => `<li><button type="button" class="link cl-pick" data-id="${c.id}" style="display:block;width:100%;text-align:left;padding:6px 0"><b>${esc(c.name)}</b>${c.archived ? ' <span class="tag">archived</span>' : ''}<br><span class="small faint">${c.posts} posts · ${c.users} users · ${c.projects} projects</span></button></li>`).join('');
+    document.getElementById('cl-count').textContent = data.clients.length;
+  }
+  document.getElementById('cl-list').addEventListener('click', e => { const b = e.target.closest('.cl-pick'); if (b) open(b.dataset.id); });
+
+  document.getElementById('cl-new').addEventListener('submit', async e => {
+    e.preventDefault(); const f = e.target; const fd = new FormData(f);
+    try { const r = await api('/api/clients', { method: 'POST', json: { name: fd.get('name'), display_name: fd.get('display_name'), lag_days: fd.get('lag_days'), accent_hex: fd.get('accent_hex'), show_screenshots: !!fd.get('show_screenshots') } });
+      f.reset(); say('cl-new-msg', 'Created.'); await refreshList(r.clients); render(r.client); }
+    catch (err) { say('cl-new-msg', err.message, false); }
+  });
+
+  async function open(id) { const r = await api('/api/clients/' + id); render(r.client); }
+
+  function render(c) {
+    CUR = c;
+    const linked = new Set(c.projects);
+    const cats = c.categories.map(k => { const m = c.category_map[k.raw] || {}; return { raw: k.raw, posts: k.posts, first: k.first, label: m.label || '', order: m.order ?? '', hidden: !!m.hidden }; });
+    detail.innerHTML = `
+    <div class="card">
+      <div class="row" style="align-items:center;gap:10px"><h2 class="card-title" style="margin:0">${esc(c.name)}</h2><span class="small faint">/${esc(c.slug)} · ${c.posts} posts${c.data_from ? ` · ${c.data_from} → ${c.data_through}` : ''}</span><span style="margin-left:auto"><a class="btn ghost" href="${PORTAL_URL}" target="_blank" rel="noopener">Portal ↗</a></span></div>
+      <form id="cl-edit" class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:10px">
+        <label class="field"><span>Name</span><input name="name" value="${esc(c.name)}"></label>
+        <label class="field"><span>Shown as</span><input name="display_name" value="${esc(c.display_name)}"></label>
+        <label class="field" style="max-width:110px"><span>Delay (days)</span><input name="lag_days" type="number" min="0" max="30" value="${c.lag_days}"></label>
+        <label class="field" style="max-width:120px"><span>Accent</span><input name="accent_hex" value="${esc(c.accent_hex)}" placeholder="#7a1f4b"></label>
+        <label class="field" style="max-width:150px"><span>Timezone</span><input name="tz" value="${esc(c.tz)}"></label>
+        <label class="check"><input type="checkbox" name="show_screenshots" ${c.show_screenshots ? 'checked' : ''}> Screenshots</label>
+        <label class="check"><input type="checkbox" name="archived" ${c.archived ? 'checked' : ''}> Archived</label>
+        <button class="btn" type="submit">Save</button><span id="cl-edit-msg" class="small"></span>
+      </form>
+      <p class="hint" style="margin:8px 0 0">Changing the delay re-dates every published row for this client.</p>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Projects that feed this client</h2>
+      <form id="cl-projects" class="col" style="gap:6px">
+        ${PROJECTS.map(p => `<label class="check"><input type="checkbox" name="pid" value="${p.id}" ${linked.has(p.id) ? 'checked' : ''}> ${esc(p.name)}${p.client ? ` <span class="small faint">· ${esc(p.client)}</span>` : ''}</label>`).join('') || '<span class="faint">No projects yet.</span>'}
+        <div class="row" style="gap:8px;align-items:center"><button class="btn" type="submit">Save links</button><button class="btn ghost" type="button" id="cl-backfill">Re-publish every finished run</button><span id="cl-projects-msg" class="small"></span></div>
+      </form>
+      <p class="hint" style="margin:8px 0 0">Linking a project publishes its finished runs straight away; every run after that publishes itself when it finishes.</p>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Categories <span class="small faint">(the sheet's headings, as published)</span></h2>
+      ${cats.length ? `<form id="cl-cats"><table class="tbl"><thead><tr><th>Heading in the sheet</th><th>Posts</th><th>Shown to the client as</th><th>Order</th><th>Hidden</th></tr></thead><tbody>
+        ${cats.map((k, i) => `<tr data-raw="${esc(k.raw)}"><td><b>${esc(k.raw) || '<i>(no heading)</i>'}</b><br><span class="small faint">since ${k.first}</span></td><td>${k.posts}</td><td><input name="label" value="${esc(k.label)}" placeholder="${esc(k.raw)}"></td><td><input name="order" type="number" value="${k.order}" style="width:70px" placeholder="${i + 1}"></td><td><input type="checkbox" name="hidden" ${k.hidden ? 'checked' : ''}></td></tr>`).join('')}
+        </tbody></table><div class="row" style="gap:8px;align-items:center;margin-top:8px"><button class="btn" type="submit">Save categories</button><span id="cl-cats-msg" class="small"></span></div></form>` : '<p class="faint">Nothing published yet — headings appear here after the first run is published.</p>'}
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">People who can sign in</h2>
+      <table class="tbl"><thead><tr><th>E-mail</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>
+        ${c.users.map(u => `<tr><td>${esc(u.email)}</td><td>${u.role}</td><td class="small">${u.disabled ? 'disabled' : u.has_password ? 'active' : u.invite_pending ? 'invited — not yet accepted' : 'invite expired'}</td><td class="small faint">${u.last_login_at ? when(u.last_login_at) : '—'}</td><td class="right small"><button type="button" class="link" data-reinvite="${u.id}">New invite link</button> · <button type="button" class="link ${u.disabled ? '' : 'danger'}" data-toggle="${u.id}" data-disabled="${u.disabled ? 0 : 1}">${u.disabled ? 'Enable' : 'Disable'}</button></td></tr>`).join('') || '<tr><td colspan="5" class="faint">Nobody yet.</td></tr>'}
+      </tbody></table>
+      <form id="cl-invite" class="row" style="gap:8px;align-items:flex-end;margin-top:10px">
+        <label class="field" style="min-width:240px"><span>E-mail</span><input name="email" type="email" required placeholder="client@example.com"></label>
+        <label class="field"><span>Role</span><select name="role"><option value="viewer">viewer</option><option value="manager">manager</option></select></label>
+        <button class="btn primary" type="submit">Invite</button>
+      </form>
+      <div id="cl-invite-out" class="small" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Data source — the scraper</h2>
+      ${c.sources.length ? `<table class="tbl"><thead><tr><th>Signature</th><th>URL</th><th>Auth</th><th>Key</th><th>Last sync</th><th></th></tr></thead><tbody>
+        ${c.sources.map(s => `<tr><td><b>${esc(s.signature_name)}</b><br><span class="small faint">added ${when(s.added_at)} by ${esc(s.added_by)}</span></td><td class="small" style="max-width:260px;overflow-wrap:anywhere">${esc(s.base_url)}</td><td class="small">${esc(s.auth_style)}</td><td class="small">${s.has_key ? 'sealed' : 'none'}</td><td class="small">${s.last_ok_at ? `${when(s.last_ok_at)} · ${s.last_count} posts` : '—'}${s.last_error ? `<br><span style="color:var(--danger,#c33)">${esc(s.last_error)}</span>` : ''}</td><td class="right small"><button type="button" class="link" data-sync="${s.id}">Sync now</button> · <button type="button" class="link danger" data-delsrc="${s.id}">Remove</button></td></tr>`).join('')}
+        </tbody></table>` : '<p class="faint">No scraper connected. Posts then carry only what the run read (handle, counts) — no caption, no media.</p>'}
+      <form id="cl-source" class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:10px">
+        <label class="field"><span>Signature name</span><input name="signature_name" required placeholder="varanasi-collector"></label>
+        <label class="field" style="min-width:320px"><span>API URL <span class="faint">({from} {to} or {date})</span></span><input name="base_url" required placeholder="https://scraper.example.com/api/posts?from={from}&to={to}"></label>
+        <label class="field"><span>Auth</span><select name="auth_style"><option value="bearer">Authorization: Bearer</option><option value="x-api-key">X-API-Key header</option><option value="query:api_key">?api_key=</option><option value="query:key">?key=</option><option value="query:token">?token=</option></select></label>
+        <label class="field" style="min-width:220px"><span>API key</span><input name="api_key" type="password" autocomplete="new-password" placeholder="stored sealed, never shown"></label>
+        <button class="btn primary" type="submit">Save source</button><span id="cl-source-msg" class="small"></span>
+      </form>
+      <div class="row" style="gap:8px;align-items:flex-end;margin-top:10px">
+        <label class="field"><span>Sync from</span><input id="cl-sync-from" type="date"></label>
+        <label class="field"><span>to</span><input id="cl-sync-to" type="date"></label>
+        <button class="btn" type="button" id="cl-sync-all">Sync all sources</button><span id="cl-sync-msg" class="small"></span>
+      </div>
+      <p class="hint" style="margin:8px 0 0">The scheduler syncs the last few days on a timer (PORTAL_SYNC_MINUTES and PORTAL_SYNC_DAYS_BACK in .env). Field names in the scraper's JSON are matched loosely — see <code>portal/scraper.py: FIELD_MAP</code>.</p>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Publish log</h2>
+      <table class="tbl"><thead><tr><th>When</th><th>What</th><th>Posts</th><th>Sheet day</th><th>Visible from</th><th>Note</th></tr></thead><tbody>
+        ${c.log.map(l => `<tr><td class="small">${when(l.at)}</td><td class="small">${l.kind}${l.run_id ? ` <a href="/jobs/${l.run_id}">${l.run_id.slice(0, 8)}</a>` : ''}</td><td>${l.posts}</td><td class="small">${esc(l.sheet_date)}</td><td class="small">${esc(l.visible_from)}</td><td class="small faint">${esc(l.note)} · ${esc(l.by_user)}</td></tr>`).join('') || '<tr><td colspan="6" class="faint">Nothing yet.</td></tr>'}
+      </tbody></table>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Portal activity</h2>
+      <table class="tbl"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th><th>IP</th></tr></thead><tbody>
+        ${c.audit.map(a => `<tr><td class="small">${when(a.at)}</td><td class="small">${esc(a.email)}</td><td class="small">${esc(a.action)}</td><td class="small faint">${esc(a.detail)}</td><td class="small faint">${esc(a.ip)}</td></tr>`).join('') || '<tr><td colspan="5" class="faint">No sign-ins yet.</td></tr>'}
+      </tbody></table>
+    </div>`;
+    wire(c);
+  }
+
+  function wire(c) {
+    const id = c.id;
+    document.getElementById('cl-edit').addEventListener('submit', async e => { e.preventDefault(); const fd = new FormData(e.target);
+      try { const r = await api('/api/clients/' + id, { method: 'PATCH', json: { name: fd.get('name'), display_name: fd.get('display_name'), lag_days: fd.get('lag_days'), accent_hex: fd.get('accent_hex'), tz: fd.get('tz'), show_screenshots: !!fd.get('show_screenshots'), archived: !!fd.get('archived') } }); await refreshList(r.clients); render(r.client); say('cl-edit-msg', 'Saved.'); } catch (err) { say('cl-edit-msg', err.message, false); } });
+    document.getElementById('cl-projects').addEventListener('submit', async e => { e.preventDefault(); const ids = [...e.target.querySelectorAll('input[name=pid]:checked')].map(i => i.value); say('cl-projects-msg', 'Saving and publishing…');
+      try { const r = await api(`/api/clients/${id}/projects`, { method: 'POST', json: { project_ids: ids } }); await refreshList(r.clients); render(r.client); say('cl-projects-msg', r.backfilled ? `Saved — published ${r.backfilled.posts} posts from ${r.backfilled.runs} runs.` : 'Saved.'); } catch (err) { say('cl-projects-msg', err.message, false); } });
+    document.getElementById('cl-backfill').addEventListener('click', async () => { say('cl-projects-msg', 'Publishing…'); try { const r = await api(`/api/clients/${id}/backfill`, { method: 'POST', json: {} }); render(r.client); say('cl-projects-msg', `Published ${r.result.posts} posts from ${r.result.runs} runs.`); } catch (err) { say('cl-projects-msg', err.message, false); } });
+    const cats = document.getElementById('cl-cats'); if (cats) cats.addEventListener('submit', async e => { e.preventDefault(); const map = {}; cats.querySelectorAll('tr[data-raw]').forEach(tr => { map[tr.dataset.raw] = { label: tr.querySelector('[name=label]').value, order: tr.querySelector('[name=order]').value, hidden: tr.querySelector('[name=hidden]').checked }; });
+      try { const r = await api('/api/clients/' + id, { method: 'PATCH', json: { category_map: map } }); render(r.client); say('cl-cats-msg', 'Saved.'); } catch (err) { say('cl-cats-msg', err.message, false); } });
+    document.getElementById('cl-invite').addEventListener('submit', async e => { e.preventDefault(); const fd = new FormData(e.target); const out = document.getElementById('cl-invite-out');
+      try { const r = await api(`/api/clients/${id}/users`, { method: 'POST', json: { email: fd.get('email'), role: fd.get('role') } }); render(r.client); showInvite(r.invite_url, fd.get('email')); } catch (err) { out.textContent = err.message; out.style.color = 'var(--danger,#c33)'; } });
+    detail.querySelectorAll('[data-reinvite]').forEach(b => b.addEventListener('click', async () => { try { const r = await api(`/api/clients/${id}/users/${b.dataset.reinvite}/reinvite`, { method: 'POST', json: {} }); const email = b.closest('tr').children[0].textContent; render(r.client); showInvite(r.invite_url, email); } catch (err) { alert(err.message); } }));
+    detail.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', async () => { try { const r = await api(`/api/clients/${id}/users/${b.dataset.toggle}`, { method: 'PATCH', json: { disabled: b.dataset.disabled === '1' } }); render(r.client); } catch (err) { alert(err.message); } }));
+    document.getElementById('cl-source').addEventListener('submit', async e => { e.preventDefault(); const fd = new FormData(e.target);
+      try { const r = await api(`/api/clients/${id}/sources`, { method: 'POST', json: { signature_name: fd.get('signature_name'), base_url: fd.get('base_url'), auth_style: fd.get('auth_style'), api_key: fd.get('api_key') } }); render(r.client); say('cl-source-msg', 'Saved. Press Sync now to test it.'); } catch (err) { say('cl-source-msg', err.message, false); } });
+    detail.querySelectorAll('[data-sync]').forEach(b => b.addEventListener('click', async () => { b.textContent = 'Syncing…'; try { const r = await api(`/api/clients/${id}/sync`, { method: 'POST', json: { source_id: b.dataset.sync, from: document.getElementById('cl-sync-from').value, to: document.getElementById('cl-sync-to').value } }); render(r.client); say('cl-sync-msg', r.result.errors.length ? r.result.errors.join(' · ') : `Fetched ${r.result.posts} posts · ${r.result.matched} matched the sheet · ${r.result.added} added.`, !r.result.errors.length); } catch (err) { say('cl-sync-msg', err.message, false); } }));
+    document.getElementById('cl-sync-all').addEventListener('click', async () => { say('cl-sync-msg', 'Syncing…'); try { const r = await api(`/api/clients/${id}/sync`, { method: 'POST', json: { from: document.getElementById('cl-sync-from').value, to: document.getElementById('cl-sync-to').value } }); render(r.client); say('cl-sync-msg', r.result.errors.length ? r.result.errors.join(' · ') : `Fetched ${r.result.posts} posts · ${r.result.matched} matched the sheet · ${r.result.added} added.`, !r.result.errors.length); } catch (err) { say('cl-sync-msg', err.message, false); } });
+    detail.querySelectorAll('[data-delsrc]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Remove this data source? The sealed key is deleted with it.')) return; try { const r = await api(`/api/clients/${id}/sources/${b.dataset.delsrc}`, { method: 'DELETE' }); render(r.client); } catch (err) { alert(err.message); } }));
+  }
+
+  function showInvite(url, email) { const out = document.getElementById('cl-invite-out'); out.style.color = ''; out.innerHTML = `Send this link to <b>${esc(email)}</b> — it works once, for 72 hours, and is not shown again:<br><code style="user-select:all;overflow-wrap:anywhere">${esc(url)}</code> <button type="button" class="link" id="cl-copy">Copy</button>`; document.getElementById('cl-copy').addEventListener('click', () => navigator.clipboard.writeText(url).then(() => { document.getElementById('cl-copy').textContent = 'Copied'; })); }
+
+  const first = document.querySelector('.cl-pick'); if (first) open(first.dataset.id);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Set your password — Client Portal{% endblock %}
+{% block body %}
+<main class="auth">
+  {% if token %}
+  <form class="auth-box" method="post" action="/invite/{{ token }}" autocomplete="on">
+    <div class="eyebrow">Client Portal{% if client %} · {{ client.display_name or client.name }}{% endif %}</div>
+    <h1>Welcome</h1>
+    <p class="sub">Choose a password for <b>{{ email }}</b>. At least 10 characters.</p>
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <input type="hidden" name="username" value="{{ email }}" autocomplete="username">
+    <label class="field"><span>Password</span><input class="ctl" type="password" name="password" minlength="10" required autofocus autocomplete="new-password"></label>
+    <label class="field"><span>Again</span><input class="ctl" type="password" name="confirm" minlength="10" required autocomplete="new-password"></label>
+    <button class="btn primary wide" type="submit">Save and open the report</button>
+  </form>
+  {% else %}
+  <div class="auth-box">
+    <div class="eyebrow">Client Portal</div>
+    <h1>Link expired</h1>
+    <div class="alert">{{ error }}</div>
+    <p class="hint"><a href="/login">Back to sign in</a></p>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

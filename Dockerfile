@@ -53,6 +53,9 @@ COPY profiles/ ./profiles/
 COPY facebook/ ./facebook/
 COPY instagram/ ./instagram/
 COPY webapp/ ./webapp/
+# The Client Portal's leaf modules (schema, url/number helpers, sealed keys,
+# scraper adapter) — what webapp/portal_publish.py imports. Standard library only.
+COPY portal/ ./portal/
 
 # Runtime state. docker-compose bind-mounts host folders over these, so the X
 # login and every generated report survive restarts and are readable on the

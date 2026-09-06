@@ -1,0 +1,22 @@
+# Client Portal — a small image with no browser and no OCR. It reads
+# data/portal.db (written by the report tool) and serves clients.
+#
+#   docker compose up -d --build portal
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORTAL_DB=/app/data/portal.db \
+    PORTAL_MEDIA_DIR=/app/data/portal/media
+
+WORKDIR /app
+COPY requirements-portal.txt .
+RUN pip install -r requirements-portal.txt
+COPY portal/ portal/
+RUN useradd -m portal && mkdir -p /app/data && chown -R portal /app
+USER portal
+EXPOSE 8020
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
+  CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8020/health').read()"
+CMD ["python", "-m", "uvicorn", "portal.main:app", "--host", "0.0.0.0", "--port", "8020", "--proxy-headers", "--forwarded-allow-ips", "*"]

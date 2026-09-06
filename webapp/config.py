@@ -260,6 +260,20 @@ X_STATE_FILE = SESSIONS_DIR / "x_state.json"
 
 PORT = _int("PORT", 8000)
 
+# ---- Client Portal (portal/, docs/client-portal-plan.md) -----------------------
+# The one file both apps share. The report tool WRITES it (publish step, scraper
+# sync, Admin -> Clients); the portal container only reads it.
+PORTAL_DB = _path("PORTAL_DB", "data/portal.db")
+PORTAL_MEDIA_DIR = _path("PORTAL_MEDIA_DIR", "data/portal/media")
+# Seals the scraper API keys at rest. Must be the SAME value in the portal
+# container's environment. Empty = no key can be saved or opened.
+PORTAL_KEY_SECRET = os.environ.get("PORTAL_KEY_SECRET", "").strip()
+# Where clients sign in - goes into invite links.
+PORTAL_PUBLIC_URL = os.environ.get("PORTAL_PUBLIC_URL", "").strip()
+# The scraper sync: every N minutes, the last M days, for every client with a source.
+PORTAL_SYNC_MINUTES = max(5, _int("PORTAL_SYNC_MINUTES", 60))
+PORTAL_SYNC_DAYS_BACK = max(1, _int("PORTAL_SYNC_DAYS_BACK", 4))
+
 # Login rate limiting
 LOGIN_MAX_ATTEMPTS = _int("LOGIN_MAX_ATTEMPTS", 5)
 LOGIN_WINDOW_MINUTES = _int("LOGIN_WINDOW_MINUTES", 15)

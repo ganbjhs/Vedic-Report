@@ -1292,6 +1292,13 @@ def run_job(job_id: str, on_line=None) -> dict:
         if skipped:
             note += f" {len(skipped)} link(s) could not be captured and were left out."
         prog.note(note, "info")
+        # Client Portal: a project linked to a client publishes its posts now.
+        # Never fails the run (rule 17: say so, keep going).
+        try:
+            from .. import portal_publish
+            portal_publish.publish_run(job_id)
+        except Exception as e:
+            prog.note(f"Client Portal publish failed: {e}", "warn")
         if prog.login_wall:
             prog.note("Some posts hit an X login wall — the server's X session "
                       "may be expiring. Consider refreshing it.", "warn")

@@ -238,7 +238,10 @@ _ADDED_COLUMNS = {
              ("fast_capture", "INTEGER DEFAULT 0"),
              # The job whose screenshots this one started from (approved
              # edit 7). Empty for every job that began from scratch.
-             ("resumed_from", "TEXT DEFAULT ''")),
+             ("resumed_from", "TEXT DEFAULT ''"),
+             # The day the links belong to (the sheet's day tab), YYYY-MM-DD.
+             # What the Client Portal dates a post by; empty = the run's day.
+             ("sheet_date", "TEXT DEFAULT ''")),
     "presets": (("outputs", "TEXT DEFAULT '[]'"),),
     # Which of the project's styles THIS source runs. '[]' = all of them, which
     # is what every source created before this column meant.

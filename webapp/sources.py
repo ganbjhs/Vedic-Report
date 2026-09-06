@@ -83,6 +83,15 @@ def _run_name(proj: dict, u: dict) -> str:
     return f"{proj['name']} — {label}"[:80]
 
 
+def _sheet_date_of(u: dict) -> str:
+    """The day these links belong to: the day tab's name ('3/9/26'), else the
+    newest date block inside the tab, else nothing (the run's own day)."""
+    from portal import util as putil
+    tab = (u.get("tab") or {}).get("name") or ""
+    d = putil.parse_day(tab) or putil.parse_day(u.get("latest_date") or "")
+    return putil.day_str(d) if d else ""
+
+
 def check_source(sid: str, force_run: bool = False, user: str = "auto") -> dict:
     """One pass over one source. Returns a summary dict (also written to the
     row). `force_run` starts a run even when nothing changed."""
@@ -138,7 +147,8 @@ def check_source(sid: str, force_run: bool = False, user: str = "auto") -> dict:
                 fast_capture=bool((proj.get("settings") or {}).get("fast_capture")),
                 workers=int((proj.get("settings") or {}).get("workers") or 0),
                 note="Auto-run from sheet source" if not force_run else "Run from sheet source",
-                notes=list(u.get("notes") or []))
+                notes=list(u.get("notes") or []),
+                sheet_date=_sheet_date_of(u))
             fields["last_job_ids"] = job_ids
             store.source_log(sid, f"Started {len(job_ids)} run(s): {', '.join(job_ids)}.")
         except runs.RunError as e:

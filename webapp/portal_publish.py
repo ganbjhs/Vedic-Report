@@ -390,7 +390,142 @@ def backfill_client(client_id: str, by_user: str = "backfill") -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Scheduler — scraper sync for every client with a source
+# Sheet -> dashboard (no capture): read the client's Google Sheet directly
+# --------------------------------------------------------------------------- #
+_SHEET_METRIC_KEYS = ("likes", "comments", "shares", "views", "reach", "impressions")
+
+
+def _publish_sheet_rows(conn, client: dict, src: dict, rows: list, sheet_date) -> int:
+    """Upsert analysed sheet rows straight into post_metrics as VISIBLE posts.
+    Unlike a capture run there is no screenshot: a sheet row IS the post, so it
+    is 'ok' on its own, and the sheet's typed numbers are authoritative."""
+    lag = int(client.get("lag_days") or 2)
+    day = putil.day_str(sheet_date)
+    visible_from = putil.day_str(putil.add_days(sheet_date, lag))
+    now = time.time()
+    n = 0
+    for r in rows:
+        url = (r.get("post_link") or r.get("link") or r.get("url") or "").strip()
+        if not url:
+            continue
+        norm = putil.norm_url(url)
+        plat = putil.platform_of(url, r.get("platform") or "")
+        metrics, _ = _metrics_of(r, {})                     # sheet_metrics only (read={})
+        source = "sheet" if any(metrics[k] is not None for k in _SHEET_METRIC_KEYS) else "none"
+        handle = (r.get("handle") or "").strip()
+        if handle and not handle.startswith("@"):
+            handle = "@" + handle
+        display = (r.get("display_name") or r.get("account_name") or "").strip()
+        category = (r.get("category") or r.get("section") or "").strip()
+        raw = json.dumps({"sheet_metrics": r.get("sheet_metrics") or {}}, ensure_ascii=False)
+        existing = conn.execute("SELECT id FROM post_metrics WHERE client_id=? AND post_url_norm=? AND sheet_date=?",
+                                (client["id"], norm, day)).fetchone()
+        if existing:
+            sets = ["project_id=?", "run_id=?", "visible_from=?", "platform=?", "category_raw=?",
+                    "status='ok'", "skip_reason=''", "published_at=?", "raw_metrics=?", "metric_source=?"]
+            vals = [src.get("project_id") or "", "sheet", visible_from, plat, category, now, raw, source]
+            for k in _SHEET_METRIC_KEYS:
+                sets.append(f"{k}=?"); vals.append(metrics[k])
+            if handle:
+                sets.append("handle=?"); vals.append(handle)
+            if display:
+                sets.append("display_name=?"); vals.append(display)
+            vals.append(existing["id"])
+            conn.execute(f"UPDATE post_metrics SET {', '.join(sets)} WHERE id=?", vals)
+        else:
+            conn.execute(
+                "INSERT INTO post_metrics (client_id, project_id, run_id, sheet_date, visible_from, captured_at, "
+                "platform, category_raw, handle, display_name, post_url, post_url_norm, post_type, likes, comments, "
+                "shares, views, reach, impressions, metric_source, raw_metrics, status, skip_reason, screenshot_path, "
+                "first_published_at, published_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (client["id"], src.get("project_id") or "", "sheet", day, visible_from, now, plat, category,
+                 handle, display, url, norm, "", metrics["likes"], metrics["comments"], metrics["shares"],
+                 metrics["views"], metrics["reach"], metrics["impressions"], source, raw, "ok", "", "", now, now))
+        n += 1
+    return n
+
+
+def _dashboard_sheet_sources(conn, client_id: str) -> list:
+    """The client's linked-project sheet sources whose purpose feeds the dashboard."""
+    pids = [row["project_id"] for row in conn.execute(
+        "SELECT project_id FROM client_projects WHERE client_id=?", (client_id,)).fetchall()]
+    out = []
+    for pid in pids:
+        for s in store.sources_for(pid):
+            if s.get("enabled") and (s.get("kind") or "sheet") == "sheet" \
+               and (s.get("purpose") or "report") in ("dashboard", "both"):
+                out.append(s)
+    return out
+
+
+def publish_from_sheet(client_id: str, by_user: str = "auto", max_days: int = 90) -> dict:
+    """Read the client's dashboard sheets directly (no capture) and upsert every
+    day tab's rows into post_metrics. Day tabs are read by their date; a sheet
+    with no dated tabs falls back to its newest date block."""
+    from . import smartsheet, uploads                        # heavy; imported on use
+    conn = connect()
+    try:
+        client = client_get(conn, client_id)
+        if not client:
+            raise KeyError(client_id)
+        srcs = _dashboard_sheet_sources(conn, client_id)
+        out = {"sources": len(srcs), "days": 0, "posts": 0, "errors": []}
+        for s in srcs:
+            try:
+                tabs = smartsheet.list_tabs(s["url"])
+            except Exception as e:                            # rule 17: note it, keep going
+                out["errors"].append(f"{s.get('label') or s['url']}: {e}")
+                continue
+            dated = [t for t in tabs if t.get("date")]
+            plan = dated[-max_days:] if dated else [None]     # None -> newest block via mode=latest
+            for t in plan:
+                try:
+                    if t is None:
+                        u = smartsheet.read(s["url"], mode="latest", gid=s.get("gid") or None)
+                        d = u.get("latest_date")
+                    else:
+                        u = smartsheet.read(s["url"], mode="tab", gid=t["gid"])
+                        d = t.get("date") or u.get("latest_date")
+                    sd = putil.parse_day(d) if d else None
+                    if not sd:
+                        continue
+                    rows = uploads.analyse(u["grid"], False, "combined")["rows"]
+                    out["posts"] += _publish_sheet_rows(conn, client, s, rows, sd)
+                    out["days"] += 1
+                except Exception as e:
+                    label = t["name"] if t else "latest"
+                    out["errors"].append(f"{s.get('label') or s['url']} ({label}): {e}")
+            try:
+                store.source_update(s["id"], last_checked_at=time.time())
+            except Exception:
+                pass
+        _log(conn, client_id, "sheet", out["posts"],
+             note=f"{out['days']} day(s), {out['sources']} sheet(s)", by_user=by_user)
+        conn.commit()
+        return out
+    finally:
+        conn.close()
+
+
+def sync_sheets_all(by_user: str = "auto") -> list:
+    conn = connect()
+    try:
+        ids = [row["id"] for row in conn.execute("SELECT id FROM clients WHERE archived=0").fetchall()]
+    finally:
+        conn.close()
+    out = []
+    for cid in ids:
+        try:
+            r = publish_from_sheet(cid, by_user=by_user)
+            if r["sources"]:
+                out.append((cid, r))
+        except Exception as e:
+            print(f"[portal] sheet sync {cid} failed: {e}", flush=True)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Scheduler — sheet sync (always) + scraper sync (when a key is set)
 # --------------------------------------------------------------------------- #
 _STOP = threading.Event()
 _THREAD = None
@@ -418,16 +553,23 @@ def _loop():
         if int(time.time() // 60) % max(1, SYNC_MINUTES) != 0:
             continue
         try:
-            for cid, r in sync_all():
+            for cid, r in sync_sheets_all():
                 if r.get("errors"):
-                    print(f"[portal] sync {cid}: {'; '.join(r['errors'])}", flush=True)
+                    print(f"[portal] sheet sync {cid}: {'; '.join(r['errors'])}", flush=True)
         except Exception as e:
-            print(f"[portal] sync loop error: {e}", flush=True)
+            print(f"[portal] sheet sync loop error: {e}", flush=True)
+        if KEY_SECRET:
+            try:
+                for cid, r in sync_all():
+                    if r.get("errors"):
+                        print(f"[portal] sync {cid}: {'; '.join(r['errors'])}", flush=True)
+            except Exception as e:
+                print(f"[portal] sync loop error: {e}", flush=True)
 
 
 def start_scheduler() -> None:
     global _THREAD
-    if _THREAD is not None or not KEY_SECRET:
+    if _THREAD is not None:
         return
     _STOP.clear()
     _THREAD = threading.Thread(target=_loop, name="portal-sync", daemon=True)

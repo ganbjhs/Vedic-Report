@@ -133,7 +133,8 @@ def check_source(sid: str, force_run: bool = False, user: str = "auto") -> dict:
         if tab:
             what += f" · tab {tab}"
         store.source_log(sid, f"Sheet changed — {what}.")
-    should_run = (fire and src["auto_run"] and rows) or (force_run and rows)
+    should_run = ((fire and src["auto_run"] and rows) or (force_run and rows)) \
+        and (src.get("purpose") or "report") != "dashboard"
     if should_run:
         proj = u["project"]
         try:
@@ -217,6 +218,6 @@ def stop_scheduler() -> None:
 def public(src: dict) -> dict:
     return {k: src.get(k) for k in (
         "id", "project_id", "kind", "label", "url", "mode", "gid", "auto_run",
-        "trigger", "styles", "enabled",
+        "trigger", "styles", "enabled", "purpose",
         "last_date", "last_tab", "last_count", "last_checked_at", "last_changed_at",
         "last_error", "last_job_ids", "log", "created_by", "created_at")}

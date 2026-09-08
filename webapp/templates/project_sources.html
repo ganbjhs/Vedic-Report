@@ -41,6 +41,12 @@
             <option value="new_date">a new date appears (new day tab / new date block)</option>
             <option value="any_change">anything changes (new date or new links)</option>
           </select></label>
+        <label class="field"><span>Use this sheet for</span>
+          <select name="purpose">
+            <option value="report">Report tool only — capture &amp; generate reports</option>
+            <option value="dashboard">Client dashboard only — read the metrics you type in the sheet</option>
+            <option value="both">Both — dashboard reads it, and the report is offered for download</option>
+          </select></label>
       </div>
       <fieldset style="margin-top:12px"><legend>Styles <span class="faint">(this project uses {{ project_style_list | length }})</span></legend>
         <p class="small muted" style="margin:0 0 8px">One project can use several styles, and one sheet is not always meant for all of them. Tick the ones this sheet should print — <b>tick nothing and every style runs</b>, which is what a sheet added before this option did. Add or remove styles themselves on the <a href="/project/styles">Styles page</a>.</p>

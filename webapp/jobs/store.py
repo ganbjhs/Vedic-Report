@@ -245,7 +245,7 @@ _ADDED_COLUMNS = {
     "presets": (("outputs", "TEXT DEFAULT '[]'"),),
     # Which of the project's styles THIS source runs. '[]' = all of them, which
     # is what every source created before this column meant.
-    "sources": (("styles", "TEXT DEFAULT '[]'"),),
+    "sources": (("styles", "TEXT DEFAULT '[]'"), ("purpose", "TEXT NOT NULL DEFAULT 'report'")),
 }
 
 # Every job made before v3 lands here, so nothing is lost and nothing is
@@ -643,7 +643,7 @@ def _source_row(r) -> dict:
 def source_create(project_id: str, url: str, mode: str = "latest", gid: str = "",
                   auto_run: bool = True, label: str = "", created_by: str = "",
                   kind: str = "sheet", trigger: str = "new_date",
-                  styles=None) -> str:
+                  styles=None, purpose: str = "report") -> str:
     """`trigger`: 'new_date' = run only when the newest date moves on (a new
     day tab / a new date block); 'any_change' = run whenever links change.
 
@@ -655,11 +655,13 @@ def source_create(project_id: str, url: str, mode: str = "latest", gid: str = ""
     with _connect() as conn:
         conn.execute(
             "INSERT INTO sources (id, project_id, kind, label, url, mode, gid, "
-            "auto_run, trigger, styles, created_by, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "auto_run, trigger, styles, purpose, created_by, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (sid, project_id, kind, (label or "")[:80], url[:600], mode, gid or "",
              int(bool(auto_run)), trigger if trigger in ("new_date", "any_change") else "new_date",
-             json.dumps([str(s) for s in (styles or [])]), created_by, time.time()))
+             json.dumps([str(s) for s in (styles or [])]),
+             purpose if purpose in ("report", "dashboard", "both") else "report",
+             created_by, time.time()))
     return sid
 
 

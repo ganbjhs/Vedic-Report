@@ -360,3 +360,17 @@ async def sync_now(cid: str, request: Request, user: str = Depends(auth.require_
         return {"ok": not r.get("errors"), "result": r, "client": _public_client(conn, _client(conn, cid))}
     finally:
         conn.close()
+
+
+@router.post("/{cid}/sync-sheet")
+async def sync_sheet_now(cid: str, request: Request, user: str = Depends(auth.require_admin)):
+    """Read the client's dashboard sheets right now, no capture run."""
+    data = await _json_body(request)
+    _csrf(request, data)
+    import asyncio
+    r = await asyncio.to_thread(portal_publish.publish_from_sheet, cid, user)
+    conn = portal_publish.connect()
+    try:
+        return {"ok": not r.get("errors"), "result": r, "client": _public_client(conn, _client(conn, cid))}
+    finally:
+        conn.close()

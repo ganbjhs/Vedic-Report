@@ -1701,6 +1701,7 @@ function initProjectSources() {
             <b>📗 ${esc(s.label || "Google Sheet")}</b> <span class="tag">${esc(MODE[s.mode] || s.mode)}${s.gid ? " · gid " + esc(s.gid) : ""}</span>
             ${s.auto_run ? '<span class="tag" style="color:var(--ok);background:var(--ok-bg);border-color:transparent">auto-run on · ' + (s.trigger === "any_change" ? "any change" : "new date") + '</span>' : '<span class="tag">auto-run off</span>'}
             ${s.enabled ? "" : '<span class="tag hot">paused</span>'}
+            ${s.purpose && s.purpose !== 'report' ? '<span class="tag" style="color:var(--accent);border-color:transparent;background:var(--accent-bg,rgba(122,31,75,.1))">' + (s.purpose === 'dashboard' ? 'dashboard only' : 'dashboard + report') + '</span>' : ''}
             <div class="small faint" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:640px"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a></div>
           </div>
           <div class="row" style="gap:6px">
@@ -1768,6 +1769,7 @@ function initProjectSources() {
       f.label.value = editing.label || "";
       f.mode.value = editing.mode || "latest";
       f.trigger.value = editing.trigger || "new_date";
+      if (f.purpose) f.purpose.value = editing.purpose || "report";
       f.auto_run.checked = !!editing.auto_run;
       const want = new Set(editing.styles || []);
       styleBoxes().forEach((b) => { b.checked = want.has(b.value); });
@@ -1819,7 +1821,8 @@ function initProjectSources() {
     const f = form.elements;
     const body = { url: f.url.value.trim(), mode: f.mode.value,
       gid: f.mode.value === "tab" ? f.gid.value : "", label: f.label.value.trim(),
-      auto_run: f.auto_run.checked, trigger: f.trigger.value, styles: pickedStyles() };
+      auto_run: f.auto_run.checked, trigger: f.trigger.value, styles: pickedStyles(),
+      purpose: f.purpose ? f.purpose.value : "report" };
     try {
       if (editing) {
         const r = await api(`${base}/${encodeURIComponent(editing.id)}`, { method: "PATCH", json: body });

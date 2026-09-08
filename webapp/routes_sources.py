@@ -119,11 +119,14 @@ async def create_source(pid: str, request: Request,
         raise HTTPException(status_code=400, detail="mode must be latest, tab or all.")
     if len(store.sources_for(pid)) >= 10:
         raise HTTPException(status_code=400, detail="10 sources per project is the ceiling.")
+    purpose = str(data.get("purpose") or "report")
+    if purpose not in ("report", "dashboard", "both"):
+        purpose = "report"
     sid = store.source_create(
         pid, url, mode=mode, gid=str(data.get("gid") or ""),
         auto_run=bool(data.get("auto_run", True)),
         trigger=str(data.get("trigger") or "new_date"),
-        styles=_styles(_project(pid), data.get("styles")) or [],
+        styles=_styles(_project(pid), data.get("styles")) or [], purpose=purpose,
         label=str(data.get("label") or "").strip(), created_by=user)
     # First look right away, so the page shows something — but never a run
     # from the very first read: that would re-generate whatever is already
@@ -171,6 +174,11 @@ async def update_source(pid: str, sid: str, request: Request,
         if str(data["trigger"]) not in ("new_date", "any_change"):
             raise HTTPException(status_code=400, detail="trigger must be new_date or any_change.")
         fields["trigger"] = str(data["trigger"])
+    if "purpose" in data:
+        p = str(data["purpose"] or "report")
+        if p not in ("report", "dashboard", "both"):
+            raise HTTPException(status_code=400, detail="purpose must be report, dashboard or both.")
+        fields["purpose"] = p
     # A new SCOPE is a new baseline — but only when it really changed. The edit
     # form posts every field on every save, so resetting on presence alone would
     # silently re-baseline a source whose label was the only thing touched, and

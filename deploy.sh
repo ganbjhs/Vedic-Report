@@ -22,7 +22,7 @@ chown -R 1000:1000 data sessions reports 2>/dev/null || true
 # Docker would create a directory of that name and the portal would crash.
 # Touch it first (SQLite treats an empty file as a fresh db; both apps run
 # ensure_schema on start). Also make the media dir the portal mounts read-only.
-mkdir -p data/portal
+mkdir -p data/portal/media
 [ -e data/portal.db ] || : > data/portal.db
 chown 1000:1000 data/portal.db 2>/dev/null || true
 

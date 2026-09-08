@@ -93,6 +93,24 @@ def visible_posts(client: dict, extra_sql: str = "", params=()) -> list:
                 visible_params(client) + tuple(params))
 
 
+def visible_reports(client: dict, day: str = "") -> list:
+    """Report files this client may download: their own, visible_from <= today,
+    for one report day (or all days when `day` is empty)."""
+    sql = ("SELECT id, fmt, label, bytes, sheet_date FROM client_reports "
+           "WHERE client_id = ? AND visible_from <= ?")
+    params = [client["id"], util.day_str(today_for(client))]
+    if day:
+        sql += " AND sheet_date = ?"; params.append(day)
+    sql += " ORDER BY fmt"
+    return rows(sql, tuple(params))
+
+
+def report_file(client: dict, report_id: str):
+    """One report row this client may download, or None."""
+    return one("SELECT * FROM client_reports WHERE id = ? AND client_id = ? AND visible_from <= ?",
+               (report_id, client["id"], util.day_str(today_for(client))))
+
+
 def data_bounds(client: dict):
     r = one(f"SELECT MIN(sheet_date) AS lo, MAX(sheet_date) AS hi FROM post_metrics WHERE {VISIBLE}",
             visible_params(client))

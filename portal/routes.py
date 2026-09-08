@@ -148,6 +148,30 @@ async def media(post_id: int, v: auth.Viewer = Depends(auth.require_viewer)):
 # --------------------------------------------------------------------------- #
 # JSON API
 # --------------------------------------------------------------------------- #
+@router.get("/api/reports")
+async def api_reports(day: str = "", v: auth.Viewer = Depends(auth.require_viewer)):
+    m = queries.meta(v.client)
+    d = day or (m["data_through"] or "")
+    return {"day": d, "reports": queries.reports_for(v.client, d) if d else []}
+
+
+@router.get("/report/{report_id}")
+async def report_download(report_id: str, v: auth.Viewer = Depends(auth.require_viewer)):
+    """One report file, only when the client may see reports, only their own,
+    only from inside the media folder, only once visible_from <= today."""
+    if not v.client.get("show_reports"):
+        raise HTTPException(status_code=404, detail="Not available")
+    r = db.report_file(v.client, report_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Not found")
+    base = config.PORTAL_MEDIA_DIR.resolve()
+    f = (config.PORTAL_MEDIA_DIR / r["rel_path"]).resolve()
+    if not str(f).startswith(str(base)) or not f.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    name = f"{v.client['slug']}-{r['sheet_date']}.{r['fmt']}"
+    return FileResponse(str(f), filename=name)
+
+
 @router.get("/api/meta")
 async def api_meta(v: auth.Viewer = Depends(auth.require_viewer)):
     return queries.meta(v.client)

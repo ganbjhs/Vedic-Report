@@ -297,6 +297,20 @@ window.Portal = (function () {
   function invalidateAll() { for (const v of VIEWS) dirty[v] = true; }
   function redraw(view) { dirty[view] = true; if (state.view === view) draw(view); }
 
+  /* ---------------- reports (download the built report for the day) ---------------- */
+  async function renderReports() {
+    const el = $('reportDl'); if (!el) return;
+    if (!META.show_reports || !state.day) { el.hidden = true; el.innerHTML = ''; return; }
+    try {
+      const r = await api('/api/reports?day=' + encodeURIComponent(state.day));
+      const reps = r.reports || [];
+      if (!reps.length) { el.hidden = true; el.innerHTML = ''; return; }
+      el.innerHTML = '<span class="repdl-l">Report</span>' + reps.map(x =>
+        `<a class="btn sm" href="${BASE}/report/${encodeURIComponent(x.id)}" title="Download the ${esc(x.name)} report for this day">${esc(x.name)}</a>`).join('');
+      el.hidden = false;
+    } catch (e) { el.hidden = true; el.innerHTML = ''; }
+  }
+
   /* ---------------- day + export ---------------- */
   function exportHref() { const [a, b] = durRange(); const g = Number(state.gDur); const end = parseISO(state.day); return `${BASE}/api/export.xlsx?day=${state.day}&from=${iso(a)}&to=${iso(b)}&gfrom=${iso(addDays(end, -(g-1)))}&gto=${state.day}&metric=${state.gMetric}&split=${state.gSplit}`; }
   function setDay(s) {
@@ -304,6 +318,7 @@ window.Portal = (function () {
     state.day = s; const dp = $('dayPick'); dp.value = s; dp.min = lo; dp.max = hi; $('prevDay').disabled = s <= lo; $('nextDay').disabled = s >= hi; state.feed.page = 1;
     $('lagNote').textContent = s === hi ? `latest · ${META.lag_days}-day delay` : `latest is ${fmtD(parseISO(hi))}`;
     $('exportBtn').href = exportHref();
+    renderReports().catch(() => {});
     invalidateAll(); draw(state.view);
   }
 

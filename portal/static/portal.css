@@ -101,6 +101,8 @@ select.ctl{padding-right:26px;appearance:none;-webkit-appearance:none;background
 .topbar .lagnote{font-size:12px;color:var(--muted);margin-left:6px}
 .topbar .right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .strip{display:none}
+.repdl{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+.repdl-l{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .banner{font-size:12.5px;border-bottom:1px solid var(--hair);background:var(--warn-soft);color:var(--warn-ink);padding:7px 28px}
 .banner b{font-weight:600}
 .content{padding:26px 28px 0;max-width:1240px;width:100%;margin:0 auto;flex:1;display:flex;flex-direction:column}

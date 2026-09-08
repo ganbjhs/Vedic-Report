@@ -65,7 +65,22 @@ def meta(client: dict) -> dict:
         "agency": config.AGENCY_NAME,
         "base": config.BASE_PATH,
         "show_screenshots": bool(client.get("show_screenshots")),
+        "show_reports": bool(client.get("show_reports")),
     }
+
+
+FMT_LABEL = {"pdf": "PDF", "pptx": "PowerPoint", "docx": "Word"}
+
+
+def reports_for(client: dict, day: str) -> list:
+    """[{id, fmt, name, bytes}] the client may download for a report day."""
+    if not client.get("show_reports"):
+        return []
+    out = []
+    for r in db.visible_reports(client, day):
+        out.append({"id": r["id"], "fmt": r["fmt"], "name": FMT_LABEL.get(r["fmt"], r["fmt"].upper()),
+                    "bytes": r["bytes"]})
+    return out
 
 
 # --------------------------------------------------------------------------- #

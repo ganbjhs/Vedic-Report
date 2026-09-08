@@ -180,6 +180,25 @@ CREATE TABLE IF NOT EXISTS portal_audit (
 );
 CREATE INDEX IF NOT EXISTS portal_audit_client ON portal_audit (client_id, at DESC);
 
+-- Report files (PDF/PPTX/DOCX) the report tool built for a client's day.
+-- Copied into PORTAL_MEDIA_DIR by webapp/portal_publish so the read-only
+-- portal can serve them; shown once visible_from <= today, like posts.
+CREATE TABLE IF NOT EXISTS client_reports (
+    id            TEXT PRIMARY KEY,
+    client_id     TEXT NOT NULL,
+    project_id    TEXT DEFAULT '',
+    run_id        TEXT DEFAULT '',
+    sheet_date    TEXT NOT NULL,
+    visible_from  TEXT NOT NULL,
+    fmt           TEXT NOT NULL,              -- pdf | pptx | docx
+    label         TEXT DEFAULT '',
+    rel_path      TEXT NOT NULL,              -- under PORTAL_MEDIA_DIR
+    bytes         INTEGER NOT NULL DEFAULT 0,
+    created_at    REAL NOT NULL,
+    UNIQUE (client_id, run_id, fmt)
+);
+CREATE INDEX IF NOT EXISTS client_reports_client ON client_reports (client_id, sheet_date, visible_from);
+
 CREATE TABLE IF NOT EXISTS meta (
     key             TEXT PRIMARY KEY,
     value           TEXT NOT NULL

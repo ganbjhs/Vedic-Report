@@ -156,6 +156,7 @@ def publish_run(job_id: str, by_user: str = "auto", quiet: bool = False) -> dict
             total = 0
             for c in clients:
                 n = _publish_rows(conn, c, job, results, read, sheet_date)
+                _publish_report_files(conn, c, job, sheet_date)
                 total += n
                 vis = putil.day_str(putil.add_days(sheet_date, int(c.get("lag_days") or 2)))
                 _log(conn, c["id"], "run", n, run_id=job_id, sheet_date=putil.day_str(sheet_date),
@@ -229,6 +230,51 @@ def _publish_rows(conn, client: dict, job: dict, results: list, read: dict, shee
                  metrics["likes"], metrics["comments"], metrics["shares"], metrics["views"], metrics["reach"],
                  metrics["impressions"], source, raw, "ok" if ok else "skipped",
                  "" if ok else (r.get("status") or "not captured"), shot_rel, now, now))
+        n += 1
+    return n
+
+
+_REPORT_FMTS = ("pdf", "pptx", "docx")
+
+
+def _publish_report_files(conn, client: dict, job: dict, sheet_date) -> int:
+    """Copy a finished run's report files (pdf/pptx/docx) into the client's
+    portal media folder and record them, so the read-only portal can offer
+    them for download on the report day. Screenshot bundles are skipped."""
+    from .jobs import runner
+    try:
+        out = runner.out_dir(job["id"])
+    except Exception:
+        return 0
+    if not out.is_dir():
+        return 0
+    lag = int(client.get("lag_days") or 2)
+    day = putil.day_str(sheet_date)
+    visible_from = putil.day_str(putil.add_days(sheet_date, lag))
+    now = time.time()
+    n = 0
+    for src in sorted(out.iterdir()):
+        if not src.is_file() or src.name.endswith("_screenshots.zip"):
+            continue
+        ext = src.suffix.lower().lstrip(".")
+        if ext not in _REPORT_FMTS:
+            continue
+        rel = f"{client['slug']}/reports/{job['id']}/{src.name}"
+        dest = MEDIA_DIR / rel
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if not dest.exists() or dest.stat().st_size != src.stat().st_size:
+                shutil.copyfile(src, dest)
+        except OSError as e:
+            print(f"[portal] report not copied ({e})", flush=True)
+            continue
+        conn.execute(
+            "INSERT INTO client_reports (id, client_id, project_id, run_id, sheet_date, visible_from, fmt, "
+            "label, rel_path, bytes, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(client_id, run_id, fmt) DO UPDATE SET rel_path=excluded.rel_path, "
+            "bytes=excluded.bytes, sheet_date=excluded.sheet_date, visible_from=excluded.visible_from",
+            (uuid.uuid4().hex[:12], client["id"], job.get("project_id") or "", job["id"], day, visible_from,
+             ext, src.name, rel, src.stat().st_size, now))
         n += 1
     return n
 

@@ -185,6 +185,21 @@ async def login_submit(request: Request,
 
     user = auth.verify_credentials(username, password)
     if not user:
+        # Client Portal fallback: a client account signs in from this one
+        # window too, and is sent to the dashboard. Staff auth above is
+        # unchanged; a client never gets a staff (ra_session) session.
+        try:
+            from portal import auth as pauth, db as pdb, config as pconf
+            pdb.init()
+            client_user = pauth.verify(username, password)
+        except Exception:
+            client_user = None
+        if client_user:
+            auth.note_login_success(ip)
+            token = pauth.start_session(request, client_user)
+            resp = RedirectResponse((pconf.BASE_PATH or "") + "/", status_code=303)
+            pauth.set_cookie(resp, token)
+            return resp
         auth.note_login_failure(ip)
         left = max(0, config.LOGIN_MAX_ATTEMPTS - store.recent_login_failures(ip))
         extra = f" {left} attempt(s) left." if left <= 2 else ""

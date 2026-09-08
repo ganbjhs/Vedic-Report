@@ -81,13 +81,56 @@ def accept_invite(user: dict, password: str) -> None:
 # --------------------------------------------------------------------------- #
 # Credentials
 # --------------------------------------------------------------------------- #
-def verify(email: str, password: str):
-    """The user row on success, else None. Always runs one comparison so the
-    response time does not reveal whether the e-mail exists."""
-    email = (email or "").strip().lower()
-    u = db.one("SELECT * FROM client_users WHERE lower(email) = ? AND disabled = 0", (email,)) if email else None
+def verify(login: str, password: str):
+    """The user row on success, else None. `login` is the e-mail OR the
+    staff-assigned username. Always runs one comparison so the response time
+    does not reveal whether the account exists."""
+    login = (login or "").strip().lower()
+    u = db.one("SELECT * FROM client_users WHERE (lower(email) = ? OR (username <> '' AND lower(username) = ?)) "
+               "AND disabled = 0", (login, login)) if login else None
     ok = check_password(u["pw_hash"], password) if (u and u.get("pw_hash")) else check_password(_DUMMY, password or "")
     return u if (u and u.get("pw_hash") and ok) else None
+
+
+USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,30}$")
+
+
+def set_login(conn, client_id: str, email: str, password: str, username: str = "",
+              role: str = "viewer", by: str = "") -> dict:
+    """Create or update a client user with a password STAFF set directly — no
+    invite link. e-mail is the account id (kept, unique per client); username
+    is an optional global login alias. Returns {id, email, username}."""
+    email = (email or "").strip().lower()
+    username = (username or "").strip().lower()
+    if not EMAIL_RE.match(email):
+        raise ValueError("That is not an e-mail address.")
+    if username and not USERNAME_RE.match(username):
+        raise ValueError("Username: a letter or digit, then letters, digits, . _ - (2-31 chars).")
+    if len(password or "") < 8:
+        raise ValueError("Password must be at least 8 characters.")
+    role = role if role in ROLES else "viewer"
+    if username:
+        clash = conn.execute("SELECT id FROM client_users WHERE lower(username) = ? AND client_id <> ?",
+                             (username, client_id)).fetchone()
+        # a username already taken under a DIFFERENT client would break login routing
+        row2 = conn.execute("SELECT id FROM client_users WHERE lower(username) = ? AND client_id = ?",
+                            (username, client_id)).fetchone()
+        if clash and not row2:
+            raise ValueError("That username is already taken.")
+    row = conn.execute("SELECT id FROM client_users WHERE client_id = ? AND lower(email) = ?",
+                       (client_id, email)).fetchone()
+    if row:
+        uid = row["id"]
+        conn.execute("UPDATE client_users SET username = ?, pw_hash = ?, role = ?, invite_token = '', "
+                     "invite_expires = NULL, disabled = 0 WHERE id = ?",
+                     (username, hash_password(password), role, uid))
+    else:
+        uid = uuid.uuid4().hex[:12]
+        conn.execute("INSERT INTO client_users (id, client_id, email, username, pw_hash, role, invited_by, "
+                     "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     (uid, client_id, email, username, hash_password(password), role, by, time.time()))
+    conn.commit()
+    return {"id": uid, "email": email, "username": username}
 
 
 # --------------------------------------------------------------------------- #

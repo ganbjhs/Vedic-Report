@@ -8,7 +8,7 @@
     <p class="sub">Your daily social report, prepared by {{ agency }}.</p>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
     <input type="hidden" name="next" value="{{ next }}">
-    <label class="field"><span>E-mail</span><input class="ctl" type="email" name="email" required autofocus autocomplete="username"></label>
+    <label class="field"><span>Username or e-mail</span><input class="ctl" type="text" name="email" required autofocus autocomplete="username"></label>
     <label class="field"><span>Password</span><input class="ctl" type="password" name="password" required autocomplete="current-password"></label>
     <button class="btn primary wide" type="submit">Sign in</button>
     <p class="hint">No password yet? Use the invitation link you were sent. Lost it? Ask {{ agency }} for a new one.</p>

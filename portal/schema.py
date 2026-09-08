@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS client_users (
     id              TEXT PRIMARY KEY,
     client_id       TEXT NOT NULL,
     email           TEXT NOT NULL,
+    username        TEXT NOT NULL DEFAULT '',   -- optional login alias set by staff
     pw_hash         TEXT NOT NULL DEFAULT '',
     role            TEXT NOT NULL DEFAULT 'viewer', -- viewer | manager
     invited_by      TEXT DEFAULT '',
@@ -146,6 +147,8 @@ CREATE TABLE IF NOT EXISTS client_users (
     disabled        INTEGER NOT NULL DEFAULT 0,
     UNIQUE (client_id, email)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS client_users_username
+    ON client_users (lower(username)) WHERE username <> '';
 
 CREATE TABLE IF NOT EXISTS client_sessions (
     sid             TEXT PRIMARY KEY,               -- sha256 of the cookie value
@@ -206,6 +209,12 @@ def ensure_schema(path) -> None:
     conn = connect(path)
     try:
         conn.executescript(DDL)
+        # migrations for databases created before a column existed
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(client_users)").fetchall()}
+        if "username" not in cols:
+            conn.execute("ALTER TABLE client_users ADD COLUMN username TEXT NOT NULL DEFAULT ''")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS client_users_username "
+                         "ON client_users (lower(username)) WHERE username <> ''")
         conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                      (str(SCHEMA_VERSION),))
         conn.commit()

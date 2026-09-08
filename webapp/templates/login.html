@@ -6,13 +6,13 @@
   <div class="login-head">
     {% with big = true %}{% include "_brand.svg" %}{% endwith %}
     <h1>Report Maker</h1>
-    <p>Sign in to build X/Twitter and Influencer reports.</p>
+    <p>Team members build reports; clients see their dashboard.</p>
   </div>
   {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
   <form method="post" action="/login" class="stack" autocomplete="on">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <input type="hidden" name="next" value="{{ next }}">
-    <label class="field"><span>Username</span><input name="username" type="text" required autofocus autocomplete="username"></label>
+    <label class="field"><span>Username or e-mail</span><input name="username" type="text" required autofocus autocomplete="username"></label>
     <label class="field"><span>Password</span><input name="password" type="password" required autocomplete="current-password"></label>
     <button class="btn primary lg" type="submit">Sign in</button>
   </form>

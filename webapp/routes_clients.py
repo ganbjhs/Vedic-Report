@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from portal import secretbox
 from portal import util as putil
-from portal.auth import EMAIL_RE, ROLES as CLIENT_ROLES, create_user, token_hash
+from portal.auth import EMAIL_RE, ROLES as CLIENT_ROLES, create_user, set_login, token_hash
 
 from . import auth, config, portal_publish, projects
 from .jobs import store
@@ -57,7 +57,8 @@ def _public_client(conn, c: dict) -> dict:
             "posts": n_posts["n"], "data_from": n_posts["lo"], "data_through": n_posts["hi"],
             "projects": [r["project_id"] for r in conn.execute(
                 "SELECT project_id FROM client_projects WHERE client_id = ?", (c["id"],)).fetchall()],
-            "users": [{"id": u["id"], "email": u["email"], "role": u["role"], "disabled": bool(u["disabled"]),
+            "users": [{"id": u["id"], "email": u["email"], "username": (u["username"] if "username" in u.keys() else ""),
+                       "role": u["role"], "disabled": bool(u["disabled"]),
                        "has_password": bool(u["pw_hash"]), "last_login_at": u["last_login_at"],
                        "invite_pending": bool(u["invite_token"]) and (u["invite_expires"] or 0) > time.time()}
                       for u in conn.execute("SELECT * FROM client_users WHERE client_id = ? ORDER BY email",
@@ -261,6 +262,26 @@ async def invite_user(cid: str, request: Request, user: str = Depends(auth.requi
         made = create_user(conn, cid, email, role, invited_by=user)
         return {"ok": True, "invite_url": f"{_portal_url()}/invite/{made['token']}",
                 "client": _public_client(conn, _client(conn, cid))}
+    finally:
+        conn.close()
+
+
+@router.post("/{cid}/users/set-credentials")
+async def set_credentials(cid: str, request: Request, user: str = Depends(auth.require_admin)):
+    """Staff assign a client's e-mail, optional username and password directly
+    (no invite link). Creates the user or resets an existing one."""
+    data = await _json_body(request)
+    _csrf(request, data)
+    conn = portal_publish.connect()
+    try:
+        _client(conn, cid)
+        try:
+            made = set_login(conn, cid, str(data.get("email") or ""), str(data.get("password") or ""),
+                             username=str(data.get("username") or ""), role=str(data.get("role") or "viewer"),
+                             by=user)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "user": made, "client": _public_client(conn, _client(conn, cid))}
     finally:
         conn.close()
 

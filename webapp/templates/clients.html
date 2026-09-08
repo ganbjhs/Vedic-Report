@@ -104,7 +104,7 @@
     <div class="card">
       <h2 class="card-title">People who can sign in</h2>
       <table class="tbl"><thead><tr><th>E-mail</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>
-        ${c.users.map(u => `<tr><td>${esc(u.email)}</td><td>${u.role}</td><td class="small">${u.disabled ? 'disabled' : u.has_password ? 'active' : u.invite_pending ? 'invited — not yet accepted' : 'invite expired'}</td><td class="small faint">${u.last_login_at ? when(u.last_login_at) : '—'}</td><td class="right small"><button type="button" class="link" data-reinvite="${u.id}">New invite link</button> · <button type="button" class="link ${u.disabled ? '' : 'danger'}" data-toggle="${u.id}" data-disabled="${u.disabled ? 0 : 1}">${u.disabled ? 'Enable' : 'Disable'}</button></td></tr>`).join('') || '<tr><td colspan="5" class="faint">Nobody yet.</td></tr>'}
+        ${c.users.map(u => `<tr><td>${esc(u.email)}${u.username ? `<br><span class="small faint">@${esc(u.username)}</span>` : ''}</td><td>${u.role}</td><td class="small">${u.disabled ? 'disabled' : u.has_password ? 'active' : u.invite_pending ? 'invited — not yet accepted' : 'invite expired'}</td><td class="small faint">${u.last_login_at ? when(u.last_login_at) : '—'}</td><td class="right small"><button type="button" class="link" data-reinvite="${u.id}">New invite link</button> · <button type="button" class="link ${u.disabled ? '' : 'danger'}" data-toggle="${u.id}" data-disabled="${u.disabled ? 0 : 1}">${u.disabled ? 'Enable' : 'Disable'}</button></td></tr>`).join('') || '<tr><td colspan="5" class="faint">Nobody yet.</td></tr>'}
       </tbody></table>
       <form id="cl-invite" class="row" style="gap:8px;align-items:flex-end;margin-top:10px">
         <label class="field" style="min-width:240px"><span>E-mail</span><input name="email" type="email" required placeholder="client@example.com"></label>
@@ -112,6 +112,15 @@
         <button class="btn primary" type="submit">Invite</button>
       </form>
       <div id="cl-invite-out" class="small" style="margin-top:8px"></div>
+      <h3 class="small" style="margin:16px 0 6px">Or set a username &amp; password yourself (no invite)</h3>
+      <form id="cl-creds" class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <label class="field" style="min-width:200px"><span>E-mail</span><input name="email" type="email" required placeholder="client@example.com"></label>
+        <label class="field"><span>Username <span class="faint">(optional)</span></span><input name="username" type="text" autocomplete="off" placeholder="acme"></label>
+        <label class="field"><span>Password</span><input name="password" type="text" autocomplete="new-password" placeholder="min 8 characters"></label>
+        <label class="field"><span>Role</span><select name="role"><option value="viewer">viewer</option><option value="manager">manager</option></select></label>
+        <button class="btn primary" type="submit">Set login</button>
+      </form>
+      <div id="cl-creds-out" class="small" style="margin-top:8px"></div>
     </div>
 
     <div class="card">
@@ -161,6 +170,8 @@
       try { const r = await api('/api/clients/' + id, { method: 'PATCH', json: { category_map: map } }); render(r.client); say('cl-cats-msg', 'Saved.'); } catch (err) { say('cl-cats-msg', err.message, false); } });
     document.getElementById('cl-invite').addEventListener('submit', async e => { e.preventDefault(); const fd = new FormData(e.target); const out = document.getElementById('cl-invite-out');
       try { const r = await api(`/api/clients/${id}/users`, { method: 'POST', json: { email: fd.get('email'), role: fd.get('role') } }); render(r.client); showInvite(r.invite_url, fd.get('email')); } catch (err) { out.textContent = err.message; out.style.color = 'var(--danger,#c33)'; } });
+    document.getElementById('cl-creds').addEventListener('submit', async e => { e.preventDefault(); const fd = new FormData(e.target); const out = document.getElementById('cl-creds-out');
+      try { const r = await api(`/api/clients/${id}/users/set-credentials`, { method: 'POST', json: { email: fd.get('email'), username: fd.get('username'), password: fd.get('password'), role: fd.get('role') } }); render(r.client); out.textContent = 'Login set — the client can sign in with ' + (r.user.username ? '“' + r.user.username + '” or ' : '') + r.user.email + '.'; out.style.color = 'var(--ok,#2a7)'; } catch (err) { out.textContent = err.message; out.style.color = 'var(--danger,#c33)'; } });
     detail.querySelectorAll('[data-reinvite]').forEach(b => b.addEventListener('click', async () => { try { const r = await api(`/api/clients/${id}/users/${b.dataset.reinvite}/reinvite`, { method: 'POST', json: {} }); const email = b.closest('tr').children[0].textContent; render(r.client); showInvite(r.invite_url, email); } catch (err) { alert(err.message); } }));
     detail.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', async () => { try { const r = await api(`/api/clients/${id}/users/${b.dataset.toggle}`, { method: 'PATCH', json: { disabled: b.dataset.disabled === '1' } }); render(r.client); } catch (err) { alert(err.message); } }));
     document.getElementById('cl-source').addEventListener('submit', async e => { e.preventDefault(); const fd = new FormData(e.target);

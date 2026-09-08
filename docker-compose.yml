@@ -55,8 +55,13 @@ services:
     ports:
       - "127.0.0.1:8020:8020"
     volumes:
-      - ./data/portal.db:/app/data/portal.db
-      - ./data/portal:/app/data/portal:ro
+      # The whole data dir (as web mounts it) so portal.db and its WAL
+      # sidecars (-wal/-shm) live on ONE filesystem. A single-file bind
+      # mount put the sidecars on the container's ephemeral disk while web
+      # wrote them to ./data — the two diverged and corrupted the db.
+      # Read-only for post data is still enforced at the SQLite layer
+      # (portal/db.py opens mode=ro); this only changes where files live.
+      - ./data:/app/data
     depends_on:
       - web
 

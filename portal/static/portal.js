@@ -29,6 +29,10 @@ window.Portal = (function () {
   // must not be drawn as four dashes pretending to be a reading.
   const measured = (p) => p.likes != null || p.comments != null || p.shares != null || p.views != null;
   const sum = (arr, f) => { let s = 0; for (const x of arr) { const v = f(x); if (v != null) s += v; } return s; };
+  // Sum over the posts that were actually measured, or null when none were.
+  // Plain sum() returns 0 for a day nobody has read yet, and a 0 on a headline
+  // tile is a claim we cannot make — fmtC(null) prints an em dash instead.
+  const sumM = (arr, f) => { const m = arr.filter(measured); return m.length ? sum(m, f) : null; };
   const pct = (a, b) => (!b ? null : (a-b)/b*100);
   const deltaHtml = (d) => d == null ? '<b class="flat">—</b>' : `<b class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(0)}%</b>`;
   const ago = (isoTs, ref) => { if (!isoTs) return ''; const t = new Date(isoTs); if (isNaN(t)) return ''; const h = Math.max(0, Math.round((ref - t)/36e5)); return h < 1 ? 'just now' : h < 48 ? `${h}h ago` : `${Math.round(h/24)}d ago`; };
@@ -151,24 +155,17 @@ window.Portal = (function () {
     $('heroLag').textContent = state.day === META.data_through ? `Latest available. Reports are published ${META.lag_days} days after posting, once the counts have settled.` : `Reports go up to ${fmtD(parseISO(META.data_through))} (${META.lag_days}-day delay). Use the day picker to move.`;
     const wdays = week.days.length ? week.days : [state.day];
     const accent = cssVar('--accent');
-    const kp = [ {l:'Engagement', f:(a) => sum(a, eng), s:seriesFrom(week, wdays, () => true, 'engagement').values, t:'likes + comments + shares'},
-                 {l:'Views', f:(a) => sum(a, p => p.views), s:seriesFrom(week, wdays, () => true, 'views').values},
+    const kp = [ {l:'Engagement', f:(a) => sumM(a, eng), s:seriesFrom(week, wdays, () => true, 'engagement').values, t:'likes + comments + shares'},
+                 {l:'Views', f:(a) => sumM(a, p => p.views), s:seriesFrom(week, wdays, () => true, 'views').values},
                  {l:'Posts', f:(a) => a.length, s:seriesFrom(week, wdays, () => true, 'posts').counts} ];
-    $('kpis').innerHTML = kp.map(k => { const v = k.f(posts), pv = k.f(pposts), dd = pposts.length ? pct(v, pv) : null;
+    $('kpis').innerHTML = kp.map(k => { const v = k.f(posts), pv = k.f(pposts),
+      dd = (pposts.length && v != null && pv != null) ? pct(v, pv) : null;
       return `<div class="kpi"><div class="l" ${k.t ? `title="${k.t}"` : ''}>${k.l}</div><div class="v" title="${fmtN(v)}">${fmtC(v)}</div><div class="d">${deltaHtml(dd)}<span>vs ${fmtD(addDays(d, -1))}</span></div>${sparkline(k.s, accent)}</div>`; }).join('');
-    const nMeasured = posts.filter(measured).length;
-    const note = $('todayNote');
-    if (note) {
-      note.hidden = !(posts.length && !nMeasured);
-      note.textContent = posts.length && !nMeasured
-        ? `${fmtN(posts.length)} posts are listed for this day, but none have been measured yet — so there are no numbers to chart. They appear here as soon as the counts are collected.`
-        : '';
-    }
     const eTot = Math.max(1, sum(posts, eng));
     $('sharebar').innerHTML = PLAT_ORDER.map(pl => { const e = sum(posts.filter(p => p.platform === pl), eng); return e ? `<i class="${PLATS[pl].cls}" style="width:${(e/eTot*100).toFixed(1)}%" data-tip="<b>${PLATS[pl].name}</b><div class=row><span>Engagement</span><b>${fmtN(e)}</b></div><div class=row><span>Share</span><b>${Math.round(e/eTot*100)}%</b></div>"></i>` : ''; }).join('');
-    $('platrows').innerHTML = PLAT_ORDER.map(pl => { const pp = posts.filter(p => p.platform === pl), pv = pposts.filter(p => p.platform === pl); const e = sum(pp, eng), pe = sum(pv, eng), dd = pv.length ? pct(e, pe) : null;
-      return `<div class="platrow"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span><span class="n">${PLATS[pl].name}<small>${fmtN(pp.length)} post${pp.length === 1 ? '' : 's'} · ${fmtC(sum(pp, p => p.views))} views</small></span><span class="v">${fmtC(e)}<small>${Math.round(e/eTot*100)}% of engagement</small></span><span class="d ${dd == null ? 'flat' : dd >= 0 ? 'up' : 'down'}">${dd == null ? '—' : (dd >= 0 ? '▲' : '▼')+' '+Math.abs(dd).toFixed(0)+'%'}</span></div>`; }).join('');
-    $('topgrid').innerHTML = PLAT_ORDER.map(pl => { const best = posts.filter(p => p.platform === pl).sort((a, b) => eng(b)-eng(a))[0];
+    $('platrows').innerHTML = PLAT_ORDER.map(pl => { const pp = posts.filter(p => p.platform === pl), pv = pposts.filter(p => p.platform === pl); const e = sumM(pp, eng), pe = sumM(pv, eng), dd = (pv.length && e != null && pe != null) ? pct(e, pe) : null;
+      return `<div class="platrow"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span><span class="n">${PLATS[pl].name}<small>${fmtN(pp.length)} post${pp.length === 1 ? '' : 's'} · ${fmtC(sumM(pp, p => p.views))} views</small></span><span class="v">${fmtC(e)}<small>${Math.round(e/eTot*100)}% of engagement</small></span><span class="d ${dd == null ? 'flat' : dd >= 0 ? 'up' : 'down'}">${dd == null ? '—' : (dd >= 0 ? '▲' : '▼')+' '+Math.abs(dd).toFixed(0)+'%'}</span></div>`; }).join('');
+    $('topgrid').innerHTML = PLAT_ORDER.map(pl => { const best = posts.filter(p => p.platform === pl && measured(p)).sort((a, b) => eng(b)-eng(a))[0];
       if (!best) return `<div class="tp"><div class="media">No ${PLATS[pl].name} posts</div><div class="body"><div class="who"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span><b>${PLATS[pl].name}</b></div><div class="cap dash">Nothing posted on ${fmtD(d)}.</div></div></div>`;
       const media = `<div class="media">${best.thumb ? `<img src="${esc(best.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : (best.media_type ? '' : '<span>No media</span>')}${best.media_type ? `<span class="kind">${best.media_type}</span>` : ''}${best.media_type === 'video' ? '<span class="play"></span>' : ''}<span class="rank">Top ${PLATS[pl].pill}</span></div>`;
       return `<a class="tp" href="${esc(best.url)}" target="_blank" rel="noopener">${media}<div class="body"><div class="who"><span class="ava">${best.avatar ? `<img src="${esc(best.avatar)}" alt="" referrerpolicy="no-referrer">` : initials(best.name)}</span><b>${esc(best.name)}</b><span class="h">${esc(best.handle)}</span><span class="pp ${PLATS[pl].cls}" style="margin-left:auto">${PLATS[pl].pill}</span></div><div class="cap">${esc(best.text) || '<span class="dash">No caption</span>'}</div><div class="catl">${esc(catLabel(best.category))}</div>
@@ -249,17 +246,18 @@ window.Portal = (function () {
   /* ---------------- Feed ---------------- */
   const PAGE = 20;
   let FEED = [];
-  function feedRows() { const f = state.feed, q = f.q.trim().toLowerCase(); let rows = FEED.filter(p => (!f.cat || p.category === f.cat) && (!f.plat || p.platform === f.plat) && (!q || (p.name+' '+p.handle+' '+p.text).toLowerCase().includes(q)));
+  // Counts are read weekly, so on most days a post has no numbers yet. Those
+  // posts are left out of the feed entirely rather than shown as an empty card:
+  // a card with nothing in it is not a result, and a page of them buries the
+  // posts that do have something to say.
+  function feedRows() { const f = state.feed, q = f.q.trim().toLowerCase(); let rows = FEED.filter(measured).filter(p => (!f.cat || p.category === f.cat) && (!f.plat || p.platform === f.plat) && (!q || (p.name+' '+p.handle+' '+p.text).toLowerCase().includes(q)));
     if (f.sort === 'eng') rows.sort((a, b) => eng(b)-eng(a)); else if (f.sort === 'views') rows.sort((a, b) => (b.views||0)-(a.views||0)); else rows.sort((a, b) => (new Date(b.posted_at||0))-(new Date(a.posted_at||0))); return rows; }
   async function renderFeed() {
     const d = parseISO(state.day);
     $('feedTitle').textContent = `Posts on ${fmtD(d)}`;
     FEED = (await daily(state.day)).posts;
     const rows = feedRows(), f = state.feed; const pages = Math.max(1, Math.ceil(rows.length/PAGE)); if (f.page > pages) f.page = pages; const slice = rows.slice((f.page-1)*PAGE, f.page*PAGE);
-    const withNums = rows.filter(measured).length;
-    $('fCount').innerHTML = `${fmtN(rows.length)} post${rows.length === 1 ? '' : 's'}`
-      + (rows.length && withNums < rows.length
-         ? ` · <span class="dash">${withNums ? `${fmtN(withNums)} with numbers` : 'none measured yet'}</span>` : '');
+    $('fCount').textContent = `${fmtN(rows.length)} post${rows.length === 1 ? '' : 's'}`;
     const now = new Date();
     $('cards').innerHTML = slice.map(p => {
       const when = [p.collected_at ? `collected ${ago(p.collected_at, now)}` : '', p.posted_at ? `posted ${ago(p.posted_at, now)}` : ''].filter(Boolean).join(' · ');
@@ -269,9 +267,11 @@ window.Portal = (function () {
         <div class="who"><div class="ava">${p.avatar ? `<img src="${esc(p.avatar)}" alt="" referrerpolicy="no-referrer">` : initials(p.name)}</div><div><span class="name">${esc(p.name)}</span><span class="handle">${esc(p.handle)}</span> <span class="pp ${PLATS[p.platform].cls}">${PLATS[p.platform].pill}</span></div><span class="cat-chip">${esc(catLabel(p.category))}</span></div>
         ${media}
         <div class="body"><div class="text">${esc(p.text) || '<span class="dash">No caption</span>'}</div><div class="when">${when}</div>
-          ${measured(p) ? `<div class="metrics"><span title="${mLabel(p.platform, 'likes')}">${ICON.heart}${fmtN(p.likes)}</span><span title="${mLabel(p.platform, 'shares')}">${ICON.repost}${p.shares == null ? '<span class=dash>—</span>' : fmtN(p.shares)}</span><span title="${mLabel(p.platform, 'comments')}">${ICON.comment}${fmtN(p.comments)}</span><span title="Views">${ICON.eye}${p.views == null ? '<span class=dash>—</span>' : fmtN(p.views)}</span></div>` : `<div class="unmeasured" title="The post is listed for this day, but no counts have been read from ${PLATS[p.platform].name} yet.">No numbers yet</div>`}</div>
+          <div class="metrics"><span title="${mLabel(p.platform, 'likes')}">${ICON.heart}${fmtN(p.likes)}</span><span title="${mLabel(p.platform, 'shares')}">${ICON.repost}${p.shares == null ? '<span class=dash>—</span>' : fmtN(p.shares)}</span><span title="${mLabel(p.platform, 'comments')}">${ICON.comment}${fmtN(p.comments)}</span><span title="Views">${ICON.eye}${p.views == null ? '<span class=dash>—</span>' : fmtN(p.views)}</span></div></div>
         <div class="acts"><a class="btn sm" href="${esc(p.url)}" target="_blank" rel="noopener">${open}</a><button class="btn sm" type="button" data-copy="${esc(p.url)}">Copy link</button></div>
-      </article>`; }).join('') || `<div class="empty">No posts match these filters on ${fmtD(d)}.</div>`;
+      </article>`; }).join('') || `<div class="empty">${FEED.length && !FEED.some(measured)
+        ? `Nothing measured for ${fmtD(d)} yet. Counts are collected weekly; the day's posts appear here once they carry numbers.`
+        : `No posts match these filters on ${fmtD(d)}.`}</div>`;
     $('pager').innerHTML = pages > 1 ? `<span>Page ${f.page} of ${pages}</span><button class="btn sm" type="button" data-pg="-1" ${f.page <= 1 ? 'disabled' : ''}>Previous</button><button class="btn sm" type="button" data-pg="1" ${f.page >= pages ? 'disabled' : ''}>Next</button>` : '';
   }
 

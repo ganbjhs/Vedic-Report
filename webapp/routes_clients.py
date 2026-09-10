@@ -53,6 +53,7 @@ def _public_client(conn, c: dict) -> dict:
             "accent_hex": c.get("accent_hex") or "", "lag_days": c.get("lag_days"), "tz": c.get("tz"),
             "category_map": cmap, "show_screenshots": bool(c.get("show_screenshots")),
             "show_reports": bool(c.get("show_reports")), "archived": bool(c.get("archived")),
+            "trust_sheet_metrics": bool(c.get("trust_sheet_metrics", 1)),
             "created_at": c.get("created_at"), "created_by": c.get("created_by") or "",
             "posts": n_posts["n"], "data_from": n_posts["lo"], "data_through": n_posts["hi"],
             "projects": [r["project_id"] for r in conn.execute(
@@ -182,6 +183,8 @@ async def update_client(cid: str, request: Request, user: str = Depends(auth.req
             sets.append("show_screenshots = ?"); vals.append(1 if data["show_screenshots"] else 0)
         if "show_reports" in data:
             sets.append("show_reports = ?"); vals.append(1 if data["show_reports"] else 0)
+        if "trust_sheet_metrics" in data:
+            sets.append("trust_sheet_metrics = ?"); vals.append(1 if data["trust_sheet_metrics"] else 0)
         if "archived" in data:
             sets.append("archived = ?"); vals.append(1 if data["archived"] else 0)
         if "category_map" in data and isinstance(data["category_map"], dict):

@@ -608,6 +608,7 @@ def _publish_sheet_rows(conn, client: dict, src: dict, rows: list, sheet_date) -
     day = putil.day_str(sheet_date)
     visible_from = putil.day_str(putil.add_days(sheet_date, lag))
     pull_day = putil.day_str(putil.today_in(client.get("tz") or "Asia/Kolkata"))
+    trust_sheet = bool(client.get("trust_sheet_metrics", 1))
     now = time.time()
     n = 0
     for r in rows:
@@ -617,6 +618,11 @@ def _publish_sheet_rows(conn, client: dict, src: dict, rows: list, sheet_date) -
         norm = putil.norm_url(url)
         plat = putil.platform_of(url, r.get("platform") or "")
         metrics, _ = _metrics_of(r, {})                     # sheet_metrics only (read={})
+        if not trust_sheet:
+            # The sheet's typed columns are not a measurement for this client.
+            # Publish the POST — it is real and belongs on the day — but not the
+            # figure beside it. A dash is true; a placeholder is not.
+            metrics = {k: None for k in metrics}
         source = "sheet" if any(metrics[k] is not None for k in _SHEET_METRIC_KEYS) else "none"
         handle = (r.get("handle") or "").strip()
         if handle and not handle.startswith("@"):

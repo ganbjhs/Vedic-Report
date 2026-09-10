@@ -338,6 +338,28 @@ class TestSheetHistory(unittest.TestCase):
         self.assertEqual((got[1]["views"], got[1]["likes"], got[1]["comments"]), (1200, 340, 8))
         self.assertEqual({r["metric_source"] for r in got}, {"sheet"})
 
+    def test_untrusted_sheet_publishes_the_post_but_not_the_figure(self):
+        """When the sheet's columns hold a placeholder rather than a
+        measurement, the post is still real and belongs on its day — the number
+        beside it is not. A dash is true; an invented figure is not."""
+        self.conn.execute("UPDATE clients SET trust_sheet_metrics = 0 WHERE id = 'c4'")
+        self.conn.commit()
+        client = self.pp.client_get(self.conn, "c4")
+        n = self.pp._publish_sheet_rows(self.conn, client, {}, self.ROWS,
+                                        TODAY - _dt.timedelta(days=4))
+        self.conn.commit()
+        self.assertEqual(n, 3)                       # every post still published
+        rows = self.conn.execute("SELECT likes, views, metric_source FROM post_metrics "
+                                 "WHERE client_id='c4'").fetchall()
+        self.assertEqual(len(rows), 3)
+        for r in rows:
+            self.assertIsNone(r["likes"])
+            self.assertIsNone(r["views"])
+            self.assertEqual(r["metric_source"], "none")
+        # and no history is invented either
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM post_metric_days WHERE client_id='c4'").fetchone()[0], 0)
+
     def test_re_reading_the_sheet_the_same_day_replaces_that_days_row(self):
         """The sheet sync runs hourly; a day must end up with ONE row per post,
         carrying the latest value, not twelve."""

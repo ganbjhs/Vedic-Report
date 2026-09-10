@@ -18,7 +18,7 @@ else decides visibility (`portal/db.py: visible_posts`).
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 DDL = """
 CREATE TABLE IF NOT EXISTS clients (
@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS clients (
     category_map    TEXT NOT NULL DEFAULT '{}',   -- {raw heading: {label, order, hidden}}
     show_screenshots INTEGER NOT NULL DEFAULT 0,
     show_reports    INTEGER NOT NULL DEFAULT 0,
+    -- Whether the numbers TYPED into the sheet's columns are a real measurement.
+    -- On some campaigns those cells hold placeholders (the same figure repeated
+    -- down every row), and publishing those puts invented numbers in front of a
+    -- client. Off means the sheet supplies the posts and the scraper supplies
+    -- the numbers; a post with no scraped number shows a dash, which is true.
+    trust_sheet_metrics INTEGER NOT NULL DEFAULT 1,
     created_by      TEXT DEFAULT '',
     created_at      REAL NOT NULL,
     archived        INTEGER NOT NULL DEFAULT 0
@@ -284,6 +290,7 @@ _ADDED_COLUMNS = {
     # v3 — the sheet's own numbers are history too, and for Facebook and
     # Instagram reach/impressions are the numbers that exist.
     "post_metric_days": (("reach", "INTEGER"), ("impressions", "INTEGER")),
+    "clients": (("trust_sheet_metrics", "INTEGER NOT NULL DEFAULT 1"),),
     "post_metrics": (("tweet_id", "TEXT NOT NULL DEFAULT ''"),
                      ("lang", "TEXT DEFAULT ''"),
                      ("quotes", "INTEGER"),

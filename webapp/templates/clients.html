@@ -63,7 +63,7 @@
 
   document.getElementById('cl-new').addEventListener('submit', async e => {
     e.preventDefault(); const f = e.target; const fd = new FormData(f);
-    try { const r = await api('/api/clients', { method: 'POST', json: { name: fd.get('name'), display_name: fd.get('display_name'), lag_days: fd.get('lag_days'), accent_hex: fd.get('accent_hex'), show_screenshots: !!fd.get('show_screenshots') } });
+    try { const r = await api('/api/clients', { method: 'POST', json: { trust_sheet_metrics: fd.get('trust_sheet_metrics') === 'on', name: fd.get('name'), display_name: fd.get('display_name'), lag_days: fd.get('lag_days'), accent_hex: fd.get('accent_hex'), show_screenshots: !!fd.get('show_screenshots') } });
       f.reset(); say('cl-new-msg', 'Created.'); await refreshList(r.clients); render(r.client); }
     catch (err) { say('cl-new-msg', err.message, false); }
   });
@@ -84,6 +84,7 @@
         <label class="field" style="max-width:120px"><span>Accent</span><input name="accent_hex" value="${esc(c.accent_hex)}" placeholder="#7a1f4b"></label>
         <label class="field" style="max-width:150px"><span>Timezone</span><input name="tz" value="${esc(c.tz)}"></label>
         <label class="check"><input type="checkbox" name="show_screenshots" ${c.show_screenshots ? 'checked' : ''}> Screenshots</label>
+        <label class="check" title="Off when the sheet's number columns hold placeholders rather than real measurements. The posts still publish; the figures do not."><input type="checkbox" name="trust_sheet_metrics" ${c.trust_sheet_metrics ? 'checked' : ''}> Trust the sheet's typed numbers</label>
         <label class="check"><input type="checkbox" name="archived" ${c.archived ? 'checked' : ''}> Archived</label>
         <button class="btn" type="submit">Save</button><span id="cl-edit-msg" class="small"></span>
       </form>
@@ -169,7 +170,7 @@
   function wire(c) {
     const id = c.id;
     document.getElementById('cl-edit').addEventListener('submit', async e => { e.preventDefault(); const fd = new FormData(e.target);
-      try { const r = await api('/api/clients/' + id, { method: 'PATCH', json: { name: fd.get('name'), display_name: fd.get('display_name'), lag_days: fd.get('lag_days'), accent_hex: fd.get('accent_hex'), tz: fd.get('tz'), show_screenshots: !!fd.get('show_screenshots'), archived: !!fd.get('archived') } }); await refreshList(r.clients); render(r.client); say('cl-edit-msg', 'Saved.'); } catch (err) { say('cl-edit-msg', err.message, false); } });
+      try { const r = await api('/api/clients/' + id, { method: 'PATCH', json: { trust_sheet_metrics: fd.get('trust_sheet_metrics') === 'on', name: fd.get('name'), display_name: fd.get('display_name'), lag_days: fd.get('lag_days'), accent_hex: fd.get('accent_hex'), tz: fd.get('tz'), show_screenshots: !!fd.get('show_screenshots'), archived: !!fd.get('archived') } }); await refreshList(r.clients); render(r.client); say('cl-edit-msg', 'Saved.'); } catch (err) { say('cl-edit-msg', err.message, false); } });
     document.getElementById('cl-projects').addEventListener('submit', async e => { e.preventDefault(); const ids = [...e.target.querySelectorAll('input[name=pid]:checked')].map(i => i.value); say('cl-projects-msg', 'Saving and publishing…');
       try { const r = await api(`/api/clients/${id}/projects`, { method: 'POST', json: { project_ids: ids } }); await refreshList(r.clients); render(r.client); say('cl-projects-msg', r.backfilled ? `Saved — published ${r.backfilled.posts} posts from ${r.backfilled.runs} runs.` : 'Saved.'); } catch (err) { say('cl-projects-msg', err.message, false); } });
     document.getElementById('cl-backfill').addEventListener('click', async () => { say('cl-projects-msg', 'Publishing…'); try { const r = await api(`/api/clients/${id}/backfill`, { method: 'POST', json: {} }); render(r.client); say('cl-projects-msg', `Published ${r.result.posts} posts from ${r.result.runs} runs.`); } catch (err) { say('cl-projects-msg', err.message, false); } });

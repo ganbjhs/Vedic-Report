@@ -18,7 +18,7 @@ else decides visibility (`portal/db.py: visible_posts`).
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DDL = """
 CREATE TABLE IF NOT EXISTS clients (
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS client_sources (
     base_url        TEXT NOT NULL,                 -- may contain {from} {to} {date}
     api_key_enc     TEXT NOT NULL DEFAULT '',      -- portal/secretbox.py, never plain
     auth_style      TEXT NOT NULL DEFAULT 'bearer', -- bearer | x-api-key | query:<param>
+    probe_url       TEXT NOT NULL DEFAULT '',      -- the handshake, e.g. .../api/project?project=16
     enabled         INTEGER NOT NULL DEFAULT 1,
     added_by        TEXT DEFAULT '',
     added_at        REAL NOT NULL,
@@ -80,8 +81,10 @@ CREATE TABLE IF NOT EXISTS post_metrics (
     avatar_url      TEXT DEFAULT '',
     post_url        TEXT NOT NULL,
     post_url_norm   TEXT NOT NULL,
+    tweet_id        TEXT NOT NULL DEFAULT '',      -- the platform's own post id, AS A STRING
     post_type       TEXT DEFAULT '',               -- post | reel | photo | video
     caption         TEXT DEFAULT '',
+    lang            TEXT DEFAULT '',
     media_type      TEXT DEFAULT '',               -- image | video | ''
     thumb_url       TEXT DEFAULT '',
     posted_at       TEXT DEFAULT '',               -- ISO, as the scraper gave it
@@ -92,6 +95,11 @@ CREATE TABLE IF NOT EXISTS post_metrics (
     views           INTEGER,
     reach           INTEGER,
     impressions     INTEGER,
+    quotes          INTEGER,
+    bookmarks       INTEGER,
+    author_followers INTEGER,
+    last_refresh_ms INTEGER,                       -- when the Collector last read the numbers
+    refresh_count   INTEGER,
     metric_source   TEXT NOT NULL DEFAULT 'none',  -- sheet | page | ocr | mixed | scraper | none
     raw_metrics     TEXT NOT NULL DEFAULT '{}',
     status          TEXT NOT NULL DEFAULT 'ok',    -- ok | skipped
@@ -104,6 +112,44 @@ CREATE TABLE IF NOT EXISTS post_metrics (
 CREATE INDEX IF NOT EXISTS pm_client_visible ON post_metrics (client_id, visible_from);
 CREATE INDEX IF NOT EXISTS pm_client_day     ON post_metrics (client_id, sheet_date, category_raw, platform);
 CREATE INDEX IF NOT EXISTS pm_client_url     ON post_metrics (client_id, post_url_norm);
+-- NB: the index on `tweet_id` is created in ensure_schema(), AFTER the column
+-- is ALTERed in. It cannot live here: on a database that already has
+-- post_metrics, CREATE TABLE IF NOT EXISTS is a no-op, so this script would
+-- reference a column that does not exist yet and the whole thing would fail.
+
+-- THE history. `post_metrics` is current state and is overwritten in place by
+-- every sync; this is the append-only time series behind every growth chart.
+-- One row per post per PULL DAY (the client's timezone), never overwritten
+-- except by a second pull on the same day.
+--
+-- `post_key` is the stable identity: the platform's own post id when the
+-- Collector sent one, else the normalised URL. It is what makes a row findable
+-- after somebody retypes a link with different capitalisation.
+CREATE TABLE IF NOT EXISTS post_metric_days (
+    client_id       TEXT NOT NULL,
+    post_key        TEXT NOT NULL,                 -- tweet_id when known, else post_url_norm
+    day             TEXT NOT NULL,                 -- the PULL day, YYYY-MM-DD in clients.tz
+    tweet_id        TEXT NOT NULL DEFAULT '',
+    post_url_norm   TEXT NOT NULL DEFAULT '',
+    sheet_date      TEXT NOT NULL DEFAULT '',      -- the day the post is FILED under
+    platform        TEXT NOT NULL DEFAULT '',
+    category_raw    TEXT NOT NULL DEFAULT '',
+    likes           INTEGER,
+    comments        INTEGER,
+    shares          INTEGER,
+    views           INTEGER,
+    quotes          INTEGER,
+    bookmarks       INTEGER,
+    author_followers INTEGER,
+    status          TEXT NOT NULL DEFAULT 'ok',
+    last_refresh_ms INTEGER,
+    refresh_count   INTEGER,
+    metric_source   TEXT NOT NULL DEFAULT 'scraper',
+    pulled_at       REAL NOT NULL,
+    PRIMARY KEY (client_id, post_key, day)
+);
+CREATE INDEX IF NOT EXISTS pmd_client_day  ON post_metric_days (client_id, day);
+CREATE INDEX IF NOT EXISTS pmd_client_post ON post_metric_days (client_id, post_key, day);
 
 -- What the scraper answered for a (client, day), verbatim, so a page reload
 -- never re-hits the scraper and a bad mapping can be re-run from the cache.
@@ -147,8 +193,11 @@ CREATE TABLE IF NOT EXISTS client_users (
     disabled        INTEGER NOT NULL DEFAULT 0,
     UNIQUE (client_id, email)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS client_users_username
-    ON client_users (lower(username)) WHERE username <> '';
+-- NB: the unique index on `username` is created in ensure_schema(), AFTER the
+-- column is ALTERed in — same reason as pm_client_tweet above. Left here it
+-- kills executescript() on any database created before the column existed,
+-- which takes BOTH apps down at boot on exactly the deployments that have
+-- data worth keeping.
 
 CREATE TABLE IF NOT EXISTS client_sessions (
     sid             TEXT PRIMARY KEY,               -- sha256 of the cookie value
@@ -222,18 +271,44 @@ def connect(path, read_only: bool = False) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after a table first shipped. `CREATE TABLE IF NOT EXISTS` is a
+# no-op on a database that already has the table, so a new column has to be
+# ALTERed in or every query against a deployed database fails. Same shape as
+# `webapp/jobs/store.py: _ADDED_COLUMNS`, for the same reason.
+_ADDED_COLUMNS = {
+    "client_users": (("username", "TEXT NOT NULL DEFAULT ''"),),
+    "client_sources": (("probe_url", "TEXT NOT NULL DEFAULT ''"),),
+    # v2 — what the Collector sends that the portal had nowhere to put.
+    "post_metrics": (("tweet_id", "TEXT NOT NULL DEFAULT ''"),
+                     ("lang", "TEXT DEFAULT ''"),
+                     ("quotes", "INTEGER"),
+                     ("bookmarks", "INTEGER"),
+                     ("author_followers", "INTEGER"),
+                     ("last_refresh_ms", "INTEGER"),
+                     ("refresh_count", "INTEGER")),
+}
+
+
 def ensure_schema(path) -> None:
-    """Create every table that is missing. Safe to call on every start of
-    either app; a no-op on a database that already has them."""
+    """Create every table that is missing and add every column that is new.
+    Safe to call on every start of either app; a no-op on a database that is
+    already current."""
     conn = connect(path)
     try:
         conn.executescript(DDL)
-        # migrations for databases created before a column existed
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(client_users)").fetchall()}
-        if "username" not in cols:
-            conn.execute("ALTER TABLE client_users ADD COLUMN username TEXT NOT NULL DEFAULT ''")
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS client_users_username "
-                         "ON client_users (lower(username)) WHERE username <> ''")
+        for table, columns in _ADDED_COLUMNS.items():
+            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            for name, decl in columns:
+                if name in have:
+                    continue
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                except sqlite3.OperationalError:
+                    pass            # another process won the race; the column exists either way
+        # indexes that depend on a column added above
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS client_users_username "
+                     "ON client_users (lower(username)) WHERE username <> ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS pm_client_tweet ON post_metrics (client_id, tweet_id)")
         conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                      (str(SCHEMA_VERSION),))
         conn.commit()

@@ -220,7 +220,7 @@ async def api_export(request: Request, v: auth.Viewer = Depends(auth.require_vie
     g_to = q.get("gto") or day
     g_from = q.get("gfrom") or util.day_str(util.add_days(util.parse_day(g_to), -29))
     metric = q.get("metric") or "engagement"
-    if metric not in ("engagement", "likes", "comments", "shares", "views"):
+    if metric not in ("engagement", "likes", "comments", "shares", "views", "quotes", "bookmarks"):
         metric = "engagement"
     split = "category" if q.get("split") == "category" else "platform"
     try:

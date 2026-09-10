@@ -39,6 +39,8 @@ MEDIA_DIR = Path(getattr(config, "PORTAL_MEDIA_DIR", "")) if getattr(config, "PO
 KEY_SECRET = getattr(config, "PORTAL_KEY_SECRET", "") or ""
 SYNC_MINUTES = int(getattr(config, "PORTAL_SYNC_MINUTES", 60) or 60)
 SYNC_DAYS_BACK = int(getattr(config, "PORTAL_SYNC_DAYS_BACK", 4) or 4)
+SYNC_AT = str(getattr(config, "PORTAL_SYNC_AT", "") or "").strip()
+SYNC_TZ = str(getattr(config, "PORTAL_TZ", "") or "Asia/Kolkata")
 
 _lock = threading.Lock()
 
@@ -321,7 +323,8 @@ def sync_client(client_id: str, day_from: str = "", day_to: str = "", by_user: s
                 q += " AND id = ?"
                 args.append(source_id)
             sources = [dict(r) for r in conn.execute(q, args).fetchall()]
-            out = {"sources": len(sources), "posts": 0, "matched": 0, "added": 0, "errors": []}
+            out = {"sources": len(sources), "posts": 0, "matched": 0, "added": 0, "days": 0,
+                   "skipped": [], "errors": []}
             for s in sources:
                 try:
                     key = secretbox.open_(KEY_SECRET, s.get("api_key_enc") or "") if s.get("api_key_enc") else ""
@@ -329,16 +332,34 @@ def sync_client(client_id: str, day_from: str = "", day_to: str = "", by_user: s
                     out["errors"].append(f"{s['signature_name']}: {e}")
                     conn.execute("UPDATE client_sources SET last_error = ? WHERE id = ?", (str(e)[:400], s["id"]))
                     continue
+                if s.get("probe_url"):
+                    # The Collector says when it is part-way through re-reading
+                    # every link. A snapshot taken then is a half-scraped day
+                    # recorded for ever, so skip and take it tomorrow.
+                    try:
+                        info = pscraper.probe(s, key)
+                    except pscraper.ScraperError as e:
+                        out["errors"].append(f"{s['signature_name']}: handshake failed — {e}")
+                        conn.execute("UPDATE client_sources SET last_error = ? WHERE id = ?",
+                                     (str(e)[:400], s["id"]))
+                        continue
+                    if info.get("refresh_in_progress"):
+                        out["skipped"].append(f"{s['signature_name']}: mid-refresh, left for the next run")
+                        _log(conn, client_id, "scraper", 0, note=f"{s['signature_name']}: skipped, mid-refresh",
+                             by_user=by_user)
+                        continue
                 try:
                     posts, body = pscraper.fetch(s, key, putil.day_str(a), putil.day_str(b))
                 except pscraper.ScraperError as e:
                     out["errors"].append(f"{s['signature_name']}: {e}")
                     conn.execute("UPDATE client_sources SET last_error = ? WHERE id = ?", (str(e)[:400], s["id"]))
                     continue
-                matched, added = _fold_scraper(conn, client, s, posts, lag, a, b)
+                matched, added, snapped = _fold_scraper(conn, client, s, posts, lag, a, b,
+                                                        pull_day=putil.day_str(today))
                 out["posts"] += len(posts)
                 out["matched"] += matched
                 out["added"] += added
+                out["days"] = out.get("days", 0) + snapped
                 conn.execute("UPDATE client_sources SET last_ok_at = ?, last_error = '', last_count = ? WHERE id = ?",
                              (time.time(), len(posts), s["id"]))
                 # cache the answer per day it covered
@@ -350,58 +371,165 @@ def sync_client(client_id: str, day_from: str = "", day_to: str = "", by_user: s
                                  "VALUES (?, ?, ?, ?, ?, ?)",
                                  (client_id, s["id"], d, time.time(), len(items), json.dumps(items, ensure_ascii=False)))
                 _log(conn, client_id, "scraper", len(posts), sheet_date=f"{putil.day_str(a)}..{putil.day_str(b)}",
-                     note=f"{s['signature_name']}: {matched} matched, {added} added", by_user=by_user)
+                     note=f"{s['signature_name']}: {matched} matched, {added} added, "
+                          f"{snapped} snapshot(s) for {putil.day_str(today)}", by_user=by_user)
             conn.commit()
             return out
         finally:
             conn.close()
 
 
-def _fold_scraper(conn, client: dict, source: dict, posts: list, lag: int, a, b) -> tuple:
-    """Update sheet-listed rows with the scraper's content + counts; insert the
-    rest. Returns (matched, added)."""
-    matched = added = 0
+_SKIP_NOTE = {"removed": "removed from the sheet",
+              "unavailable": "no longer available on the platform"}
+
+# Which measurement wins when the operator typed a number into the sheet AND
+# the Collector scraped one. For X we read the count off X itself, so the
+# scraped number is the measurement. For everything else the Collector cannot
+# fetch per-post counters yet, so the typed number is the ONLY measurement
+# there is. The loser is never discarded — it is kept under `raw_metrics` so a
+# typo can be caught by comparing the two rather than by noticing a chart looks
+# wrong. See REPORT_TOOL_PLAN.md §5.3.
+_SCRAPER_WINS = ("x",)
+
+_COUNTS = ("likes", "comments", "shares", "views", "reach",
+           "quotes", "bookmarks", "author_followers")
+_CONTENT = ("display_name", "handle", "avatar_url", "caption", "lang",
+            "media_type", "thumb_url", "posted_at", "collected_at")
+
+
+def _snapshot(conn, client: dict, p: dict, day: str, sheet_date: str, status: str,
+              source_name: str, now: float) -> None:
+    """One row per post per PULL day, in `post_metric_days`. This is the only
+    history that exists: the Collector overwrites its counters in place and
+    `post_metrics` is current state, so if this row is not written the day is
+    gone for good."""
+    key = p.get("post_id") or p["post_url_norm"]
+    conn.execute(
+        "INSERT OR REPLACE INTO post_metric_days (client_id, post_key, day, tweet_id, post_url_norm, "
+        "sheet_date, platform, category_raw, likes, comments, shares, views, quotes, bookmarks, "
+        "author_followers, status, last_refresh_ms, refresh_count, metric_source, pulled_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (client["id"], key, day, p.get("post_id") or "", p["post_url_norm"], sheet_date,
+         p["platform"], p.get("category_raw") or "", p["likes"], p["comments"], p["shares"],
+         p["views"], p.get("quotes"), p.get("bookmarks"), p.get("author_followers"),
+         status, p.get("last_refresh_ms"), p.get("refresh_count"), source_name, now))
+
+
+def _fold_scraper(conn, client: dict, source: dict, posts: list, lag: int, a, b,
+                  pull_day: str = "") -> tuple:
+    """Fold one scraper answer into `post_metrics`, and record the day.
+
+    Returns (matched, added, snapshots).
+
+    Three rules this function exists to keep:
+
+    * **Exactly one `post_metrics` row is touched per post.** It used to update
+      every row carrying that URL, across every `sheet_date` — so a daily pull
+      rewrote yesterday's numbers with today's and the growth charts flattened
+      to nothing. History now lives in `post_metric_days`; the current-state row
+      is the post's own day and nothing else.
+    * **`status` is obeyed.** A post X has deleted, or one the operator took out
+      of the sheet, is marked `skipped` and disappears from the client's
+      dashboard instead of showing stale numbers for ever.
+    * **A platform we do not model is skipped, never guessed at.**
+      `util.platform_of()` ends `return "x"`, so a YouTube link would otherwise
+      be charted as X.
+    """
+    matched = added = snapped = 0
     now = time.time()
+    tz = client.get("tz") or "Asia/Kolkata"
+    pull_day = pull_day or putil.day_str(putil.today_in(tz))
+    sig = source.get("signature_name") or "scraper"
+    lo, hi = putil.day_str(a), putil.day_str(b)
+
     for p in posts:
-        if not p["post_url_norm"]:
+        if not p.get("post_url_norm"):
             continue
-        rows = conn.execute("SELECT id, sheet_date FROM post_metrics WHERE client_id = ? AND post_url_norm = ? "
-                            "ORDER BY sheet_date DESC", (client["id"], p["post_url_norm"])).fetchall()
-        content = {"display_name": p["display_name"], "handle": p["handle"], "avatar_url": p["avatar_url"],
-                   "caption": p["caption"], "media_type": p["media_type"], "thumb_url": p["thumb_url"],
-                   "posted_at": p["posted_at"], "collected_at": p["collected_at"]}
-        counts = {k: p[k] for k in ("likes", "comments", "shares", "views", "reach")}
-        if rows:
-            for r in rows:
-                sets, vals = [], []
-                for k, v in content.items():
-                    if v:
-                        sets.append(f"{k} = ?"); vals.append(v)
-                for k, v in counts.items():
-                    if v is not None:
-                        sets.append(f"{k} = ?"); vals.append(v)
-                sets += ["metric_source = 'scraper'", "status = 'ok'", "skip_reason = ''", "published_at = ?"]
-                vals += [now, r["id"]]
-                conn.execute(f"UPDATE post_metrics SET {', '.join(sets)} WHERE id = ?", vals)
+        if p.get("platform") not in putil.PLATFORMS:
+            continue
+        pid = (p.get("post_id") or "").strip()
+        status = (p.get("status") or "ok").lower()
+        row_status = "skipped" if status in _SKIP_NOTE else "ok"
+        skip_reason = "" if row_status == "ok" else (p.get("status_note") or _SKIP_NOTE[status])
+
+        if pid:
+            rows = conn.execute(
+                "SELECT id, sheet_date, metric_source, raw_metrics FROM post_metrics "
+                "WHERE client_id = ? AND (tweet_id = ? OR post_url_norm = ?) ORDER BY sheet_date DESC",
+                (client["id"], pid, p["post_url_norm"])).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, sheet_date, metric_source, raw_metrics FROM post_metrics "
+                "WHERE client_id = ? AND post_url_norm = ? ORDER BY sheet_date DESC",
+                (client["id"], p["post_url_norm"])).fetchall()
+
+        # The day this post is filed under: the Collector's `day` (the sheet
+        # tab's own date) when it sent one, else the day of the row we already
+        # have, else the day we pulled.
+        day = p.get("day") or (rows[0]["sheet_date"] if rows else pull_day)
+
+        # Exactly one row: the one for this day, else the one that exists.
+        target = next((r for r in rows if r["sheet_date"] == day), None) or (rows[0] if rows else None)
+
+        # Whether the scraped counts may overwrite what is stored.
+        prev_source = (target["metric_source"] if target else "") or ""
+        write_counts = p["platform"] in _SCRAPER_WINS or prev_source != "sheet"
+        scraped = {k: p.get(k) for k in _COUNTS}
+
+        if target:
+            sets, vals = [], []
+            for k in _CONTENT:
+                if p.get(k):
+                    sets.append(f"{k} = ?"); vals.append(p[k])
+            if pid:
+                sets.append("tweet_id = ?"); vals.append(pid)
+            if write_counts:
+                for k in _COUNTS:
+                    sets.append(f"{k} = ?"); vals.append(scraped[k])
+                sets.append("metric_source = ?"); vals.append("scraper")
+            try:
+                raw = json.loads(target["raw_metrics"] or "{}")
+            except ValueError:
+                raw = {}
+            raw["scraper"] = dict(scraped, signature=sig, last_refresh_ms=p.get("last_refresh_ms"),
+                                  applied=bool(write_counts))
+            sets += ["status = ?", "skip_reason = ?", "raw_metrics = ?", "last_refresh_ms = ?",
+                     "refresh_count = ?", "published_at = ?"]
+            vals += [row_status, skip_reason, json.dumps(raw, ensure_ascii=False),
+                     p.get("last_refresh_ms"), p.get("refresh_count"), now, target["id"]]
+            conn.execute(f"UPDATE post_metrics SET {', '.join(sets)} WHERE id = ?", vals)
             matched += 1
         else:
-            day = p["day"] or putil.day_str(b)
-            if day < putil.day_str(a) or day > putil.day_str(b):
-                continue                         # outside the window asked for
+            # A post the sheet never listed. When the Collector told us the day
+            # it is trusted outright; when the day was merely guessed from the
+            # post's own publish time, the old sync window still applies, so a
+            # legacy scraper cannot backfill years of rows by accident.
+            if not p.get("day_given") and (day < lo or day > hi):
+                continue
             d = putil.parse_day(day)
+            if not d:
+                continue
             conn.execute(
-                "INSERT OR IGNORE INTO post_metrics (client_id, project_id, run_id, sheet_date, visible_from, captured_at, "
-                "platform, category_raw, handle, display_name, avatar_url, post_url, post_url_norm, post_type, caption, "
-                "media_type, thumb_url, posted_at, collected_at, likes, comments, shares, views, reach, impressions, "
-                "metric_source, raw_metrics, status, skip_reason, screenshot_path, first_published_at, published_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO post_metrics (client_id, project_id, run_id, sheet_date, visible_from, "
+                "captured_at, platform, category_raw, handle, display_name, avatar_url, post_url, post_url_norm, "
+                "tweet_id, post_type, caption, lang, media_type, thumb_url, posted_at, collected_at, likes, comments, "
+                "shares, views, reach, impressions, quotes, bookmarks, author_followers, last_refresh_ms, "
+                "refresh_count, metric_source, raw_metrics, status, skip_reason, screenshot_path, "
+                "first_published_at, published_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (client["id"], "", "", day, putil.day_str(putil.add_days(d, lag)), now, p["platform"],
-                 p["category_raw"], p["handle"], p["display_name"], p["avatar_url"], p["post_url"], p["post_url_norm"],
-                 "", p["caption"], p["media_type"], p["thumb_url"], p["posted_at"], p["collected_at"],
-                 p["likes"], p["comments"], p["shares"], p["views"], p["reach"], None,
-                 "scraper", json.dumps({"scraper": source.get("signature_name", "")}), "ok", "", "", now, now))
+                 p.get("category_raw") or "", p["handle"], p["display_name"], p["avatar_url"], p["post_url"],
+                 p["post_url_norm"], pid, "", p["caption"], p.get("lang") or "", p["media_type"], p["thumb_url"],
+                 p["posted_at"], p["collected_at"], p["likes"], p["comments"], p["shares"], p["views"],
+                 p["reach"], None, p.get("quotes"), p.get("bookmarks"), p.get("author_followers"),
+                 p.get("last_refresh_ms"), p.get("refresh_count"), "scraper",
+                 json.dumps({"scraper": dict(scraped, signature=sig)}, ensure_ascii=False),
+                 row_status, skip_reason, "", now, now))
             added += 1
-    return matched, added
+
+        _snapshot(conn, client, p, pull_day, day, status or "ok", sig, now)
+        snapped += 1
+    return matched, added, snapped
 
 
 # --------------------------------------------------------------------------- #
@@ -575,6 +703,34 @@ def sync_sheets_all(by_user: str = "auto") -> list:
 # --------------------------------------------------------------------------- #
 _STOP = threading.Event()
 _THREAD = None
+_LAST_RUN_DAY = ""
+
+
+def _due(now_utc: float) -> bool:
+    """Is a sync due this minute?
+
+    Two modes. `PORTAL_SYNC_AT=03:30` runs once a day at 03:30 in PORTAL_TZ —
+    what a day-wise campaign wants, because it has to happen after the local
+    day has closed. Unset keeps the old interval, which fires on a fixed minute
+    of the Unix epoch in UTC and therefore drifts across local time.
+    """
+    global _LAST_RUN_DAY
+    if not SYNC_AT:
+        return int(now_utc // 60) % max(1, SYNC_MINUTES) == 0
+    try:
+        hh, mm = (int(x) for x in SYNC_AT.split(":", 1))
+    except ValueError:
+        return int(now_utc // 60) % max(1, SYNC_MINUTES) == 0
+    try:
+        from zoneinfo import ZoneInfo
+        local = _dt.datetime.fromtimestamp(now_utc, ZoneInfo(SYNC_TZ))
+    except Exception:
+        local = _dt.datetime.fromtimestamp(now_utc)
+    today = local.strftime("%Y-%m-%d")
+    if today == _LAST_RUN_DAY or (local.hour, local.minute) < (hh, mm):
+        return False
+    _LAST_RUN_DAY = today          # a restart at 03:31 still catches the day
+    return True
 
 
 def sync_all(by_user: str = "auto") -> list:
@@ -596,7 +752,7 @@ def sync_all(by_user: str = "auto") -> list:
 
 def _loop():
     while not _STOP.wait(60):
-        if int(time.time() // 60) % max(1, SYNC_MINUTES) != 0:
+        if not _due(time.time()):
             continue
         try:
             for cid, r in sync_sheets_all():

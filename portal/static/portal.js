@@ -38,7 +38,7 @@ window.Portal = (function () {
   const PLATS = { facebook:{id:'facebook',name:'Facebook',pill:'FB',cls:'fb',v:'--fb'}, instagram:{id:'instagram',name:'Instagram',pill:'IG',cls:'ig',v:'--ig'}, x:{id:'x',name:'X (Twitter)',pill:'X',cls:'x',v:'--x'} };
   const PLAT_ORDER = ['facebook','instagram','x'];
   const CAT_COLORS = ['--fb','--ig','--x','--c4','--fb','--ig','--x','--c4'];
-  const METRIC_NAME = { engagement:'Engagement', likes:'Likes', comments:'Comments', shares:'Shares', views:'Views' };
+  const METRIC_NAME = { engagement:'Engagement', likes:'Likes', comments:'Comments', shares:'Shares', views:'Views', quotes:'Quotes', bookmarks:'Bookmarks' };
   const mLabel = (pl, k) => k === 'engagement' ? 'Engagement' : (pl === 'x' ? ({comments:'Replies', shares:'Reposts'}[k] || METRIC_NAME[k]) : METRIC_NAME[k]);
   const NOT_PUBLIC = { 'instagram.shares': 'Shares are not public on Instagram.' };
   const ICON = { heart:'<svg viewBox="0 0 16 16"><path d="M8 13.5S2.5 10 2.5 6.2A2.9 2.9 0 0 1 8 4.6a2.9 2.9 0 0 1 5.5 1.6C13.5 10 8 13.5 8 13.5z"/></svg>', repost:'<svg viewBox="0 0 16 16"><path d="M4 6V4.5A1.5 1.5 0 0 1 5.5 3H12M10 1l2 2-2 2M12 10v1.5A1.5 1.5 0 0 1 10.5 13H4M6 15l-2-2 2-2"/></svg>', comment:'<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v7h-6L4 13v-2.5H2.5z"/></svg>', eye:'<svg viewBox="0 0 16 16"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>' };

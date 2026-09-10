@@ -46,6 +46,11 @@
   let CUR = null;
   const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const when = t => t ? new Date(t * 1000).toLocaleString() : '—';
+  // A scheduled pull that fails is silent — it only reaches client_sources.last_error
+  // and the container log. The age of the last success is what says so out loud.
+  const staleTag = h => h == null ? '' : (h > 36 ? ` · <b style="color:var(--danger,#c33)">stale, ${h}h ago</b>`
+                                       : (h > 26 ? ` · <b style="color:var(--warn,#b70)">${h}h ago</b>` : ''));
+  const nfmt = n => n == null ? '—' : Number(n).toLocaleString('en-US');
   const say = (id, msg, ok) => { const el = document.getElementById(id); if (el) { el.textContent = msg; el.style.color = ok === false ? 'var(--danger,#c33)' : ''; } };
 
   async function refreshList(list) {
@@ -126,12 +131,14 @@
     <div class="card">
       <h2 class="card-title">Data source — the scraper</h2>
       ${c.sources.length ? `<table class="tbl"><thead><tr><th>Signature</th><th>URL</th><th>Auth</th><th>Key</th><th>Last sync</th><th></th></tr></thead><tbody>
-        ${c.sources.map(s => `<tr><td><b>${esc(s.signature_name)}</b><br><span class="small faint">added ${when(s.added_at)} by ${esc(s.added_by)}</span></td><td class="small" style="max-width:260px;overflow-wrap:anywhere">${esc(s.base_url)}</td><td class="small">${esc(s.auth_style)}</td><td class="small">${s.has_key ? 'sealed' : 'none'}</td><td class="small">${s.last_ok_at ? `${when(s.last_ok_at)} · ${s.last_count} posts` : '—'}${s.last_error ? `<br><span style="color:var(--danger,#c33)">${esc(s.last_error)}</span>` : ''}</td><td class="right small"><button type="button" class="link" data-sync="${s.id}">Sync now</button> · <button type="button" class="link danger" data-delsrc="${s.id}">Remove</button></td></tr>`).join('')}
+        ${c.sources.map(s => `<tr><td><b>${esc(s.signature_name)}</b><br><span class="small faint">added ${when(s.added_at)} by ${esc(s.added_by)}</span></td><td class="small" style="max-width:260px;overflow-wrap:anywhere">${esc(s.base_url)}${s.probe_url ? `<br><span class="faint">handshake: ${esc(s.probe_url)}</span>` : '<br><span class="faint">no handshake URL — cannot be tested</span>'}</td><td class="small">${esc(s.auth_style)}</td><td class="small">${s.has_key ? 'sealed' : 'none'}</td><td class="small">${s.last_ok_at ? `${when(s.last_ok_at)} · ${s.last_count} posts${staleTag(s.stale_hours)}` : '<b style="color:var(--danger,#c33)">never</b>'}${s.last_error ? `<br><span style="color:var(--danger,#c33)">${esc(s.last_error)}</span>` : ''}</td><td class="right small"><button type="button" class="link" data-testsrc="${s.id}">Test</button> · <button type="button" class="link" data-sync="${s.id}">Sync now</button> · <button type="button" class="link danger" data-delsrc="${s.id}">Remove</button></td></tr>
+        <tr class="probe-out" data-out="${s.id}" hidden><td colspan="6" class="small"></td></tr>`).join('')}
         </tbody></table>` : '<p class="faint">No scraper connected. Posts then carry only what the run read (handle, counts) — no caption, no media.</p>'}
       <form id="cl-source" class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:10px">
         <label class="field"><span>Signature name</span><input name="signature_name" required placeholder="varanasi-collector"></label>
         <label class="field" style="min-width:320px"><span>API URL <span class="faint">({from} {to} or {date})</span></span><input name="base_url" required placeholder="https://scraper.example.com/api/posts?from={from}&to={to}"></label>
         <label class="field"><span>Auth</span><select name="auth_style"><option value="bearer">Authorization: Bearer</option><option value="x-api-key">X-API-Key header</option><option value="query:api_key">?api_key=</option><option value="query:key">?key=</option><option value="query:token">?token=</option></select></label>
+        <label class="field" style="min-width:300px"><span>Handshake URL <span class="faint">(optional, for Test)</span></span><input name="probe_url" placeholder="https://scraper.vedictech.in/api/project?project=16"></label>
         <label class="field" style="min-width:220px"><span>API key</span><input name="api_key" type="password" autocomplete="new-password" placeholder="stored sealed, never shown"></label>
         <button class="btn primary" type="submit">Save source</button><span id="cl-source-msg" class="small"></span>
       </form>
@@ -140,7 +147,7 @@
         <label class="field"><span>to</span><input id="cl-sync-to" type="date"></label>
         <button class="btn" type="button" id="cl-sync-all">Sync all sources</button><span id="cl-sync-msg" class="small"></span>
       </div>
-      <p class="hint" style="margin:8px 0 0">The scheduler syncs the last few days on a timer (PORTAL_SYNC_MINUTES and PORTAL_SYNC_DAYS_BACK in .env). Field names in the scraper's JSON are matched loosely — see <code>portal/scraper.py: FIELD_MAP</code>.</p>
+      <p class="hint" style="margin:8px 0 0">Test first: the handshake says which project and which sheet the key is really wired to, which is the only way to catch a client pointed at the wrong campaign before its posts are filed. The scheduler then syncs on a timer (PORTAL_SYNC_AT for a daily local time, else PORTAL_SYNC_MINUTES and PORTAL_SYNC_DAYS_BACK in .env). Field names in the scraper's JSON are matched loosely — see <code>portal/scraper.py: FIELD_MAP</code>.</p>
     </div>
 
     <div class="card">
@@ -176,11 +183,34 @@
     detail.querySelectorAll('[data-reinvite]').forEach(b => b.addEventListener('click', async () => { try { const r = await api(`/api/clients/${id}/users/${b.dataset.reinvite}/reinvite`, { method: 'POST', json: {} }); const email = b.closest('tr').children[0].textContent; render(r.client); showInvite(r.invite_url, email); } catch (err) { alert(err.message); } }));
     detail.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', async () => { try { const r = await api(`/api/clients/${id}/users/${b.dataset.toggle}`, { method: 'PATCH', json: { disabled: b.dataset.disabled === '1' } }); render(r.client); } catch (err) { alert(err.message); } }));
     document.getElementById('cl-source').addEventListener('submit', async e => { e.preventDefault(); const fd = new FormData(e.target);
-      try { const r = await api(`/api/clients/${id}/sources`, { method: 'POST', json: { signature_name: fd.get('signature_name'), base_url: fd.get('base_url'), auth_style: fd.get('auth_style'), api_key: fd.get('api_key') } }); render(r.client); say('cl-source-msg', 'Saved. Press Sync now to test it.'); } catch (err) { say('cl-source-msg', err.message, false); } });
-    detail.querySelectorAll('[data-sync]').forEach(b => b.addEventListener('click', async () => { b.textContent = 'Syncing…'; try { const r = await api(`/api/clients/${id}/sync`, { method: 'POST', json: { source_id: b.dataset.sync, from: document.getElementById('cl-sync-from').value, to: document.getElementById('cl-sync-to').value } }); render(r.client); say('cl-sync-msg', r.result.errors.length ? r.result.errors.join(' · ') : `Fetched ${r.result.posts} posts · ${r.result.matched} matched the sheet · ${r.result.added} added.`, !r.result.errors.length); } catch (err) { say('cl-sync-msg', err.message, false); } }));
-    document.getElementById('cl-sync-all').addEventListener('click', async () => { say('cl-sync-msg', 'Syncing…'); try { const r = await api(`/api/clients/${id}/sync`, { method: 'POST', json: { from: document.getElementById('cl-sync-from').value, to: document.getElementById('cl-sync-to').value } }); render(r.client); say('cl-sync-msg', r.result.errors.length ? r.result.errors.join(' · ') : `Fetched ${r.result.posts} posts · ${r.result.matched} matched the sheet · ${r.result.added} added.`, !r.result.errors.length); } catch (err) { say('cl-sync-msg', err.message, false); } });
+      try { const r = await api(`/api/clients/${id}/sources`, { method: 'POST', json: { signature_name: fd.get('signature_name'), base_url: fd.get('base_url'), probe_url: fd.get('probe_url'), auth_style: fd.get('auth_style'), api_key: fd.get('api_key') } }); render(r.client); say('cl-source-msg', 'Saved. Press Test to see which project and sheet it reaches.'); } catch (err) { say('cl-source-msg', err.message, false); } });
+    detail.querySelectorAll('[data-sync]').forEach(b => b.addEventListener('click', async () => { b.textContent = 'Syncing…'; try { const r = await api(`/api/clients/${id}/sync`, { method: 'POST', json: { source_id: b.dataset.sync, from: document.getElementById('cl-sync-from').value, to: document.getElementById('cl-sync-to').value } }); render(r.client); say('cl-sync-msg', r.result.errors.length ? r.result.errors.join(' · ') : syncMsg(r.result), !r.result.errors.length); } catch (err) { say('cl-sync-msg', err.message, false); } }));
+    document.getElementById('cl-sync-all').addEventListener('click', async () => { say('cl-sync-msg', 'Syncing…'); try { const r = await api(`/api/clients/${id}/sync`, { method: 'POST', json: { from: document.getElementById('cl-sync-from').value, to: document.getElementById('cl-sync-to').value } }); render(r.client); say('cl-sync-msg', r.result.errors.length ? r.result.errors.join(' · ') : syncMsg(r.result), !r.result.errors.length); } catch (err) { say('cl-sync-msg', err.message, false); } });
+    detail.querySelectorAll('[data-testsrc]').forEach(b => b.addEventListener('click', async () => {
+      const sid = b.dataset.testsrc;
+      const out = detail.querySelector(`[data-out="${sid}"]`), cell = out.firstElementChild;
+      out.hidden = false; cell.innerHTML = 'Asking the Collector…'; b.textContent = 'Testing…';
+      try {
+        const r = await api(`/api/clients/${id}/sources/${sid}/test`, { method: 'POST', json: {} });
+        if (!r.ok) { cell.innerHTML = `<b style="color:var(--danger,#c33)">${esc(r.error)}</b>`; return; }
+        const m = r.summary, ct = m.counters || {};
+        cell.innerHTML = `<b>Connected</b> to project ${esc(m.project_id)} ${m.project_name ? `“${esc(m.project_name)}”` : ''}`
+          + (m.sheet_title ? ` · sheet <b>${esc(m.sheet_title)}</b>` : '')
+          + (m.tabs != null ? ` · ${esc(m.tabs)} tabs (${esc(m.dated_tabs)} dated, mode ${esc(m.tab_mode)})` : '')
+          + ` · <b>${nfmt(m.links)}</b> links`
+          + (ct.total != null ? `<br>ok ${nfmt(ct.ok)} · pending ${nfmt(ct.pending)} · unavailable ${nfmt(ct.unavailable)} · removed ${nfmt(ct.removed)}` : '')
+          + (m.skipped_non_x ? `<br><b style="color:var(--warn,#b70)">${nfmt(m.skipped_non_x)} links in this sheet are not X and are NOT being measured.</b>` : '')
+          + (m.refresh_in_progress ? '<br><b style="color:var(--warn,#b70)">Mid-refresh right now — a sync started now would snapshot a half-read watchlist, so the scheduler will skip it.</b>' : '')
+          + (m.sheet_error ? `<br><b style="color:var(--danger,#c33)">Sheet error: ${esc(m.sheet_error)}</b>` : '');
+      } catch (err) { cell.innerHTML = `<b style="color:var(--danger,#c33)">${esc(err.message)}</b>`; }
+      finally { b.textContent = 'Test'; }
+    }));
     detail.querySelectorAll('[data-delsrc]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Remove this data source? The sealed key is deleted with it.')) return; try { const r = await api(`/api/clients/${id}/sources/${b.dataset.delsrc}`, { method: 'DELETE' }); render(r.client); } catch (err) { alert(err.message); } }));
   }
+
+  const syncMsg = x => (x.errors && x.errors.length) ? x.errors.join(' · ')
+    : `Fetched ${nfmt(x.posts)} posts · ${nfmt(x.matched)} matched the sheet · ${nfmt(x.added)} added · `
+      + `${nfmt(x.days)} day-snapshot(s) recorded.` + ((x.skipped && x.skipped.length) ? ` ${x.skipped.join(' · ')}` : '');
 
   function showInvite(url, email) { const out = document.getElementById('cl-invite-out'); out.style.color = ''; out.innerHTML = `Send this link to <b>${esc(email)}</b> — it works once, for 72 hours, and is not shown again:<br><code style="user-select:all;overflow-wrap:anywhere">${esc(url)}</code> <button type="button" class="link" id="cl-copy">Copy</button>`; document.getElementById('cl-copy').addEventListener('click', () => navigator.clipboard.writeText(url).then(() => { document.getElementById('cl-copy').textContent = 'Copied'; })); }
 

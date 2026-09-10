@@ -64,8 +64,10 @@ def _public_client(conn, c: dict) -> dict:
                       for u in conn.execute("SELECT * FROM client_users WHERE client_id = ? ORDER BY email",
                                             (c["id"],)).fetchall()],
             "sources": [{"id": s["id"], "signature_name": s["signature_name"], "base_url": s["base_url"],
+                         "probe_url": (s["probe_url"] if "probe_url" in s.keys() else ""),
                          "auth_style": s["auth_style"], "enabled": bool(s["enabled"]), "has_key": bool(s["api_key_enc"]),
                          "added_by": s["added_by"], "added_at": s["added_at"], "last_ok_at": s["last_ok_at"],
+                         "stale_hours": _stale_hours(s["last_ok_at"]),
                          "last_error": s["last_error"], "last_count": s["last_count"]}
                         for s in conn.execute("SELECT * FROM client_sources WHERE client_id = ? ORDER BY added_at",
                                               (c["id"],)).fetchall()],
@@ -78,6 +80,16 @@ def _public_client(conn, c: dict) -> dict:
             "audit": [dict(r) for r in conn.execute(
                 "SELECT at, email, action, detail, ip FROM portal_audit WHERE client_id = ? ORDER BY at DESC LIMIT 30",
                 (c["id"],)).fetchall()]}
+
+
+def _stale_hours(last_ok_at):
+    """Hours since this source last answered, or None if it never has. A
+    scheduled pull that fails is otherwise SILENT — it lands in `last_error`
+    and the container log and nobody is told — so the age of the last success
+    is the one number that says whether the integration is actually running."""
+    if not last_ok_at:
+        return None
+    return round(max(0.0, time.time() - float(last_ok_at)) / 3600.0, 1)
 
 
 def _list(conn) -> list:
@@ -334,6 +346,9 @@ async def add_source(cid: str, request: Request, user: str = Depends(auth.requir
     url = str(data.get("base_url") or "").strip()
     key = str(data.get("api_key") or "")
     style = str(data.get("auth_style") or "bearer")
+    probe = str(data.get("probe_url") or "").strip()
+    if probe and not probe.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="The handshake URL must start with http:// or https://")
     if not sig:
         raise HTTPException(status_code=400, detail="Give the key a signature name.")
     if not url.lower().startswith(("http://", "https://")):
@@ -348,13 +363,99 @@ async def add_source(cid: str, request: Request, user: str = Depends(auth.requir
         _client(conn, cid)
         sid = uuid.uuid4().hex[:12]
         conn.execute("INSERT INTO client_sources (id, client_id, signature_name, base_url, api_key_enc, auth_style, "
-                     "enabled, added_by, added_at) VALUES (?,?,?,?,?,?,1,?,?)",
+                     "probe_url, enabled, added_by, added_at) VALUES (?,?,?,?,?,?,?,1,?,?)",
                      (sid, cid, sig, url, secretbox.seal(portal_publish.KEY_SECRET, key) if key else "", style,
-                      user, time.time()))
+                      probe, user, time.time()))
         conn.commit()
         return {"ok": True, "source_id": sid, "client": _public_client(conn, _client(conn, cid))}
     finally:
         conn.close()
+
+
+@router.patch("/{cid}/sources/{sid}")
+async def update_source(cid: str, sid: str, request: Request, user: str = Depends(auth.require_admin)):
+    """Change a source without re-typing its key. Only the fields that are safe
+    to edit; the sealed key is replaced only when a new one is actually sent."""
+    data = await _json_body(request)
+    _csrf(request, data)
+    conn = portal_publish.connect()
+    try:
+        row = conn.execute("SELECT id FROM client_sources WHERE id = ? AND client_id = ?", (sid, cid)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Source not found.")
+        sets, vals = [], []
+        if "probe_url" in data:
+            probe = str(data["probe_url"] or "").strip()
+            if probe and not probe.lower().startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="The handshake URL must start with http:// or https://")
+            sets.append("probe_url = ?"); vals.append(probe)
+        if "base_url" in data and str(data["base_url"]).strip():
+            u = str(data["base_url"]).strip()
+            if not u.lower().startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="The API URL must start with http:// or https://")
+            sets.append("base_url = ?"); vals.append(u)
+        if "auth_style" in data:
+            if data["auth_style"] not in AUTH_STYLES:
+                raise HTTPException(status_code=400, detail="Unknown auth style.")
+            sets.append("auth_style = ?"); vals.append(data["auth_style"])
+        if "enabled" in data:
+            sets.append("enabled = ?"); vals.append(1 if data["enabled"] else 0)
+        if data.get("api_key"):
+            if not portal_publish.KEY_SECRET:
+                raise HTTPException(status_code=400, detail="PORTAL_KEY_SECRET is not set in .env, so a key cannot be stored sealed.")
+            sets.append("api_key_enc = ?")
+            vals.append(secretbox.seal(portal_publish.KEY_SECRET, str(data["api_key"])))
+        if sets:
+            vals.append(sid)
+            conn.execute(f"UPDATE client_sources SET {', '.join(sets)} WHERE id = ?", vals)
+            conn.commit()
+        return {"ok": True, "client": _public_client(conn, _client(conn, cid))}
+    finally:
+        conn.close()
+
+
+@router.post("/{cid}/sources/{sid}/test")
+async def test_source(cid: str, sid: str, request: Request, user: str = Depends(auth.require_admin)):
+    """The handshake. Answers 'which project and which sheet is this key
+    actually wired to' BEFORE a sync files one client's posts under another —
+    the failure a project-locked key exists to prevent, and the one an HTTP 401
+    hours later does not explain."""
+    data = await _json_body(request)
+    _csrf(request, data)
+    import asyncio
+
+    from portal import scraper as pscraper
+    conn = portal_publish.connect()
+    try:
+        s = conn.execute("SELECT * FROM client_sources WHERE id = ? AND client_id = ?", (sid, cid)).fetchone()
+        if not s:
+            raise HTTPException(status_code=404, detail="Source not found.")
+        src = dict(s)
+        if not (src.get("probe_url") or "").strip():
+            raise HTTPException(status_code=400, detail="This source has no handshake URL yet. Add one — for the "
+                                                        "Collector it is the /api/project address for the same project.")
+        if not portal_publish.KEY_SECRET:
+            raise HTTPException(status_code=400, detail="PORTAL_KEY_SECRET is not set in .env, so the saved key cannot be opened.")
+        try:
+            key = secretbox.open_(portal_publish.KEY_SECRET, src.get("api_key_enc") or "") if src.get("api_key_enc") else ""
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"The saved key could not be opened: {e}")
+    finally:
+        conn.close()
+    try:
+        info = await asyncio.to_thread(pscraper.probe, src, key)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    proj, wl = info.get("project") or {}, info.get("watchlist") or {}
+    return {"ok": True, "summary": {
+        "project_id": proj.get("id"), "project_name": proj.get("name"),
+        "sheet_title": wl.get("sheet_title"), "sheet_url": wl.get("sheet_url"),
+        "tab_mode": wl.get("tab_mode"), "tabs": wl.get("tabs"), "dated_tabs": wl.get("dated_tabs"),
+        "links": wl.get("links"), "sheet_error": wl.get("sheet_error") or "",
+        "counters": info.get("counters") or {}, "skipped_non_x": info.get("skipped_non_x"),
+        "refresh_in_progress": bool(info.get("refresh_in_progress")),
+        "last_refresh_ms": info.get("last_refresh_ms"),
+    }}
 
 
 @router.delete("/{cid}/sources/{sid}")

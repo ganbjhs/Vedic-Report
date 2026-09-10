@@ -102,7 +102,7 @@ def _post_public(r: dict, client: dict) -> dict:
         "collected_at": r.get("collected_at") or "",
         "url": r["post_url"],
         "likes": r.get("likes"), "comments": r.get("comments"), "shares": r.get("shares"),
-        "views": r.get("views"),
+        "views": r.get("views"), "quotes": r.get("quotes"), "bookmarks": r.get("bookmarks"),
         "metric_source": r.get("metric_source") or "none",
         "screenshot": (f"{config.BASE_PATH}/media/{r['id']}" if client.get("show_screenshots") and r.get("screenshot_path") else ""),
     }
@@ -140,6 +140,7 @@ def trend(client: dict, day_from: str, day_to: str) -> dict:
         f"SELECT sheet_date AS day, category_raw AS category, platform, COUNT(*) AS posts, "
         f"SUM(COALESCE(likes,0)) AS likes, SUM(COALESCE(comments,0)) AS comments, "
         f"SUM(COALESCE(shares,0)) AS shares, SUM(COALESCE(views,0)) AS views, "
+        f"SUM(COALESCE(quotes,0)) AS quotes, SUM(COALESCE(bookmarks,0)) AS bookmarks, "
         f"SUM(COALESCE(likes,0)+COALESCE(comments,0)+COALESCE(shares,0)) AS engagement "
         f"FROM post_metrics WHERE {db.VISIBLE} AND sheet_date BETWEEN ? AND ? "
         f"GROUP BY sheet_date, category_raw, platform ORDER BY sheet_date",

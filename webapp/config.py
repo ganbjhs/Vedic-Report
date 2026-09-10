@@ -272,6 +272,11 @@ PORTAL_KEY_SECRET = os.environ.get("PORTAL_KEY_SECRET", "").strip()
 PORTAL_PUBLIC_URL = os.environ.get("PORTAL_PUBLIC_URL", "").strip()
 # The scraper sync: every N minutes, the last M days, for every client with a source.
 PORTAL_SYNC_MINUTES = max(5, _int("PORTAL_SYNC_MINUTES", 60))
+# A wall-clock time in the portal's timezone, "HH:MM", e.g. "03:30". When set,
+# the sync runs once a day at that LOCAL time instead of every
+# PORTAL_SYNC_MINUTES minutes. The interval form fires on a fixed minute of the
+# Unix epoch in UTC, which cannot express "after the Indian day has closed".
+PORTAL_SYNC_AT = os.environ.get("PORTAL_SYNC_AT", "").strip()
 PORTAL_SYNC_DAYS_BACK = max(1, _int("PORTAL_SYNC_DAYS_BACK", 4))
 
 # Login rate limiting

@@ -294,6 +294,46 @@ class TestScheduleClocks(unittest.TestCase):
         self.assertEqual(self.pp._daily_due(3600), self.pp._interval_due(3600))
 
 
+class TestSchedulerStarts(unittest.TestCase):
+    """The regression these exist for: an edit deleted _loop() and sync_all(),
+    every one of the 33 unit tests still passed because not one of them ever
+    started the scheduler or imported the startup path, compileall was clean
+    because a missing name is a runtime error — and the web container
+    crash-looped at boot on a NameError. Green tests are not a running app."""
+
+    def test_the_scheduler_thread_really_starts_and_stops(self):
+        from webapp import portal_publish as pp
+        pp.stop_scheduler()
+        if pp._THREAD is not None:
+            pp._THREAD.join(timeout=5)
+        pp._THREAD = None
+        try:
+            pp.start_scheduler()                     # NameError here if _loop is gone
+            self.assertIsNotNone(pp._THREAD)
+            self.assertTrue(pp._THREAD.is_alive())
+        finally:
+            pp.stop_scheduler()
+            if pp._THREAD is not None:
+                pp._THREAD.join(timeout=5)
+            pp._THREAD = None
+
+    def test_everything_the_app_calls_on_portal_publish_exists(self):
+        """Cheap guard over the whole startup surface: whatever webapp/main.py
+        and the admin routes reach for on portal_publish must be there."""
+        import re
+        from webapp import portal_publish as pp
+        wanted = set()
+        for f in ("webapp/main.py", "webapp/routes_clients.py", "webapp/jobs/runner.py"):
+            try:
+                src = (ROOT / f).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            wanted |= set(re.findall(r"portal_publish\.(\w+)", src))
+        self.assertTrue(wanted, "found no portal_publish references to check")
+        missing = [n for n in sorted(wanted) if not hasattr(pp, n)]
+        self.assertEqual(missing, [], f"webapp calls portal_publish.{missing} which does not exist")
+
+
 class TestMigration(unittest.TestCase):
     """A v1 database — one that has been running in production — must survive
     ensure_schema() and keep its rows. The trap: an index over a column added

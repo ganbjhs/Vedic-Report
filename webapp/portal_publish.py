@@ -743,6 +743,47 @@ def _daily_due(now_utc: float) -> bool:
     return True
 
 
+def sync_all(by_user: str = "auto") -> list:
+    conn = connect()
+    try:
+        ids = [r["id"] for r in conn.execute(
+            "SELECT DISTINCT c.id FROM clients c JOIN client_sources s ON s.client_id = c.id "
+            "WHERE c.archived = 0 AND s.enabled = 1").fetchall()]
+    finally:
+        conn.close()
+    out = []
+    for cid in ids:
+        try:
+            out.append((cid, sync_client(cid, by_user=by_user)))
+        except Exception as e:                  # rule 17: say so, keep going
+            print(f"[portal] sync {cid} failed: {e}", flush=True)
+    return out
+
+
+def _loop():
+    """Two clocks, checked every minute. The sheet is cheap and a human edits
+    it all day, so it stays on the interval; the scraper walk is 1,600 remote
+    posts whose counters only settle once the local day has closed, so it runs
+    at PORTAL_SYNC_AT. Neither leg may raise: this thread going down takes the
+    sync with it silently."""
+    while not _STOP.wait(60):
+        now = time.time()
+        if _interval_due(now):
+            try:
+                for cid, r in sync_sheets_all():
+                    if r.get("errors"):
+                        print(f"[portal] sheet sync {cid}: {'; '.join(r['errors'])}", flush=True)
+            except Exception as e:
+                print(f"[portal] sheet sync loop error: {e}", flush=True)
+        if KEY_SECRET and _daily_due(now):
+            try:
+                for cid, r in sync_all():
+                    if r.get("errors"):
+                        print(f"[portal] sync {cid}: {'; '.join(r['errors'])}", flush=True)
+            except Exception as e:
+                print(f"[portal] sync loop error: {e}", flush=True)
+
+
 def start_scheduler() -> None:
     global _THREAD
     if _THREAD is not None:

@@ -170,6 +170,8 @@ def remove(conn) -> int:
     for sql in ("DELETE FROM client_sessions WHERE client_id = ?",
                 "DELETE FROM client_users WHERE client_id = ?",
                 "DELETE FROM post_metrics WHERE client_id = ?",
+                "DELETE FROM post_metric_days WHERE client_id = ?",   # v3 history
+                "DELETE FROM client_reports WHERE client_id = ?",
                 "DELETE FROM publish_log WHERE client_id = ?",
                 "DELETE FROM client_projects WHERE client_id = ?",
                 "DELETE FROM client_sources WHERE client_id = ?",

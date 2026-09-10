@@ -294,6 +294,65 @@ class TestScheduleClocks(unittest.TestCase):
         self.assertEqual(self.pp._daily_due(3600), self.pp._interval_due(3600))
 
 
+class TestSheetHistory(unittest.TestCase):
+    """Facebook, Instagram and YouTube numbers exist only in the sheet. If the
+    sheet path records no history their charts can never move, no matter how
+    well the Collector side works."""
+
+    def setUp(self):
+        from webapp import portal_publish as pp
+        self.pp = pp
+        self.conn = schema.connect(os.environ["PORTAL_DB"])
+        self.conn.execute("INSERT OR IGNORE INTO clients (id, slug, name, lag_days, created_at) "
+                          "VALUES ('c4','delta','Delta',2,?)", (time.time(),))
+        self.conn.execute("DELETE FROM post_metrics WHERE client_id='c4'")
+        self.conn.execute("DELETE FROM post_metric_days WHERE client_id='c4'")
+        self.conn.commit()
+        self.client = pp.client_get(self.conn, "c4")
+
+    def tearDown(self):
+        self.conn.close()
+
+    ROWS = [
+        {"post_link": "https://www.facebook.com/reel/991/", "platform": "facebook",
+         "category": "Hyper Local Pages Posting",
+         "sheet_metrics": {"views": "30,000", "like": "60,000"}},
+        {"post_link": "https://www.instagram.com/reel/AAA/", "platform": "instagram",
+         "category": "3 Party Pages Posting",
+         "sheet_metrics": {"views": "1.2K", "like": "340", "comments": 8}},
+        {"post_link": "https://x.com/u/status/77", "platform": "x",
+         "category": "National X Influencers", "sheet_metrics": {}},      # nothing typed yet
+    ]
+
+    def test_the_sheet_writes_history_for_every_platform(self):
+        n = self.pp._publish_sheet_rows(self.conn, self.client, {}, self.ROWS,
+                                        TODAY - _dt.timedelta(days=4))
+        self.conn.commit()
+        self.assertEqual(n, 3)                       # three posts published
+        got = self.conn.execute(
+            "SELECT platform, likes, views, comments, metric_source FROM post_metric_days "
+            "WHERE client_id='c4' ORDER BY platform").fetchall()
+        # the post with no typed numbers records NO history — a blank is not a measurement
+        self.assertEqual([r["platform"] for r in got], ["facebook", "instagram"])
+        self.assertEqual((got[0]["views"], got[0]["likes"]), (30000, 60000))
+        self.assertEqual((got[1]["views"], got[1]["likes"], got[1]["comments"]), (1200, 340, 8))
+        self.assertEqual({r["metric_source"] for r in got}, {"sheet"})
+
+    def test_re_reading_the_sheet_the_same_day_replaces_that_days_row(self):
+        """The sheet sync runs hourly; a day must end up with ONE row per post,
+        carrying the latest value, not twelve."""
+        d = TODAY - _dt.timedelta(days=4)
+        self.pp._publish_sheet_rows(self.conn, self.client, {}, self.ROWS, d)
+        bumped = [dict(self.ROWS[0], sheet_metrics={"views": "31,000", "like": "61,000"})]
+        self.pp._publish_sheet_rows(self.conn, self.client, {}, bumped, d)
+        self.conn.commit()
+        rows = self.conn.execute(
+            "SELECT views, likes FROM post_metric_days WHERE client_id='c4' AND platform='facebook'"
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["views"], rows[0]["likes"]), (31000, 61000))
+
+
 class TestSchedulerStarts(unittest.TestCase):
     """The regression these exist for: an edit deleted _loop() and sync_all(),
     every one of the 33 unit tests still passed because not one of them ever
@@ -383,7 +442,12 @@ class TestMigration(unittest.TestCase):
         self.assertIn("pm_client_tweet", idx)
         self.assertTrue([r[1] for r in c.execute("PRAGMA table_info(post_metric_days)")])
         self.assertEqual(c.execute("SELECT likes FROM post_metrics").fetchone()[0], 42)
-        self.assertEqual(c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0], "2")
+        # tracks the constant, so bumping the schema does not fail an unrelated test
+        self.assertEqual(c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0],
+                         str(schema.SCHEMA_VERSION))
+        pmd = {r[1] for r in c.execute("PRAGMA table_info(post_metric_days)")}
+        for col in ("reach", "impressions", "author_followers", "metric_source"):
+            self.assertIn(col, pmd, col)
         c.close()
 
 

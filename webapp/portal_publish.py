@@ -232,6 +232,11 @@ def _publish_rows(conn, client: dict, job: dict, results: list, read: dict, shee
                  metrics["likes"], metrics["comments"], metrics["shares"], metrics["views"], metrics["reach"],
                  metrics["impressions"], source, raw, "ok" if ok else "skipped",
                  "" if ok else (r.get("status") or "not captured"), shot_rel, now, now))
+        _snapshot(conn, client, post_key=norm, day=putil.day_str(putil.today_in(
+                      client.get("tz") or "Asia/Kolkata")),
+                  sheet_date=day, counts=metrics, post_url_norm=norm, platform=plat,
+                  category_raw=r.get("category") or "", status="ok" if ok else "skipped",
+                  metric_source=source, now=now)
         n += 1
     return n
 
@@ -397,22 +402,43 @@ _CONTENT = ("display_name", "handle", "avatar_url", "caption", "lang",
             "media_type", "thumb_url", "posted_at", "collected_at")
 
 
-def _snapshot(conn, client: dict, p: dict, day: str, sheet_date: str, status: str,
-              source_name: str, now: float) -> None:
-    """One row per post per PULL day, in `post_metric_days`. This is the only
-    history that exists: the Collector overwrites its counters in place and
-    `post_metrics` is current state, so if this row is not written the day is
-    gone for good."""
-    key = p.get("post_id") or p["post_url_norm"]
+_SNAP_COUNTS = ("likes", "comments", "shares", "views", "quotes", "bookmarks",
+                "reach", "impressions", "author_followers")
+
+
+def _snapshot(conn, client: dict, *, post_key: str, day: str, sheet_date: str,
+              counts: dict, tweet_id: str = "", post_url_norm: str = "",
+              platform: str = "", category_raw: str = "", status: str = "ok",
+              metric_source: str = "scraper", last_refresh_ms=None,
+              refresh_count=None, now: float = 0.0) -> int:
+    """One row per post per PULL day, in `post_metric_days`. Returns 1 if a row
+    was written, 0 if there was nothing worth recording.
+
+    This is the only history that exists. The Collector overwrites its counters
+    in place, the sheet is retyped over itself, and `post_metrics` is current
+    state — so a number not written here is gone the moment it changes.
+
+    Every writer of `post_metrics` calls this, not just the scraper. The sheet
+    is where Facebook, Instagram and YouTube numbers come from, and for those
+    posts it is the ONLY source there will be until the Collector can fetch
+    them; without this their charts could never move.
+    """
+    if not post_key or not day:
+        return 0
+    vals = {k: counts.get(k) for k in _SNAP_COUNTS}
+    if all(v is None for v in vals.values()) and status == "ok":
+        return 0                       # nothing measured — do not imply we looked
     conn.execute(
         "INSERT OR REPLACE INTO post_metric_days (client_id, post_key, day, tweet_id, post_url_norm, "
         "sheet_date, platform, category_raw, likes, comments, shares, views, quotes, bookmarks, "
-        "author_followers, status, last_refresh_ms, refresh_count, metric_source, pulled_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (client["id"], key, day, p.get("post_id") or "", p["post_url_norm"], sheet_date,
-         p["platform"], p.get("category_raw") or "", p["likes"], p["comments"], p["shares"],
-         p["views"], p.get("quotes"), p.get("bookmarks"), p.get("author_followers"),
-         status, p.get("last_refresh_ms"), p.get("refresh_count"), source_name, now))
+        "reach, impressions, author_followers, status, last_refresh_ms, refresh_count, "
+        "metric_source, pulled_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (client["id"], post_key, day, tweet_id, post_url_norm, sheet_date, platform,
+         category_raw, vals["likes"], vals["comments"], vals["shares"], vals["views"],
+         vals["quotes"], vals["bookmarks"], vals["reach"], vals["impressions"],
+         vals["author_followers"], status, last_refresh_ms, refresh_count,
+         metric_source, now or time.time()))
+    return 1
 
 
 def _fold_scraper(conn, client: dict, source: dict, posts: list, lag: int, a, b,
@@ -527,8 +553,13 @@ def _fold_scraper(conn, client: dict, source: dict, posts: list, lag: int, a, b,
                  row_status, skip_reason, "", now, now))
             added += 1
 
-        _snapshot(conn, client, p, pull_day, day, status or "ok", sig, now)
-        snapped += 1
+        snapped += _snapshot(
+            conn, client, post_key=(pid or p["post_url_norm"]), day=pull_day, sheet_date=day,
+            counts={k: p.get(k) for k in _SNAP_COUNTS}, tweet_id=pid,
+            post_url_norm=p["post_url_norm"], platform=p["platform"],
+            category_raw=p.get("category_raw") or "", status=status or "ok",
+            metric_source="scraper", last_refresh_ms=p.get("last_refresh_ms"),
+            refresh_count=p.get("refresh_count"), now=now)
     return matched, added, snapped
 
 
@@ -576,6 +607,7 @@ def _publish_sheet_rows(conn, client: dict, src: dict, rows: list, sheet_date) -
     lag = int(client.get("lag_days") or 2)
     day = putil.day_str(sheet_date)
     visible_from = putil.day_str(putil.add_days(sheet_date, lag))
+    pull_day = putil.day_str(putil.today_in(client.get("tz") or "Asia/Kolkata"))
     now = time.time()
     n = 0
     for r in rows:
@@ -615,6 +647,11 @@ def _publish_sheet_rows(conn, client: dict, src: dict, rows: list, sheet_date) -
                 (client["id"], src.get("project_id") or "", "sheet", day, visible_from, now, plat, category,
                  handle, display, url, norm, "", metrics["likes"], metrics["comments"], metrics["shares"],
                  metrics["views"], metrics["reach"], metrics["impressions"], source, raw, "ok", "", "", now, now))
+        # The sheet is the only source Facebook, Instagram and YouTube have.
+        # Without this their history is empty and every growth chart is flat.
+        _snapshot(conn, client, post_key=norm, day=pull_day, sheet_date=day,
+                  counts=metrics, post_url_norm=norm, platform=plat,
+                  category_raw=category, metric_source=source, now=now)
         n += 1
     return n
 
@@ -643,7 +680,7 @@ def publish_from_sheet(client_id: str, by_user: str = "auto", max_days: int = 90
         if not client:
             raise KeyError(client_id)
         srcs = _dashboard_sheet_sources(conn, client_id)
-        out = {"sources": len(srcs), "days": 0, "posts": 0, "errors": []}
+        out = {"sources": len(srcs), "days": 0, "posts": 0, "history": 0, "errors": []}
         for s in srcs:
             try:
                 tabs = smartsheet.list_tabs(s["url"])
@@ -673,8 +710,13 @@ def publish_from_sheet(client_id: str, by_user: str = "auto", max_days: int = 90
                 store.source_update(s["id"], last_checked_at=time.time())
             except Exception:
                 pass
+        today = putil.day_str(putil.today_in(client.get("tz") or "Asia/Kolkata"))
+        out["history"] = conn.execute(
+            "SELECT COUNT(*) FROM post_metric_days WHERE client_id = ? AND day = ?",
+            (client_id, today)).fetchone()[0]
         _log(conn, client_id, "sheet", out["posts"],
-             note=f"{out['days']} day(s), {out['sources']} sheet(s)", by_user=by_user)
+             note=f"{out['days']} day(s), {out['sources']} sheet(s), "
+                  f"{out['history']} post(s) with history for {today}", by_user=by_user)
         conn.commit()
         return out
     finally:

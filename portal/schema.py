@@ -18,7 +18,7 @@ else decides visibility (`portal/db.py: visible_posts`).
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL = """
 CREATE TABLE IF NOT EXISTS clients (
@@ -140,6 +140,8 @@ CREATE TABLE IF NOT EXISTS post_metric_days (
     views           INTEGER,
     quotes          INTEGER,
     bookmarks       INTEGER,
+    reach           INTEGER,
+    impressions     INTEGER,
     author_followers INTEGER,
     status          TEXT NOT NULL DEFAULT 'ok',
     last_refresh_ms INTEGER,
@@ -279,6 +281,9 @@ _ADDED_COLUMNS = {
     "client_users": (("username", "TEXT NOT NULL DEFAULT ''"),),
     "client_sources": (("probe_url", "TEXT NOT NULL DEFAULT ''"),),
     # v2 — what the Collector sends that the portal had nowhere to put.
+    # v3 — the sheet's own numbers are history too, and for Facebook and
+    # Instagram reach/impressions are the numbers that exist.
+    "post_metric_days": (("reach", "INTEGER"), ("impressions", "INTEGER")),
     "post_metrics": (("tweet_id", "TEXT NOT NULL DEFAULT ''"),
                      ("lang", "TEXT DEFAULT ''"),
                      ("quotes", "INTEGER"),

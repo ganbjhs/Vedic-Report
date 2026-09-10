@@ -706,21 +706,31 @@ _THREAD = None
 _LAST_RUN_DAY = ""
 
 
-def _due(now_utc: float) -> bool:
-    """Is a sync due this minute?
+def _interval_due(now_utc: float) -> bool:
+    """The old clock: every PORTAL_SYNC_MINUTES, on a fixed minute of the Unix
+    epoch. Good enough for re-reading a Google Sheet, which is cheap and which
+    an operator edits all day and expects to see land."""
+    return int(now_utc // 60) % max(1, SYNC_MINUTES) == 0
 
-    Two modes. `PORTAL_SYNC_AT=03:30` runs once a day at 03:30 in PORTAL_TZ —
-    what a day-wise campaign wants, because it has to happen after the local
-    day has closed. Unset keeps the old interval, which fires on a fixed minute
-    of the Unix epoch in UTC and therefore drifts across local time.
+
+def _daily_due(now_utc: float) -> bool:
+    """The scraper clock: once a day at PORTAL_SYNC_AT in PORTAL_TZ, e.g. 03:30
+    IST — after the local day has closed, which is the only moment a day's
+    numbers are final. Unset falls back to the interval.
+
+    This is deliberately SEPARATE from the sheet clock. They were briefly the
+    same, which quietly dropped the sheet from hourly to daily: the sheet is a
+    local read of a document a human is editing, the scraper walk is 1,600
+    remote posts whose counters only settle once. One schedule cannot be right
+    for both.
     """
     global _LAST_RUN_DAY
     if not SYNC_AT:
-        return int(now_utc // 60) % max(1, SYNC_MINUTES) == 0
+        return _interval_due(now_utc)
     try:
         hh, mm = (int(x) for x in SYNC_AT.split(":", 1))
     except ValueError:
-        return int(now_utc // 60) % max(1, SYNC_MINUTES) == 0
+        return _interval_due(now_utc)
     try:
         from zoneinfo import ZoneInfo
         local = _dt.datetime.fromtimestamp(now_utc, ZoneInfo(SYNC_TZ))
@@ -729,44 +739,8 @@ def _due(now_utc: float) -> bool:
     today = local.strftime("%Y-%m-%d")
     if today == _LAST_RUN_DAY or (local.hour, local.minute) < (hh, mm):
         return False
-    _LAST_RUN_DAY = today          # a restart at 03:31 still catches the day
+    _LAST_RUN_DAY = today            # a restart at 03:31 still catches the day
     return True
-
-
-def sync_all(by_user: str = "auto") -> list:
-    conn = connect()
-    try:
-        ids = [r["id"] for r in conn.execute(
-            "SELECT DISTINCT c.id FROM clients c JOIN client_sources s ON s.client_id = c.id "
-            "WHERE c.archived = 0 AND s.enabled = 1").fetchall()]
-    finally:
-        conn.close()
-    out = []
-    for cid in ids:
-        try:
-            out.append((cid, sync_client(cid, by_user=by_user)))
-        except Exception as e:                  # rule 17: say so, keep going
-            print(f"[portal] sync {cid} failed: {e}", flush=True)
-    return out
-
-
-def _loop():
-    while not _STOP.wait(60):
-        if not _due(time.time()):
-            continue
-        try:
-            for cid, r in sync_sheets_all():
-                if r.get("errors"):
-                    print(f"[portal] sheet sync {cid}: {'; '.join(r['errors'])}", flush=True)
-        except Exception as e:
-            print(f"[portal] sheet sync loop error: {e}", flush=True)
-        if KEY_SECRET:
-            try:
-                for cid, r in sync_all():
-                    if r.get("errors"):
-                        print(f"[portal] sync {cid}: {'; '.join(r['errors'])}", flush=True)
-            except Exception as e:
-                print(f"[portal] sync loop error: {e}", flush=True)
 
 
 def start_scheduler() -> None:

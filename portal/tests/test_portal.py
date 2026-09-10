@@ -254,6 +254,46 @@ class TestPublish(unittest.TestCase):
         conn.close()
 
 
+class TestScheduleClocks(unittest.TestCase):
+    """The sheet and the scraper are on separate clocks. Briefly they were not,
+    which silently dropped a Google Sheet from hourly reads to one a day."""
+
+    def setUp(self):
+        from webapp import portal_publish as pp
+        self.pp = pp
+        self._at, self._min, self._last = pp.SYNC_AT, pp.SYNC_MINUTES, pp._LAST_RUN_DAY
+
+    def tearDown(self):
+        self.pp.SYNC_AT, self.pp.SYNC_MINUTES = self._at, self._min
+        self.pp._LAST_RUN_DAY = self._last
+
+    def _at_ist(self, hh, mm, day=10):
+        import datetime as d
+        from zoneinfo import ZoneInfo
+        return d.datetime(2026, 9, day, hh, mm, tzinfo=ZoneInfo("Asia/Kolkata")).timestamp()
+
+    def test_the_sheet_stays_hourly_even_when_a_daily_time_is_set(self):
+        self.pp.SYNC_AT, self.pp.SYNC_MINUTES = "03:30", 60
+        hourly = [t for t in range(0, 3600 * 6, 60) if self.pp._interval_due(t)]
+        self.assertEqual(len(hourly), 6)          # once an hour, regardless of SYNC_AT
+
+    def test_the_scraper_fires_once_at_the_local_time(self):
+        self.pp.SYNC_AT, self.pp._LAST_RUN_DAY = "03:30", ""
+        self.assertFalse(self.pp._daily_due(self._at_ist(3, 29)))
+        self.assertTrue(self.pp._daily_due(self._at_ist(3, 30)))
+        self.assertFalse(self.pp._daily_due(self._at_ist(3, 31)))   # not twice
+        self.assertFalse(self.pp._daily_due(self._at_ist(20, 0)))   # nor later the same day
+        self.assertTrue(self.pp._daily_due(self._at_ist(3, 30, day=11)))   # the next day
+
+    def test_a_restart_after_the_hour_still_catches_the_day(self):
+        self.pp.SYNC_AT, self.pp._LAST_RUN_DAY = "03:30", ""
+        self.assertTrue(self.pp._daily_due(self._at_ist(9, 15)))
+
+    def test_no_daily_time_means_the_old_interval(self):
+        self.pp.SYNC_AT, self.pp.SYNC_MINUTES = "", 60
+        self.assertEqual(self.pp._daily_due(3600), self.pp._interval_due(3600))
+
+
 class TestMigration(unittest.TestCase):
     """A v1 database — one that has been running in production — must survive
     ensure_schema() and keep its rows. The trap: an index over a column added

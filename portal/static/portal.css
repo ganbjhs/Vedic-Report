@@ -149,10 +149,14 @@ footer{border-top:1px solid var(--hair);padding:20px 0 34px;color:var(--muted);f
 .tp .media{position:relative;aspect-ratio:2/1;background:linear-gradient(135deg,var(--surface-2),var(--hair));display:grid;place-items:center;color:var(--muted);font-size:12px}
 .tp .media img{width:100%;height:100%;object-fit:cover;display:block}
 .tp .media .kind{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;font-size:11px;font-weight:600;padding:2px 7px;border-radius:5px}
-.tp .media .rank{position:absolute;top:8px;right:8px;background:var(--accent);color:var(--accent-ink);font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+/* The rank chip lives in the body, not on the picture: 83% of posts carry no
+   thumbnail, and a badge that only appears on the other 17% reads as a bug. */
+.tp .who .rank{margin-left:auto;background:var(--accent);color:var(--accent-ink);font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;flex:none}
 .tp .media .play{width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,.55);display:grid;place-items:center}
 .tp .media .play::after{content:"";border-left:12px solid #fff;border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px}
 .tp .body{padding:12px 14px;display:flex;flex-direction:column;gap:6px;flex:1}
+.tp.nomedia .body{padding-top:14px}
+.tp.nomedia .cap{-webkit-line-clamp:4}
 .tp .who{display:flex;align-items:center;gap:8px;font-size:13px}
 .tp .who .ava{width:26px;height:26px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:600;font-size:10.5px;flex:none;overflow:hidden}
 .tp .who .ava img{width:100%;height:100%;object-fit:cover}

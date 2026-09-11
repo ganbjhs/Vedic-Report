@@ -36,6 +36,18 @@ window.Portal = (function () {
   const pct = (a, b) => (!b ? null : (a-b)/b*100);
   const deltaHtml = (d) => d == null ? '<b class="flat">—</b>' : `<b class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(0)}%</b>`;
   const ago = (isoTs, ref) => { if (!isoTs) return ''; const t = new Date(isoTs); if (isNaN(t)) return ''; const h = Math.max(0, Math.round((ref - t)/36e5)); return h < 1 ? 'just now' : h < 48 ? `${h}h ago` : `${Math.round(h/24)}d ago`; };
+  // Media is a picture, or it is nothing. A grey gradient box holding the word
+  // "video" is not media — it is a hole where a picture was meant to be, and on
+  // these accounts 83% of posts carry no thumbnail at all, so the placeholder
+  // WAS the layout. The box is now drawn only when there is something to put in
+  // it; the kind ("video", "image") rides in the text line instead, where it
+  // costs no space and still says what the post is.
+  const shotOf = (p) => p.thumb || p.screenshot || '';
+  const mediaBox = (p) => { const src = shotOf(p); return src
+    ? `<div class="media"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">${p.media_type ? `<span class="kind">${esc(p.media_type)}</span>` : ''}${p.media_type === 'video' ? '<span class="play"></span>' : ''}</div>`
+    : ''; };
+  // the kind is only worth saying when no picture is showing it
+  const kindWord = (p) => (!shotOf(p) && p.media_type) ? p.media_type : '';
   const initials = (s) => (s||'?').replace(/^@/,'').split(/[\s._-]+/).filter(Boolean).slice(0,2).map(w => w[0].toUpperCase()).join('') || '?';
   const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || getComputedStyle(document.body).getPropertyValue(n).trim();
   const eachDay = (a, b) => { const out = []; for (let d = new Date(a); d <= b; d = addDays(d, 1)) out.push(iso(d)); return out; };
@@ -166,9 +178,13 @@ window.Portal = (function () {
     $('platrows').innerHTML = PLAT_ORDER.map(pl => { const pp = posts.filter(p => p.platform === pl), pv = pposts.filter(p => p.platform === pl); const e = sumM(pp, eng), pe = sumM(pv, eng), dd = (pv.length && e != null && pe != null) ? pct(e, pe) : null;
       return `<div class="platrow"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span><span class="n">${PLATS[pl].name}<small>${fmtN(pp.length)} post${pp.length === 1 ? '' : 's'} · ${fmtC(sumM(pp, p => p.views))} views</small></span><span class="v">${fmtC(e)}<small>${Math.round(e/eTot*100)}% of engagement</small></span><span class="d ${dd == null ? 'flat' : dd >= 0 ? 'up' : 'down'}">${dd == null ? '—' : (dd >= 0 ? '▲' : '▼')+' '+Math.abs(dd).toFixed(0)+'%'}</span></div>`; }).join('');
     $('topgrid').innerHTML = PLAT_ORDER.map(pl => { const best = posts.filter(p => p.platform === pl && measured(p)).sort((a, b) => eng(b)-eng(a))[0];
-      if (!best) return `<div class="tp"><div class="media">No ${PLATS[pl].name} posts</div><div class="body"><div class="who"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span><b>${PLATS[pl].name}</b></div><div class="cap dash">Nothing posted on ${fmtD(d)}.</div></div></div>`;
-      const media = `<div class="media">${best.thumb ? `<img src="${esc(best.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : (best.media_type ? '' : '<span>No media</span>')}${best.media_type ? `<span class="kind">${best.media_type}</span>` : ''}${best.media_type === 'video' ? '<span class="play"></span>' : ''}<span class="rank">Top ${PLATS[pl].pill}</span></div>`;
-      return `<a class="tp" href="${esc(best.url)}" target="_blank" rel="noopener">${media}<div class="body"><div class="who"><span class="ava">${best.avatar ? `<img src="${esc(best.avatar)}" alt="" referrerpolicy="no-referrer">` : initials(best.name)}</span><b>${esc(best.name)}</b><span class="h">${esc(best.handle)}</span><span class="pp ${PLATS[pl].cls}" style="margin-left:auto">${PLATS[pl].pill}</span></div><div class="cap">${esc(best.text) || '<span class="dash">No caption</span>'}</div><div class="catl">${esc(catLabel(best.category))}</div>
+      if (!best) return `<div class="tp nomedia"><div class="body"><div class="who"><span class="pp ${PLATS[pl].cls}">${PLATS[pl].pill}</span><b>${PLATS[pl].name}</b></div><div class="cap dash">Nothing posted on ${fmtD(d)}.</div></div></div>`;
+      const media = mediaBox(best);
+      // "Top FB" used to sit on the picture, so a card without one lost it.
+      // It says the platform as well as the rank, so it takes the corner the
+      // bare platform pill held and the card reads the same either way.
+      const catl = [catLabel(best.category), kindWord(best)].filter(Boolean).join(' · ');
+      return `<a class="tp ${media ? '' : 'nomedia'}" href="${esc(best.url)}" target="_blank" rel="noopener">${media}<div class="body"><div class="who"><span class="ava">${best.avatar ? `<img src="${esc(best.avatar)}" alt="" referrerpolicy="no-referrer">` : initials(best.name)}</span><b>${esc(best.name)}</b><span class="h">${esc(best.handle)}</span><span class="rank">Top ${PLATS[pl].pill}</span></div><div class="cap">${esc(best.text) || '<span class="dash">No caption</span>'}</div><div class="catl">${esc(catl)}</div>
         <div class="stat"><span title="Engagement"><b>${fmtC(eng(best))}</b> engagement</span><span title="${mLabel(pl, 'likes')}">${ICON.heart}${fmtC(best.likes)}</span><span title="${mLabel(pl, 'comments')}">${ICON.comment}${fmtC(best.comments)}</span><span title="Views">${ICON.eye}${fmtC(best.views)}</span></div></div></a>`; }).join('');
     // one tile per category — the door into that category's screen
     $('catgrid').innerHTML = CATS.map(c => { const cp = posts.filter(p => p.category === c.raw), pv = pposts.filter(p => p.category === c.raw); const e = sum(cp, eng), pe = sum(pv, eng), dd = pv.length ? pct(e, pe) : null; const et = Math.max(1, e);
@@ -260,8 +276,10 @@ window.Portal = (function () {
     $('fCount').textContent = `${fmtN(rows.length)} post${rows.length === 1 ? '' : 's'}`;
     const now = new Date();
     $('cards').innerHTML = slice.map(p => {
-      const when = [p.collected_at ? `collected ${ago(p.collected_at, now)}` : '', p.posted_at ? `posted ${ago(p.posted_at, now)}` : ''].filter(Boolean).join(' · ');
-      const media = (p.media_type || p.thumb || p.screenshot) ? `<div class="media">${(p.thumb || p.screenshot) ? `<img src="${esc(p.thumb || p.screenshot)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}${p.media_type ? `<span class="kind">${p.media_type}</span>` : ''}${p.media_type === 'video' ? '<span class="play"></span>' : ''}</div>` : '';
+      const when = [kindWord(p), p.collected_at ? `collected ${ago(p.collected_at, now)}` : '', p.posted_at ? `posted ${ago(p.posted_at, now)}` : ''].filter(Boolean).join(' · ');
+      // was: a box whenever media_type was set, picture or not — which drew an
+      // empty 168px slab beside a text post and pushed the caption into a column
+      const media = mediaBox(p);
       const open = {facebook:'Open on Facebook', instagram:'Open on Instagram', x:'Open on X'}[p.platform];
       return `<article class="post ${media ? '' : 'nomedia'}">
         <div class="who"><div class="ava">${p.avatar ? `<img src="${esc(p.avatar)}" alt="" referrerpolicy="no-referrer">` : initials(p.name)}</div><div><span class="name">${esc(p.name)}</span><span class="handle">${esc(p.handle)}</span> <span class="pp ${PLATS[p.platform].cls}">${PLATS[p.platform].pill}</span></div><span class="cat-chip">${esc(catLabel(p.category))}</span></div>
@@ -346,6 +364,19 @@ window.Portal = (function () {
 
   function wire() {
     window.addEventListener('hashchange', route);
+    // X expires its media URLs, so a thumbnail we were given can still 404 —
+    // and a box with a dead image in it is the very slab the box is now drawn
+    // only to avoid. Capture phase: `error` on an <img> does not bubble.
+    // Avatars are left alone; they are not inside .media.
+    document.addEventListener('error', (e) => {
+      const img = e.target;
+      if (!(img instanceof HTMLImageElement)) return;
+      const box = img.closest('.media');
+      if (!box) return;
+      const card = box.closest('.post, .tp');
+      box.remove();
+      if (card) card.classList.add('nomedia');
+    }, true);
     $('dayPick').addEventListener('change', () => { if ($('dayPick').value) setDay($('dayPick').value); });
     $('prevDay').addEventListener('click', () => setDay(iso(addDays(parseISO(state.day), -1))));
     $('nextDay').addEventListener('click', () => setDay(iso(addDays(parseISO(state.day), 1))));

@@ -40,6 +40,8 @@ KEY_SECRET = getattr(config, "PORTAL_KEY_SECRET", "") or ""
 SYNC_MINUTES = int(getattr(config, "PORTAL_SYNC_MINUTES", 60) or 60)
 SYNC_DAYS_BACK = int(getattr(config, "PORTAL_SYNC_DAYS_BACK", 4) or 4)
 SYNC_AT = str(getattr(config, "PORTAL_SYNC_AT", "") or "").strip()
+SYNC_RETRY_MINUTES = int(getattr(config, "PORTAL_SYNC_RETRY_MINUTES", 20) or 20)
+SYNC_MAX_TRIES = int(getattr(config, "PORTAL_SYNC_MAX_TRIES", 8) or 8)
 SYNC_TZ = str(getattr(config, "PORTAL_TZ", "") or "Asia/Kolkata")
 
 _lock = threading.Lock()
@@ -193,13 +195,22 @@ def _publish_rows(conn, client: dict, job: dict, results: list, read: dict, shee
         if handle and not handle.startswith("@"):
             handle = "@" + handle
         display = (r.get("display_name") or r.get("account_name") or "").strip()
-        existing = conn.execute("SELECT id, first_published_at, caption, metric_source FROM post_metrics "
+        existing = conn.execute("SELECT id, first_published_at, caption, metric_source, raw_metrics "
+                                "FROM post_metrics "
                                 "WHERE client_id = ? AND post_url_norm = ? AND sheet_date = ?",
                                 (client["id"], norm, day)).fetchone()
-        raw = json.dumps({"sheet_metrics": r.get("sheet_metrics") or {}, "metrics": r.get("metrics") or {},
-                          "read": {k: v for k, v in (read.get(str(r.get("screenshot") or "")) or {}).items()
-                                   if k in ("likes", "comments", "shares", "views", "shown", "engine")}},
-                         ensure_ascii=False)
+        # Merge, do not replace: `raw_metrics` is where the measurement that
+        # LOST is kept, so a typo can be caught by comparing the two. Rebuilding
+        # the object from this run alone threw the Collector's copy away.
+        raw = _merged_raw(existing, r)
+        try:
+            raw_obj = json.loads(raw)
+        except ValueError:
+            raw_obj = {}
+        raw_obj["metrics"] = r.get("metrics") or {}
+        raw_obj["read"] = {k: v for k, v in (read.get(str(r.get("screenshot") or "")) or {}).items()
+                           if k in ("likes", "comments", "shares", "views", "shown", "engine")}
+        raw = json.dumps(raw_obj, ensure_ascii=False)
         if existing:
             # a later run refreshes counts + status; scraper content and counts
             # are fresher than OCR, so a scraper-sourced row keeps its numbers
@@ -306,11 +317,17 @@ def _copy_shot(client: dict, job_id: str, shot: str) -> str:
 # The scraper
 # --------------------------------------------------------------------------- #
 def sync_client(client_id: str, day_from: str = "", day_to: str = "", by_user: str = "auto",
-                source_id: str = "") -> dict:
+                source_id: str = "", force: bool = False) -> dict:
     """Fetch the client's scraper for [day_from, day_to] and fold it into
-    post_metrics. Returns {sources: n, posts: n, matched: n, added: n, errors: [..]}."""
+    post_metrics. Returns
+    {sources: n, fetched: n, posts: n, matched: n, added: n, errors: [..]}.
+
+    `fetched` counts the sources that actually ANSWERED — the scheduler closes
+    the day on that, not on having run. `force` reads even while the Collector
+    says it is mid-refresh: what a human means by "Sync now", and what the last
+    attempt of the day does rather than leave the dashboard blank."""
     if not KEY_SECRET:
-        return {"sources": 0, "posts": 0, "matched": 0, "added": 0,
+        return {"sources": 0, "fetched": 0, "posts": 0, "matched": 0, "added": 0,
                 "errors": ["PORTAL_KEY_SECRET is not set, so the saved API key cannot be opened."]}
     with _lock:
         conn = connect()
@@ -328,8 +345,8 @@ def sync_client(client_id: str, day_from: str = "", day_to: str = "", by_user: s
                 q += " AND id = ?"
                 args.append(source_id)
             sources = [dict(r) for r in conn.execute(q, args).fetchall()]
-            out = {"sources": len(sources), "posts": 0, "matched": 0, "added": 0, "days": 0,
-                   "skipped": [], "errors": []}
+            out = {"sources": len(sources), "fetched": 0, "posts": 0, "matched": 0, "added": 0,
+                   "days": 0, "skipped": [], "errors": []}
             for s in sources:
                 try:
                     key = secretbox.open_(KEY_SECRET, s.get("api_key_enc") or "") if s.get("api_key_enc") else ""
@@ -340,7 +357,13 @@ def sync_client(client_id: str, day_from: str = "", day_to: str = "", by_user: s
                 if s.get("probe_url"):
                     # The Collector says when it is part-way through re-reading
                     # every link. A snapshot taken then is a half-scraped day
-                    # recorded for ever, so skip and take it tomorrow.
+                    # recorded for ever, so normally we skip and come back.
+                    #
+                    # `force` overrules it, and must: this Collector re-reads
+                    # 1,600 links continuously and was mid-refresh EVERY time
+                    # the scheduler asked, so "come back later" meant never. A
+                    # count read mid-refresh is a real count that some posts
+                    # will have settled past; NULL is not a count at all.
                     try:
                         info = pscraper.probe(s, key)
                     except pscraper.ScraperError as e:
@@ -348,17 +371,27 @@ def sync_client(client_id: str, day_from: str = "", day_to: str = "", by_user: s
                         conn.execute("UPDATE client_sources SET last_error = ? WHERE id = ?",
                                      (str(e)[:400], s["id"]))
                         continue
-                    if info.get("refresh_in_progress"):
-                        out["skipped"].append(f"{s['signature_name']}: mid-refresh, left for the next run")
+                    if info.get("refresh_in_progress") and not force:
+                        out["skipped"].append(f"{s['signature_name']}: mid-refresh, left for the next try")
+                        # Say so on the Clients page. A skip used to touch
+                        # nothing at all, so the source read "never" with no
+                        # reason beside it and nobody could see why.
+                        conn.execute("UPDATE client_sources SET last_error = ? WHERE id = ?",
+                                     ("Skipped: the Collector was mid-refresh. Will try again shortly.",
+                                      s["id"]))
+                        conn.commit()
                         _log(conn, client_id, "scraper", 0, note=f"{s['signature_name']}: skipped, mid-refresh",
                              by_user=by_user)
                         continue
+                    if info.get("refresh_in_progress"):
+                        out["skipped"].append(f"{s['signature_name']}: mid-refresh, read anyway (forced)")
                 try:
                     posts, body = pscraper.fetch(s, key, putil.day_str(a), putil.day_str(b))
                 except pscraper.ScraperError as e:
                     out["errors"].append(f"{s['signature_name']}: {e}")
                     conn.execute("UPDATE client_sources SET last_error = ? WHERE id = ?", (str(e)[:400], s["id"]))
                     continue
+                out["fetched"] += 1
                 matched, added, snapped = _fold_scraper(conn, client, s, posts, lag, a, b,
                                                         pull_day=putil.day_str(today))
                 out["posts"] += len(posts)
@@ -600,6 +633,25 @@ def backfill_client(client_id: str, by_user: str = "backfill") -> dict:
 _SHEET_METRIC_KEYS = ("likes", "comments", "shares", "views", "reach", "impressions")
 
 
+def _merged_raw(existing, row: dict) -> str:
+    """The row's `raw_metrics` with the sheet's own columns refreshed and
+    everything else left alone — notably the Collector's `scraper` block.
+
+    Replacing the whole object threw away the only surviving copy of the
+    scraped numbers, which is the copy `raw_metrics` exists to keep: a wiped
+    row then looked exactly like a never-measured one."""
+    raw = {}
+    if existing is not None:
+        try:
+            raw = json.loads(existing["raw_metrics"] or "{}")
+        except (ValueError, TypeError, IndexError, KeyError):
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    raw["sheet_metrics"] = row.get("sheet_metrics") or {}
+    return json.dumps(raw, ensure_ascii=False)
+
+
 def _publish_sheet_rows(conn, client: dict, src: dict, rows: list, sheet_date) -> int:
     """Upsert analysed sheet rows straight into post_metrics as VISIBLE posts.
     Unlike a capture run there is no screenshot: a sheet row IS the post, so it
@@ -629,15 +681,34 @@ def _publish_sheet_rows(conn, client: dict, src: dict, rows: list, sheet_date) -
             handle = "@" + handle
         display = (r.get("display_name") or r.get("account_name") or "").strip()
         category = (r.get("category") or r.get("section") or "").strip()
-        raw = json.dumps({"sheet_metrics": r.get("sheet_metrics") or {}}, ensure_ascii=False)
-        existing = conn.execute("SELECT id FROM post_metrics WHERE client_id=? AND post_url_norm=? AND sheet_date=?",
+        existing = conn.execute("SELECT id, metric_source, status, raw_metrics FROM post_metrics "
+                                "WHERE client_id=? AND post_url_norm=? AND sheet_date=?",
                                 (client["id"], norm, day)).fetchone()
+        raw = _merged_raw(existing, r)
+        # Who owns the numbers on this row. The Collector reads X's counters off
+        # X itself, so a scraped figure IS the measurement and re-reading the
+        # sheet must not erase it — and when this client's typed columns are not
+        # trusted there is nothing here to erase it WITH, only NULLs. The
+        # capture path has had exactly this guard since it existed
+        # (`_publish_rows`: keep_scraper); the sheet path never did, so the
+        # hourly sheet read would wipe every count the daily scraper walk wrote,
+        # within the hour, for ever. It is the same rule `_fold_scraper` applies
+        # from the other side (`_SCRAPER_WINS`), so neither can undo the other.
+        keep_scraper = (existing is not None
+                        and (existing["metric_source"] or "") == "scraper"
+                        and (plat in _SCRAPER_WINS or not trust_sheet))
         if existing:
             sets = ["project_id=?", "run_id=?", "visible_from=?", "platform=?", "category_raw=?",
-                    "status='ok'", "skip_reason=''", "published_at=?", "raw_metrics=?", "metric_source=?"]
-            vals = [src.get("project_id") or "", "sheet", visible_from, plat, category, now, raw, source]
-            for k in _SHEET_METRIC_KEYS:
-                sets.append(f"{k}=?"); vals.append(metrics[k])
+                    "published_at=?", "raw_metrics=?"]
+            vals = [src.get("project_id") or "", "sheet", visible_from, plat, category, now, raw]
+            if not keep_scraper:
+                # `status` is the sheet's to set only when the numbers are: a
+                # post the Collector reported removed or unavailable must stay
+                # hidden, not be resurrected by the next sheet read.
+                sets += ["status='ok'", "skip_reason=''", "metric_source=?"]
+                vals.append(source)
+                for k in _SHEET_METRIC_KEYS:
+                    sets.append(f"{k}=?"); vals.append(metrics[k])
             if handle:
                 sets.append("handle=?"); vals.append(handle)
             if display:
@@ -655,9 +726,13 @@ def _publish_sheet_rows(conn, client: dict, src: dict, rows: list, sheet_date) -
                  metrics["views"], metrics["reach"], metrics["impressions"], source, raw, "ok", "", "", now, now))
         # The sheet is the only source Facebook, Instagram and YouTube have.
         # Without this their history is empty and every growth chart is flat.
-        _snapshot(conn, client, post_key=norm, day=pull_day, sheet_date=day,
-                  counts=metrics, post_url_norm=norm, platform=plat,
-                  category_raw=category, metric_source=source, now=now)
+        # Not for a row the scraper owns, though: that day is already recorded
+        # by `_fold_scraper`, and writing the sheet's figure over it would make
+        # the history disagree with the row it is the history OF.
+        if not keep_scraper:
+            _snapshot(conn, client, post_key=norm, day=pull_day, sheet_date=day,
+                      counts=metrics, post_url_norm=norm, platform=plat,
+                      category_raw=category, metric_source=source, now=now)
         n += 1
     return n
 
@@ -751,7 +826,10 @@ def sync_sheets_all(by_user: str = "auto") -> list:
 # --------------------------------------------------------------------------- #
 _STOP = threading.Event()
 _THREAD = None
-_LAST_RUN_DAY = ""
+_LAST_RUN_DAY = ""          # the local day a scraper walk actually LANDED
+_TRY_DAY = ""               # the local day the attempt counter below belongs to
+_TRIES = 0                  # attempts already made on _TRY_DAY
+_LAST_TRY_AT = 0.0          # epoch seconds of the most recent attempt
 
 
 def _interval_due(now_utc: float) -> bool:
@@ -761,37 +839,76 @@ def _interval_due(now_utc: float) -> bool:
     return int(now_utc // 60) % max(1, SYNC_MINUTES) == 0
 
 
+def _local(now_utc: float) -> _dt.datetime:
+    try:
+        from zoneinfo import ZoneInfo
+        return _dt.datetime.fromtimestamp(now_utc, ZoneInfo(SYNC_TZ))
+    except Exception:
+        return _dt.datetime.fromtimestamp(now_utc)
+
+
 def _daily_due(now_utc: float) -> bool:
-    """The scraper clock: once a day at PORTAL_SYNC_AT in PORTAL_TZ, e.g. 03:30
-    IST — after the local day has closed, which is the only moment a day's
-    numbers are final. Unset falls back to the interval.
+    """The scraper clock: ATTEMPT the walk from PORTAL_SYNC_AT in PORTAL_TZ
+    onwards — e.g. 03:30 IST, after the local day has closed, which is the only
+    moment a day's numbers are final. Unset falls back to the interval.
 
     This is deliberately SEPARATE from the sheet clock. They were briefly the
     same, which quietly dropped the sheet from hourly to daily: the sheet is a
     local read of a document a human is editing, the scraper walk is 1,600
     remote posts whose counters only settle once. One schedule cannot be right
     for both.
+
+    It ATTEMPTS. It does not declare the day done — that is
+    `note_scraper_result()`, and only once a source has really answered. The
+    two used to be the same act: this function stamped the date on the way in,
+    so the one minute a day we asked, the Collector answered "mid-refresh", and
+    the day was spent. `client_sources.last_ok_at` had stayed NULL since the
+    integration was added and every count on every client dashboard was blank.
+    Until the walk lands we come back every SYNC_RETRY_MINUTES, at most
+    SYNC_MAX_TRIES times.
     """
-    global _LAST_RUN_DAY
+    global _TRY_DAY, _TRIES, _LAST_TRY_AT
     if not SYNC_AT:
         return _interval_due(now_utc)
     try:
         hh, mm = (int(x) for x in SYNC_AT.split(":", 1))
     except ValueError:
         return _interval_due(now_utc)
-    try:
-        from zoneinfo import ZoneInfo
-        local = _dt.datetime.fromtimestamp(now_utc, ZoneInfo(SYNC_TZ))
-    except Exception:
-        local = _dt.datetime.fromtimestamp(now_utc)
+    local = _local(now_utc)
     today = local.strftime("%Y-%m-%d")
-    if today == _LAST_RUN_DAY or (local.hour, local.minute) < (hh, mm):
+    if today != _TRY_DAY:                     # a new local day, a fresh set of tries
+        _TRY_DAY, _TRIES, _LAST_TRY_AT = today, 0, 0.0
+    if today == _LAST_RUN_DAY:                # already landed today
         return False
-    _LAST_RUN_DAY = today            # a restart at 03:31 still catches the day
+    if (local.hour, local.minute) < (hh, mm):
+        return False
+    if _TRIES >= SYNC_MAX_TRIES:              # tried enough; wait for tomorrow
+        return False
+    if _LAST_TRY_AT and (now_utc - _LAST_TRY_AT) < SYNC_RETRY_MINUTES * 60:
+        return False
+    _TRIES += 1                               # a restart at 03:31 still catches the day
+    _LAST_TRY_AT = now_utc
     return True
 
 
-def sync_all(by_user: str = "auto") -> list:
+def _force_due() -> bool:
+    """True once this is the last attempt of the day. A Collector that has been
+    mid-refresh every time we asked is not going to fall idle before midnight,
+    and a partly-settled count is a reading; NULL is not."""
+    return _TRIES >= SYNC_MAX_TRIES
+
+
+def note_scraper_result(results) -> bool:
+    """Close the day — but only when a source actually answered. `results` is
+    what `sync_all()` returns. True when the day is now closed."""
+    global _LAST_RUN_DAY
+    if not any((r or {}).get("fetched") for _, r in results):
+        return False
+    _LAST_RUN_DAY = _TRY_DAY or _local(time.time()).strftime("%Y-%m-%d")
+    return True
+
+
+def sync_all(by_user: str = "auto", force: bool = False) -> list:
     conn = connect()
     try:
         ids = [r["id"] for r in conn.execute(
@@ -802,7 +919,7 @@ def sync_all(by_user: str = "auto") -> list:
     out = []
     for cid in ids:
         try:
-            out.append((cid, sync_client(cid, by_user=by_user)))
+            out.append((cid, sync_client(cid, by_user=by_user, force=force)))
         except Exception as e:                  # rule 17: say so, keep going
             print(f"[portal] sync {cid} failed: {e}", flush=True)
     return out
@@ -812,8 +929,8 @@ def _loop():
     """Two clocks, checked every minute. The sheet is cheap and a human edits
     it all day, so it stays on the interval; the scraper walk is 1,600 remote
     posts whose counters only settle once the local day has closed, so it runs
-    at PORTAL_SYNC_AT. Neither leg may raise: this thread going down takes the
-    sync with it silently."""
+    from PORTAL_SYNC_AT and keeps trying until it lands. Neither leg may raise:
+    this thread going down takes the sync with it silently."""
     while not _STOP.wait(60):
         now = time.time()
         if _interval_due(now):
@@ -825,9 +942,14 @@ def _loop():
                 print(f"[portal] sheet sync loop error: {e}", flush=True)
         if KEY_SECRET and _daily_due(now):
             try:
-                for cid, r in sync_all():
-                    if r.get("errors"):
-                        print(f"[portal] sync {cid}: {'; '.join(r['errors'])}", flush=True)
+                forced = _force_due()
+                results = sync_all(force=forced)
+                for cid, r in results:
+                    for line in (r.get("errors") or []) + (r.get("skipped") or []):
+                        print(f"[portal] sync {cid}: {line}", flush=True)
+                if not note_scraper_result(results):
+                    print(f"[portal] scraper sync did not land (try {_TRIES}/{SYNC_MAX_TRIES}); "
+                          f"retrying in {SYNC_RETRY_MINUTES} min", flush=True)
             except Exception as e:
                 print(f"[portal] sync loop error: {e}", flush=True)
 

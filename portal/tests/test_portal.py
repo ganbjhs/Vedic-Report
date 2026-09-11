@@ -256,16 +256,31 @@ class TestPublish(unittest.TestCase):
 
 class TestScheduleClocks(unittest.TestCase):
     """The sheet and the scraper are on separate clocks. Briefly they were not,
-    which silently dropped a Google Sheet from hourly reads to one a day."""
+    which silently dropped a Google Sheet from hourly reads to one a day.
+
+    And the scraper clock ATTEMPTS; it does not decide the day happened. It
+    used to: `_daily_due` stamped the date on the way in, the Collector
+    answered "mid-refresh" the one minute a day we asked — every day, because
+    it re-reads 1,600 links continuously — and `last_ok_at` stayed NULL from
+    the day the integration shipped. Every count on every client dashboard was
+    blank for that one line."""
 
     def setUp(self):
         from webapp import portal_publish as pp
         self.pp = pp
-        self._at, self._min, self._last = pp.SYNC_AT, pp.SYNC_MINUTES, pp._LAST_RUN_DAY
+        self._saved = (pp.SYNC_AT, pp.SYNC_MINUTES, pp.SYNC_RETRY_MINUTES, pp.SYNC_MAX_TRIES,
+                       pp._LAST_RUN_DAY, pp._TRY_DAY, pp._TRIES, pp._LAST_TRY_AT)
+        self._reset()
 
     def tearDown(self):
-        self.pp.SYNC_AT, self.pp.SYNC_MINUTES = self._at, self._min
-        self.pp._LAST_RUN_DAY = self._last
+        (self.pp.SYNC_AT, self.pp.SYNC_MINUTES, self.pp.SYNC_RETRY_MINUTES, self.pp.SYNC_MAX_TRIES,
+         self.pp._LAST_RUN_DAY, self.pp._TRY_DAY, self.pp._TRIES, self.pp._LAST_TRY_AT) = self._saved
+
+    def _reset(self, at="03:30", retry=20, tries=8):
+        self.pp.SYNC_AT, self.pp.SYNC_MINUTES = at, 60
+        self.pp.SYNC_RETRY_MINUTES, self.pp.SYNC_MAX_TRIES = retry, tries
+        self.pp._LAST_RUN_DAY, self.pp._TRY_DAY = "", ""
+        self.pp._TRIES, self.pp._LAST_TRY_AT = 0, 0.0
 
     def _at_ist(self, hh, mm, day=10):
         import datetime as d
@@ -273,24 +288,53 @@ class TestScheduleClocks(unittest.TestCase):
         return d.datetime(2026, 9, day, hh, mm, tzinfo=ZoneInfo("Asia/Kolkata")).timestamp()
 
     def test_the_sheet_stays_hourly_even_when_a_daily_time_is_set(self):
-        self.pp.SYNC_AT, self.pp.SYNC_MINUTES = "03:30", 60
         hourly = [t for t in range(0, 3600 * 6, 60) if self.pp._interval_due(t)]
         self.assertEqual(len(hourly), 6)          # once an hour, regardless of SYNC_AT
 
-    def test_the_scraper_fires_once_at_the_local_time(self):
-        self.pp.SYNC_AT, self.pp._LAST_RUN_DAY = "03:30", ""
+    def test_the_scraper_fires_at_the_local_time_and_not_before(self):
         self.assertFalse(self.pp._daily_due(self._at_ist(3, 29)))
         self.assertTrue(self.pp._daily_due(self._at_ist(3, 30)))
-        self.assertFalse(self.pp._daily_due(self._at_ist(3, 31)))   # not twice
-        self.assertFalse(self.pp._daily_due(self._at_ist(20, 0)))   # nor later the same day
-        self.assertTrue(self.pp._daily_due(self._at_ist(3, 30, day=11)))   # the next day
+        self.assertFalse(self.pp._daily_due(self._at_ist(3, 31)))   # inside the retry window
+
+    def test_a_landed_walk_closes_the_day(self):
+        self.assertTrue(self.pp._daily_due(self._at_ist(3, 30)))
+        self.pp.note_scraper_result([("c1", {"fetched": 1, "posts": 40})])
+        self.assertFalse(self.pp._daily_due(self._at_ist(4, 10)))    # not twice
+        self.assertFalse(self.pp._daily_due(self._at_ist(20, 0)))    # nor later the same day
+        self.assertTrue(self.pp._daily_due(self._at_ist(3, 30, day=11)))    # the next day
+
+    def test_a_skipped_walk_does_not_close_the_day(self):
+        """THE regression. A pull the Collector turned away has not happened,
+        and must not cost the day's numbers."""
+        self.assertTrue(self.pp._daily_due(self._at_ist(3, 30)))
+        landed = self.pp.note_scraper_result([("c1", {"fetched": 0, "skipped": ["mid-refresh"]})])
+        self.assertFalse(landed)
+        self.assertFalse(self.pp._daily_due(self._at_ist(3, 45)))    # still inside the retry window
+        self.assertTrue(self.pp._daily_due(self._at_ist(3, 51)))     # 21 minutes on: try again
+        self.pp.note_scraper_result([("c1", {"fetched": 1})])
+        self.assertFalse(self.pp._daily_due(self._at_ist(5, 0)))     # landed, so done for today
+
+    def test_the_tries_are_bounded_and_the_last_one_reads_anyway(self):
+        """Eight refusals is not a reason to give up quietly, nor to ask for
+        ever. The final attempt reads mid-refresh rather than leave the
+        dashboard blank: a partly-settled count is a reading, NULL is not."""
+        t, end = self._at_ist(3, 30), self._at_ist(23, 58)
+        tries = forced = 0
+        while t <= end:                          # a whole local day, minute by minute
+            if self.pp._daily_due(t):
+                tries += 1
+                forced += 1 if self.pp._force_due() else 0
+                self.pp.note_scraper_result([("c1", {"fetched": 0})])   # refused again
+            t += 60
+        self.assertEqual(tries, self.pp.SYNC_MAX_TRIES)   # bounded, not asking for ever
+        self.assertEqual(forced, 1)                       # and exactly the last one reads anyway
+        self.assertTrue(self.pp._daily_due(self._at_ist(3, 30, day=11)))   # tomorrow starts over
 
     def test_a_restart_after_the_hour_still_catches_the_day(self):
-        self.pp.SYNC_AT, self.pp._LAST_RUN_DAY = "03:30", ""
         self.assertTrue(self.pp._daily_due(self._at_ist(9, 15)))
 
     def test_no_daily_time_means_the_old_interval(self):
-        self.pp.SYNC_AT, self.pp.SYNC_MINUTES = "", 60
+        self._reset(at="")
         self.assertEqual(self.pp._daily_due(3600), self.pp._interval_due(3600))
 
 
@@ -373,6 +417,126 @@ class TestSheetHistory(unittest.TestCase):
         ).fetchall()
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0]["views"], rows[0]["likes"]), (31000, 61000))
+
+
+class TestTheSheetDoesNotWipeTheScraper(unittest.TestCase):
+    """The second half of the same failure. The Collector walk runs once a day;
+    the sheet read runs every hour. The sheet path rewrote likes, comments,
+    shares, views, reach and impressions on every row it touched — with NULLs,
+    for a client whose typed columns are not trusted — and reset
+    `metric_source` and `raw_metrics` with them. So even a walk that DID land
+    was erased inside the hour, and the wiped row was indistinguishable from
+    one nobody had ever measured.
+
+    The capture path has had this guard since it existed (`keep_scraper`); it
+    is the same rule `_fold_scraper` applies from the other side, so neither
+    writer can undo the other."""
+
+    DAY = TODAY - _dt.timedelta(days=4)
+    X = "https://x.com/Rani/status/1888800000000000042"
+    FB = "https://www.facebook.com/reel/4242/"
+
+    def setUp(self):
+        from webapp import portal_publish as pp
+        self.pp = pp
+        self.conn = schema.connect(os.environ["PORTAL_DB"])
+        self.conn.execute("INSERT OR IGNORE INTO clients (id, slug, name, lag_days, created_at) "
+                          "VALUES ('c5','epsilon','Epsilon',2,?)", (time.time(),))
+        self.conn.execute("UPDATE clients SET trust_sheet_metrics = 0 WHERE id = 'c5'")
+        self.conn.execute("DELETE FROM post_metrics WHERE client_id='c5'")
+        self.conn.execute("DELETE FROM post_metric_days WHERE client_id='c5'")
+        self.conn.commit()
+        self.client = pp.client_get(self.conn, "c5")
+
+    def tearDown(self):
+        self.conn.close()
+
+    ROWS = [{"post_link": X, "platform": "x", "category": "National X Influencers",
+             "display_name": "Rani", "sheet_metrics": {}},
+            {"post_link": FB, "platform": "facebook", "category": "Hyper Local Pages Posting",
+             "sheet_metrics": {"like": "1,200", "views": "9,000"}}]
+
+    def _sheet(self):
+        n = self.pp._publish_sheet_rows(self.conn, self.client, {}, self.ROWS, self.DAY)
+        self.conn.commit()
+        return n
+
+    def _collector(self):
+        posts = scraper.normalize_many([{
+            "platform": "x", "tweet_id": "1888800000000000042", "url": self.X,
+            "day": util.day_str(self.DAY), "status": "ok", "group": "National X Influencers",
+            "like_count": 812, "reply_count": 9, "retweet_count": 31, "view_count": 64300,
+            "quote_count": 4, "bookmark_count": 17, "last_refresh_ms": 1789053481000,
+            "text": "the caption the sheet never had",
+        }])
+        r = self.pp._fold_scraper(self.conn, self.client, {"signature_name": "collector"}, posts, 2,
+                                  TODAY - _dt.timedelta(days=30), TODAY,
+                                  pull_day=util.day_str(TODAY))
+        self.conn.commit()
+        return r
+
+    def _x(self):
+        return self.conn.execute("SELECT * FROM post_metrics WHERE client_id='c5' AND post_url_norm=?",
+                                 (util.norm_url(self.X),)).fetchone()
+
+    def test_the_hourly_sheet_read_leaves_the_scraped_numbers_alone(self):
+        self._sheet()
+        self.assertIsNone(self._x()["views"])            # nothing measured yet
+        self.assertEqual(self._collector()[0], 1)        # the walk lands
+        self.assertEqual(self._x()["views"], 64300)
+        for _ in range(3):                               # three more hours of sheet reads
+            self._sheet()
+        r = self._x()
+        self.assertEqual((r["likes"], r["comments"], r["shares"], r["views"]), (812, 9, 31, 64300))
+        self.assertEqual((r["quotes"], r["bookmarks"]), (4, 17))
+        self.assertEqual(r["metric_source"], "scraper")
+        self.assertEqual(r["caption"], "the caption the sheet never had")
+
+    def test_the_sheet_still_owns_the_platforms_only_it_can_measure(self):
+        """Facebook and Instagram counts exist nowhere but the sheet. Guarding
+        the scraper's rows must not stop the sheet writing its own."""
+        self.conn.execute("UPDATE clients SET trust_sheet_metrics = 1 WHERE id = 'c5'")
+        self.conn.commit()
+        client = self.pp.client_get(self.conn, "c5")
+        self.pp._publish_sheet_rows(self.conn, client, {}, self.ROWS, self.DAY)
+        self.conn.commit()
+        fb = self.conn.execute("SELECT likes, views, metric_source FROM post_metrics "
+                               "WHERE client_id='c5' AND platform='facebook'").fetchone()
+        self.assertEqual((fb["likes"], fb["views"], fb["metric_source"]), (1200, 9000, "sheet"))
+
+    def test_the_scrapers_copy_survives_in_raw_metrics(self):
+        """`raw_metrics` is where the measurement that lost is kept, so a typo
+        can be caught by comparing the two. Rebuilding it from one run threw the
+        other side away."""
+        self._sheet()
+        self._collector()
+        self._sheet()
+        raw = json.loads(self._x()["raw_metrics"])
+        self.assertIn("scraper", raw)
+        self.assertEqual(raw["scraper"]["views"], 64300)
+        self.assertIn("sheet_metrics", raw)
+
+    def test_a_post_the_collector_reports_gone_is_not_resurrected(self):
+        self._sheet()
+        posts = scraper.normalize_many([{
+            "platform": "x", "tweet_id": "1888800000000000042", "url": self.X,
+            "day": util.day_str(self.DAY), "status": "removed", "status_note": "taken down"}])
+        self.pp._fold_scraper(self.conn, self.client, {"signature_name": "collector"}, posts, 2,
+                              TODAY - _dt.timedelta(days=30), TODAY, pull_day=util.day_str(TODAY))
+        self.conn.commit()
+        self._sheet()
+        self.assertEqual(self._x()["status"], "skipped")
+
+    def test_the_history_does_not_contradict_the_row_it_belongs_to(self):
+        """One pull day, one row. The sheet must not write its own blank over
+        the day the Collector already recorded."""
+        self._sheet()
+        self._collector()
+        self._sheet()
+        got = self.conn.execute("SELECT day, views, metric_source FROM post_metric_days "
+                                "WHERE client_id='c5' AND platform='x'").fetchall()
+        self.assertEqual(len(got), 1)
+        self.assertEqual((got[0]["views"], got[0]["metric_source"]), (64300, "scraper"))
 
 
 class TestSchedulerStarts(unittest.TestCase):

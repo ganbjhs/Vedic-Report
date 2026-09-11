@@ -478,8 +478,11 @@ async def sync_now(cid: str, request: Request, user: str = Depends(auth.require_
     data = await _json_body(request)
     _csrf(request, data)
     import asyncio
+    # A person clicking "Sync now" is not asking us to come back later: read
+    # even if the Collector is part-way through its own refresh.
     r = await asyncio.to_thread(portal_publish.sync_client, cid, str(data.get("from") or ""),
-                                str(data.get("to") or ""), user, str(data.get("source_id") or ""))
+                                str(data.get("to") or ""), user, str(data.get("source_id") or ""),
+                                True)
     conn = portal_publish.connect()
     try:
         return {"ok": not r.get("errors"), "result": r, "client": _public_client(conn, _client(conn, cid))}

@@ -277,6 +277,16 @@ PORTAL_SYNC_MINUTES = max(5, _int("PORTAL_SYNC_MINUTES", 60))
 # PORTAL_SYNC_MINUTES minutes. The interval form fires on a fixed minute of the
 # Unix epoch in UTC, which cannot express "after the Indian day has closed".
 PORTAL_SYNC_AT = os.environ.get("PORTAL_SYNC_AT", "").strip()
+# PORTAL_SYNC_AT names the time the scraper walk STARTS trying, not the one
+# minute it gets. The Collector turns us away while it is part-way through
+# re-reading its watchlist, and a Collector walking 1,600 links round the
+# clock is rarely idle at any one named minute — so a single attempt a day
+# meant, in practice, no numbers at all. We come back every RETRY_MINUTES
+# until a source actually answers, at most MAX_TRIES times; the last of
+# those tries reads anyway, because a partly-settled count is a reading and
+# an empty dashboard is not.
+PORTAL_SYNC_RETRY_MINUTES = max(1, _int("PORTAL_SYNC_RETRY_MINUTES", 20))
+PORTAL_SYNC_MAX_TRIES = max(1, _int("PORTAL_SYNC_MAX_TRIES", 8))
 PORTAL_SYNC_DAYS_BACK = max(1, _int("PORTAL_SYNC_DAYS_BACK", 4))
 
 # Login rate limiting

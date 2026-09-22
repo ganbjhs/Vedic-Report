@@ -62,10 +62,21 @@ _JS_EXPAND = r"""
 () => {
   // WhatsApp truncates long messages and shows "Read more"; VERY long messages
   // expand in ~3000-char chunks, so this must be called repeatedly until it returns 0.
+  //
+  // Only "Read more" INSIDE a message bubble is clicked. A "Read more"/"Learn
+  // more" link in a system notice (the safety banner shown when someone joins
+  // a group, "security code changed", ...) opens a side panel instead of
+  // expanding, never disappears, and used to be clicked 25 times per poll —
+  // ~11 s of every poll, with panels flying open. Each element is clicked at
+  // most once, whatever it does.
   let n = 0;
-  for (const el of document.querySelectorAll('#main [role="button"], #main span, #main div')) {
-    const t = (el.textContent || '').trim();
-    if ((t === 'Read more' || t === 'Show more') && el.children.length === 0) { el.click(); n++; }
+  for (const row of document.querySelectorAll('#main [role="row"], #main div.message-in, #main div.message-out')) {
+    if (!row.querySelector('[data-pre-plain-text]')) continue;          // system row: leave alone
+    for (const el of row.querySelectorAll('[role="button"], span, div')) {
+      if (el.children.length !== 0 || el.dataset.waExpanded) continue;
+      const t = (el.textContent || '').trim();
+      if (t === 'Read more' || t === 'Show more') { el.dataset.waExpanded = '1'; el.click(); n++; }
+    }
   }
   return n;
 }
@@ -142,7 +153,7 @@ def read_visible(s: WASession, expand: bool = True) -> list[dict]:
     """Messages currently rendered in the open chat (no scrolling)."""
     if expand:
         try:
-            for _ in range(25):                     # keep clicking until nothing is left to expand
+            for _ in range(12):                     # keep clicking until nothing is left to expand
                 if not s.page.evaluate(_JS_EXPAND):
                     break
                 time.sleep(0.45)

@@ -26,6 +26,15 @@ Talk to it in that group, from your phone:
 
 All bot replies start with 🔹 so they are easy to tell apart from your lists. Nothing else is
 printed anywhere — the group *is* the log.
+
+Who may drive it: a job belongs to whoever sent /start. Until that job ends
+(/run, /cancel, or 30 min of silence) other people's messages in the group are
+ignored — so adding someone to the group can no longer turn their "hi" into a
+list. /status and /help work for everyone. (config.json → bot.lock_owner)
+
+Every new message is handled, in order. A command that arrives while the bot
+is still typing its previous reply is not dropped; a reply that fails is
+retried; after repeated failures the page is reloaded and the group re-opened.
 """
 from __future__ import annotations
 
@@ -63,9 +72,14 @@ def is_link_only(text: str) -> bool:
 
 class Bot:
     def __init__(self, s: WASession, group: str, delay: float = 1.5, poll: float = 2.0, target: str | None = None,
-                 ignore_own: bool = True):
+                 ignore_own: bool = True, lock_owner: bool = True, job_ttl: float = 1800.0,
+                 max_errors: int = 4, burst_limit: int = 25):
         self.s = s
         self.ignore_own = ignore_own   # True when the bot runs on its own number: never react to what it sends
+        self.lock_owner = lock_owner   # a job belongs to whoever sent /start; others are ignored until it ends
+        self.job_ttl = job_ttl         # seconds of silence after which an open job is dropped
+        self.max_errors = max_errors   # consecutive failed polls before the page is reloaded
+        self.burst_limit = burst_limit # more "new" messages than this in one poll = a re-render, not commands
         self.group = group
         self.delay = delay
         self.poll = poll
@@ -73,18 +87,40 @@ class Bot:
         self.state = "idle"          # idle | mode | collect
         self.mode = None             # 1 | 2
         self.lists: list[dict] = []  # [{"messages": [...], "link": str|None}]
-        self.seen: set[str] = set()
+        self.owner: str | None = None   # sender who ran /start (display name or number as WhatsApp shows it)
+        self.last_cmd_at = time.time()
+        self.seen: dict[str, float] = {}   # message key -> when first seen (bounded, see _trim_seen)
+        self.retry: dict[str, int] = {}    # message key -> failed attempts
+        self.errors = 0                    # consecutive failed polls
+        self.polls = 0
 
     # ---------------------------------------------------------------- io
     def say(self, text: str):
+        """Send a bot reply. One retry after clearing overlays: a tooltip over the
+        composer used to cost a 15 s timeout AND the command that triggered it."""
         print(f"[bot] -> {text[:70]!r}", flush=True)
-        send_text(self.s, BOT + text, delay_after=0.6)
+        try:
+            send_text(self.s, BOT + text, delay_after=0.6)
+        except Exception as e:  # noqa: BLE001
+            print(f"[bot] send failed ({type(e).__name__}: {str(e).splitlines()[0][:80]}) — retrying once", flush=True)
+            try:
+                self.s.dismiss_dialogs()
+                self.s.clear_overlays()
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(1.0)
+            send_text(self.s, BOT + text, delay_after=0.6)
+
+    @staticmethod
+    def _norm(name: str | None) -> str:
+        """Letters+digits only, lower-case. The header's innerText drops emoji
+        (they are <img alt>), so 'Bot 🤖' must still match 'Bot'."""
+        return re.sub(r"[^0-9a-z]+", "", (name or "").lower())
 
     def in_group(self):
-        shown = self.s.current_chat().strip().lower()
-        if shown == self.group.strip().lower():
-            return
-        if shown and self.group.strip().lower() in shown:
+        shown = self.s.current_chat().strip()
+        a, b = self._norm(shown), self._norm(self.group)
+        if a and b and (a == b or a in b or b in a):
             return
         if not shown and self.seen:
             # header not readable right now but we were in the group before -> don't thrash
@@ -93,6 +129,7 @@ class Bot:
         last = None
         for attempt in range(3):
             try:
+                self.s.dismiss_dialogs()
                 open_chat(self.s, self.group)
                 return
             except Exception as e:  # noqa: BLE001
@@ -101,9 +138,40 @@ class Bot:
         raise RuntimeError(f"Could not open the group '{self.group}'. Check the exact name (as shown in "
                            f"WhatsApp) and make sure it is in your recent chats. Details: {last}")
 
+    # ---------------------------------------------------------------- message identity
+    @staticmethod
+    def keys_for(msgs: list[dict]) -> list[str]:
+        """One stable key per visible message.
+
+        WhatsApp's message id when the DOM exposes one. Otherwise time + sender +
+        text, plus an occurrence index, so two identical commands in the same
+        minute ("/run", "/run") are two messages, not one already-seen one."""
+        counts: dict[str, int] = {}
+        out = []
+        for m in msgs:
+            if m.get("id"):
+                out.append("id:" + m["id"])
+                continue
+            base = f"noid:{m.get('time')}:{m.get('sender')}:{(m.get('text') or '')[:60]}"
+            n = counts.get(base, 0)
+            counts[base] = n + 1
+            out.append(f"{base}#{n}")
+        return out
+
+    def _mark_seen(self, keys) -> None:
+        now = time.time()
+        for k in keys:
+            self.seen.setdefault(k, now)
+        self._trim_seen()
+
+    def _trim_seen(self, keep: int = 3000) -> None:
+        if len(self.seen) > keep:
+            for k in sorted(self.seen, key=self.seen.get)[: len(self.seen) - keep]:
+                self.seen.pop(k, None)
+                self.retry.pop(k, None)
+
     def snapshot_seen(self):
-        for m in read_visible(self.s, expand=False):
-            self.seen.add(m["id"] or f"noid:{m['time']}:{(m['text'] or '')[:40]}")
+        self._mark_seen(self.keys_for(read_visible(self.s, expand=False)))
 
     # ---------------------------------------------------------------- loop
     def run_forever(self):
@@ -112,41 +180,104 @@ class Bot:
         self.say("Online. Send /start to begin, /help for commands.")
         self.snapshot_seen()
         print(f"Bot listening in '{self.group}' (Ctrl+C to stop)", flush=True)
-        n = 0
         while True:
             try:
-                self.in_group()
-                msgs = read_visible(self.s)
-                n += 1
-                if n % 30 == 0:
-                    print(f"[bot] alive, {len(msgs)} msgs visible, state={self.state}", flush=True)
-                # Only the LAST message in the chat counts as a command; everything
-                # older is remembered as seen so it is never replayed.
-                new = []
-                for m in msgs:
-                    mid = m["id"] or f"noid:{m['time']}:{(m['text'] or '')[:40]}"
-                    if mid in self.seen:
-                        continue
-                    self.seen.add(mid)
-                    new.append(m)
-                if new:
-                    m = new[-1]
-                    text = (m["text"] or "").strip()
-                    if self.ignore_own and m["outgoing"]:
-                        text = ""            # our own message (or the account owner's) — never a command
-                    if text and not text.startswith(BOT.strip()):
-                        print(f"[bot] <- {text[:70]!r} from {m['sender']!r}", flush=True)
-                        self.handle(text)
+                self.poll_once()
+                self.errors = 0
             except KeyboardInterrupt:
                 raise
             except Exception as e:  # noqa: BLE001
-                print(f"[bot] error: {type(e).__name__}: {e}", flush=True)
-                time.sleep(3)
+                self.errors += 1
+                print(f"[bot] error ({self.errors}/{self.max_errors}): {type(e).__name__}: {e}", flush=True)
+                if self.errors >= self.max_errors:
+                    self.recover()
+                time.sleep(min(3 * self.errors, 15))
             time.sleep(self.poll)
 
+    def poll_once(self):
+        self.in_group()
+        msgs = read_visible(self.s)
+        keys = self.keys_for(msgs)
+        self.polls += 1
+        if self.polls % 30 == 0:
+            print(f"[bot] alive, {len(msgs)} msgs visible, state={self.state}, owner={self.owner!r}", flush=True)
+        self.expire_job()
+        new = [(k, m) for k, m in zip(keys, msgs) if k not in self.seen]
+        if not new:
+            return
+        if len(new) > self.burst_limit:
+            # A reload or re-render shows the whole window as "new". Commands
+            # from before are history; only the tail could be live, and there
+            # is no way to tell — so log it and treat everything as seen.
+            print(f"[bot] {len(new)} unseen messages at once — treating as history, not commands", flush=True)
+            self._mark_seen(k for k, _ in new)
+            return
+        for i, (k, m) in enumerate(new):
+            self.seen[k] = time.time()
+            text = (m.get("text") or "").strip()
+            why = self.skip_reason(m, text)
+            if why:
+                if text:
+                    print(f"[bot] ignored ({why}): {text[:50]!r} from {m.get('sender')!r}", flush=True)
+                continue
+            print(f"[bot] <- {text[:70]!r} from {m.get('sender')!r}", flush=True)
+            try:
+                self.handle(text, m)
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:  # noqa: BLE001
+                # Do not lose the command: forget this and every later message in
+                # the batch so the next poll retries them in order (twice, max).
+                n = self.retry.get(k, 0) + 1
+                self.retry[k] = n
+                if n <= 2:
+                    for kk, _ in new[i:]:
+                        self.seen.pop(kk, None)
+                    print(f"[bot] handling failed ({type(e).__name__}); retry {n}/2 next poll", flush=True)
+                else:
+                    print(f"[bot] giving up on {text[:50]!r} after {n - 1} retries", flush=True)
+                raise
+        self._trim_seen()
+
+    def skip_reason(self, m: dict, text: str) -> str | None:
+        if not text:
+            return "no text"                      # media-only or system row
+        if self.ignore_own and m.get("outgoing"):
+            return "own message"
+        if text.startswith(BOT.strip()):
+            return "bot reply"
+        if self.lock_owner and self.owner and self.state != "idle":
+            sender = m.get("sender") or ""
+            low = text.lower()
+            if sender and self._norm(sender) != self._norm(self.owner) \
+                    and not low.startswith(("/status", "/help")):
+                return f"job belongs to {self.owner!r}"
+        return None
+
+    def expire_job(self):
+        if self.state != "idle" and self.job_ttl and time.time() - self.last_cmd_at > self.job_ttl:
+            who = self.owner or "someone"
+            self.reset()
+            self.say(f"Job by {who} expired after {int(self.job_ttl // 60)} min of silence. Send /start to begin again.")
+
+    def recover(self):
+        """Self-heal after repeated failed polls: reload WhatsApp Web and re-open the group."""
+        print("[bot] too many errors in a row — reloading WhatsApp Web", flush=True)
+        self.errors = 0
+        try:
+            self.s.page.reload(wait_until="domcontentloaded")
+            self.s.wait_logged_in(timeout_s=120)
+            self.s.dismiss_dialogs()
+            open_chat(self.s, self.group)
+            self.snapshot_seen()
+            print("[bot] recovered", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[bot] recovery failed: {type(e).__name__}: {e}", flush=True)
+
     # ---------------------------------------------------------------- commands
-    def handle(self, text: str):
+    def handle(self, text: str, m: dict | None = None):
         low = text.lower()
+        self.last_cmd_at = time.time()
         if low.startswith("/help"):
             return self.say("/start – new job\n1 or 2 – messages only / messages + link\n"
                             "then send lists (blank line between messages; in mode 2 send the link after each list)\n"
@@ -165,6 +296,7 @@ class Bot:
         if low.startswith("/start"):
             self.reset()
             self.state = "mode"
+            self.owner = (m or {}).get("sender") or None
             return self.say("New job. Reply 1 for messages only, 2 for messages + link.")
         if low.startswith("/run"):
             if self.state != "collect" or not self.lists:
@@ -198,10 +330,11 @@ class Bot:
     def status_text(self) -> str:
         if self.state == "idle":
             return "Idle. Send /start to begin."
+        who = f" (job by {self.owner})" if self.owner else ""
         if self.state == "mode":
-            return "Waiting for 1 or 2."
+            return f"Waiting for 1 or 2{who}."
         mode = "messages + link" if self.mode == 2 else "messages only"
-        parts = [f"Mode: {mode}. {len(self.lists)} list{'s' if len(self.lists) != 1 else ''} ready, output → '{self.target}'."]
+        parts = [f"Mode: {mode}{who}. {len(self.lists)} list{'s' if len(self.lists) != 1 else ''} ready, output → '{self.target}'."]
         for i, l in enumerate(self.lists, 1):
             n = len(l['messages'])
             extra = "" if self.mode != 2 else (" · link ✓" if l["link"] else " · link missing")
@@ -210,13 +343,13 @@ class Bot:
         return "\n".join(parts)
 
     def reset(self):
-        self.state, self.mode, self.lists = "idle", None, []
+        self.state, self.mode, self.lists, self.owner = "idle", None, [], None
 
     # ---------------------------------------------------------------- execution
     def execute(self):
         total = sum(len(l["messages"]) for l in self.lists)
         self.say(f"Sending {total} message{'s' if total != 1 else ''} in {len(self.lists)} list{'s' if len(self.lists) != 1 else ''}…")
-        if self.target.lower() != self.group.lower():
+        if self._norm(self.target) != self._norm(self.group):
             open_chat(self.s, self.target)
         try:
             for i, l in enumerate(self.lists, 1):
@@ -225,7 +358,7 @@ class Bot:
                     send_text(self.s, full, delay_after=self.delay)
                 send_text(self.s, str(i), delay_after=self.delay)   # numbering after each list
         finally:
-            if self.target.lower() != self.group.lower():
+            if self._norm(self.target) != self._norm(self.group):
                 open_chat(self.s, self.group)
         nlists = len(self.lists)
         self.reset()
@@ -260,7 +393,8 @@ def main():
                          "(scan QR if asked), then try headless again.")
             raise
         bot = Bot(s, group, delay=delay, poll=bc.get("poll", 2.0), target=bc.get("target"),
-                  ignore_own=bc.get("ignore_own", True))
+                  ignore_own=bc.get("ignore_own", True), lock_owner=bc.get("lock_owner", True),
+                  job_ttl=float(bc.get("job_ttl_seconds", 1800)))
         try:
             bot.run_forever()
         except KeyboardInterrupt:

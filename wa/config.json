@@ -44,12 +44,14 @@
     "csv_path": "links.csv"
   },
   "bot": {
-    "_help": "Command bot (python bot.py). group = WhatsApp group where you type /start … . headless=true = no window. ignore_own=true when the bot runs on ITS OWN number (recommended): it never treats its own/outgoing messages as commands. Set false only if bot + commands are the same number.",
+    "_help": "Command bot (python bot.py). group = WhatsApp group where you type /start … . headless=true = no window. ignore_own=true when the bot runs on ITS OWN number (recommended): it never treats its own/outgoing messages as commands. Set false only if bot + commands are the same number. lock_owner=true: a job belongs to whoever sent /start — other people in the group are ignored until /run or /cancel (anyone may still use /status and /help). job_ttl_seconds: an open job is dropped after this much silence.",
     "group": "Testing",
     "headless": true,
     "delay": 1.5,
     "poll": 2.0,
     "target": null,
-    "ignore_own": true
+    "ignore_own": true,
+    "lock_owner": true,
+    "job_ttl_seconds": 1800
   }
 }

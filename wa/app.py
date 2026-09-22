@@ -81,7 +81,8 @@ class Worker(threading.Thread):
     def _session(self) -> WASession:
         cfg = load_json(CONFIG)
         if getattr(Api, "_bot", None) is not None and Api._bot.poll() is None:
-            raise RuntimeError("The bot is running and owns the WhatsApp session. Stop the bot first (Bot tab).")
+            raise RuntimeError("The bot is running and owns the WhatsApp session — one WhatsApp login can only "
+                               "be open in one place. Stop the bot (Bot tab) to use Send / Collect / Advanced.")
         if self.session is None:
             self.emit("Launching WhatsApp Web browser…")
             self.session = WASession(cfg.get("profile_dir", "./wa_profile"), headless=cfg.get("headless", False))
@@ -446,15 +447,31 @@ class Api:
     # ---- command bot (runs as a separate quiet process so it never blocks the app)
     _bot = None
     _bot_lines: list[str] = []
+    _bot_last_at: float = 0.0      # when the bot last printed anything (heartbeat for the UI)
+    _bot_started_at: float = 0.0
+    _bot_exit: int | None = None   # exit code if it died on its own
 
     def bot_status(self):
         alive = self._bot is not None and self._bot.poll() is None
-        return {"running": alive, "lines": self._bot_lines[-30:], "group": load_json(CONFIG).get("bot", {}).get("group", "")}
+        if self._bot is not None and not alive and Api._bot_exit is None:
+            Api._bot_exit = self._bot.returncode
+        now = time.time()
+        return {"running": alive, "lines": self._bot_lines[-30:],
+                "group": load_json(CONFIG).get("bot", {}).get("group", ""),
+                "last_activity_s": int(now - self._bot_last_at) if self._bot_last_at else None,
+                "uptime_s": int(now - self._bot_started_at) if (alive and self._bot_started_at) else None,
+                "exit_code": None if alive else Api._bot_exit,
+                "worker_busy": self.w.status == "running"}
 
     def bot_start(self, group, headed=False):
         import subprocess, threading as _th
         if self._bot is not None and self._bot.poll() is None:
             return {"running": True}
+        if self.w.status == "running":
+            # The worker holds the Chromium profile mid-job. Starting the bot now
+            # would wait 10 s for a close that cannot happen and then launch a
+            # second Chromium on a locked profile.
+            raise RuntimeError(f"A job ('{self.w.current}') is still running — press Stop, then start the bot.")
         cfg = load_json(CONFIG)
         cfg.setdefault("bot", {})["group"] = group
         save_json(CONFIG, cfg)
@@ -470,6 +487,8 @@ class Api:
         else:
             cmd = [sys.executable, str(APP_DIR / "bot.py"), "--group", group] + (["--headed"] if headed else [])
         self._bot_lines.clear()
+        Api._bot_exit = None
+        Api._bot_started_at = Api._bot_last_at = time.time()
         # assign on the CLASS: Worker._session() guards on Api._bot, and an
         # instance attribute here would shadow it and disable that guard.
         Api._bot = subprocess.Popen(cmd, cwd=str(BASE), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -477,6 +496,7 @@ class Api:
         def pump(proc=Api._bot):
             for line in proc.stdout:
                 self._bot_lines.append(line.rstrip())
+                Api._bot_last_at = time.time()
                 if len(self._bot_lines) > 500:
                     del self._bot_lines[:100]
         _th.Thread(target=pump, daemon=True).start()

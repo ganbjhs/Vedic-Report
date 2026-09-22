@@ -75,6 +75,10 @@ function App() {
   }, []);
 
   const busy = st.status === "running";
+  // One WhatsApp login can only be open in one place. While the bot process
+  // holds it, every Send / Collect / Advanced action would fail with "The bot
+  // is running and owns the WhatsApp session" — so lock those pages instead.
+  const locked = bot.running;
   const pages = { send: SendPage, collect: CollectPage, bot: BotPage, adv: AdvancedPage };
   const Page = pages[page];
   return (
@@ -99,7 +103,10 @@ function App() {
         </div>
       </aside>
       <main className="main">
-        <Page chat={chat} st={st} bot={bot} done={done} busy={busy} />
+        {locked && page !== "bot" && <div className="banner warn" style={{ margin: "18px 24px 0" }}>
+          The bot is running and owns the WhatsApp session, so this page is paused. <a href="#" onClick={(e) => { e.preventDefault(); setPage("bot"); }}>Stop the bot</a> to use it.
+        </div>}
+        <Page chat={chat} st={st} bot={bot} done={done} busy={busy || locked} locked={locked} />
       </main>
       <LogDrawer log={log} onClear={() => setLog([])} />
       <QrPanel />
@@ -280,6 +287,9 @@ function BotPage({ bot }) {
   const start = async () => { if (!group.trim()) return toast("Type the control group name"); await safe("bot_start", group.trim(), headed); toast("Bot starting…"); };
   const stop = async () => { await safe("bot_stop"); toast("Bot stopped"); };
   const err = bot.lines.some((l) => /Error|Traceback/.test(l));
+  const died = !bot.running && bot.exit_code != null && bot.exit_code !== 0 && bot.exit_code !== -15;
+  const quiet = bot.running && bot.last_activity_s != null && bot.last_activity_s > 180;
+  const fmt = (sec) => sec == null ? "" : sec < 60 ? `${sec}s` : sec < 3600 ? `${Math.floor(sec / 60)}m` : `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
   return (
     <div className="page">
       <div><h1>Bot — control it from your phone</h1><p className="sub">Runs quietly in the background and answers inside a WhatsApp group. No window, no QR again.</p></div>
@@ -290,8 +300,14 @@ function BotPage({ bot }) {
           {!bot.running ? <button className="btn p lg" style={{ alignSelf: "flex-end" }} onClick={start}>Start bot</button>
             : <button className="btn d lg" style={{ alignSelf: "flex-end" }} onClick={stop}>Stop bot</button>}
         </div>
-        <div className={"banner " + (bot.running ? (err ? "err" : "") : "warn")}>
-          {bot.running ? (err ? "Bot hit an error — see details below." : <>Bot is running. Open <b>{group}</b> on your phone and send <code>/start</code>.</>) : "Bot is stopped."}
+        {!bot.running && bot.worker_busy && <div className="hint">A job is running on the other tabs — press Stop in the sidebar before starting the bot.</div>}
+        <div className={"banner " + (bot.running ? (err ? "err" : quiet ? "warn" : "") : died ? "err" : "warn")}>
+          {bot.running
+            ? (quiet ? <>Bot is running but has printed nothing for {fmt(bot.last_activity_s)} — if it is not answering, stop and start it again.</>
+              : err ? "Bot hit an error — see details below."
+              : <>Bot is running{bot.uptime_s != null && <> for {fmt(bot.uptime_s)}</>}. Open <b>{group}</b> on your phone and send <code>/start</code>.</>)
+            : died ? <>Bot stopped on its own (exit code {bot.exit_code}) — see details below, then start it again.</>
+            : "Bot is stopped."}
         </div>
         <div className="row"><button className="btn sm" onClick={() => setShowLog(!showLog)}>{showLog ? "hide" : "show"} details</button>
           {bot.lines.length > 0 && <button className="btn sm" onClick={() => { navigator.clipboard.writeText(bot.lines.join("\n")); toast("copied"); }}>copy details</button>}</div>
@@ -312,21 +328,21 @@ function BotPage({ bot }) {
 }
 
 // ---------------------------------------------------------------- Advanced
-function AdvancedPage({ done }) {
+function AdvancedPage({ done, locked }) {
   const [tab, setTab] = useState("recipes");
   return (
     <div className="page">
       <div><h1>Advanced</h1><p className="sub">Recipes, raw JSON, debugging and configuration.</p></div>
       <div className="tabs">{[["recipes", "Recipes"], ["edit", "Edit JSON"], ["tools", "Tools / debug"], ["config", "Config"]].map(([k, t]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{t}</button>)}</div>
-      {tab === "recipes" && <Recipes done={done} />}
+      {tab === "recipes" && <Recipes done={done} locked={locked} />}
       {tab === "edit" && <EditTask />}
-      {tab === "tools" && <Tools done={done} />}
+      {tab === "tools" && <Tools done={done} locked={locked} />}
       {tab === "config" && <ConfigEditor />}
     </div>
   );
 }
 
-function Recipes({ done }) {
+function Recipes({ done, locked }) {
   const [tasks, setTasks] = useState([]); const [sel, setSel] = useState(null); const [vars, setVars] = useState({});
   const load = () => safe("list_tasks").then((t) => { setTasks(t); if (!sel && t.length) pick(t[0].name); });
   const pick = async (n) => { setSel(n); const t = await safe("get_task", n); setVars(Object.fromEntries(Object.entries(t.vars || {}).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]))); };
@@ -338,7 +354,7 @@ function Recipes({ done }) {
       {sel && <>
         <div className="hint">{tasks.find((t) => t.name === sel)?.description}</div>
         {Object.keys(vars).length ? <div className="split">{Object.entries(vars).map(([k, v]) => <label key={k} className="f mono">{k}<input className="mono" value={v} onChange={(e) => setVars({ ...vars, [k]: e.target.value })} /></label>)}</div> : <div className="hint">no vars</div>}
-        <div className="row"><button className="btn p" onClick={run}>▶ Run</button><button className="btn" onClick={load}>↻ Reload</button></div>
+        <div className="row"><button className="btn p" onClick={run} disabled={locked}>▶ Run</button><button className="btn" onClick={load}>↻ Reload</button></div>
       </>}
     </div>
   );
@@ -361,14 +377,14 @@ function EditTask() {
   );
 }
 
-function Tools({ done }) {
+function Tools({ done, locked }) {
   const [out, setOut] = useState(""); const pending = useRef(false); const [keep, setKeep] = useState(true);
   useEffect(() => { if (!pending.current) return; pending.current = false; api("result").then((r) => { if (!r?.selectors) return; let s = ""; for (const [k, v] of Object.entries(r.selectors)) { const ok = v.filter((x) => x.count > 0); s += `${k.padEnd(12)} ${ok.length ? "OK   " + ok.map((x) => x.css + " ×" + x.count).join(" | ") : "MISS"}\n`; } s += "\nEDITORS:\n" + r.editors.map((e) => JSON.stringify(e)).join("\n"); setOut(s); }); }, [done]);
   return (
     <div className="card">
-      <div className="row"><button className="btn" onClick={() => safe("login")}>Open / re-login WhatsApp</button><button className="btn" onClick={() => safe("close_browser")}>Close WhatsApp window</button>
+      <div className="row"><button className="btn" onClick={() => safe("login")} disabled={locked}>Open / re-login WhatsApp</button><button className="btn" onClick={() => safe("close_browser")}>Close WhatsApp window</button>
         <label className="check"><input type="checkbox" checked={keep} onChange={(e) => { setKeep(e.target.checked); safe("set_keep_browser", e.target.checked); }} />keep window open between tasks</label></div>
-      <div className="row"><button className="btn" onClick={() => { pending.current = true; safe("debug", null); toast("debug queued"); }}>Debug selectors</button><span className="hint">If something can't be found on the page, run this and send the output to Claude.</span>
+      <div className="row"><button className="btn" onClick={() => { pending.current = true; safe("debug", null); toast("debug queued"); }} disabled={locked}>Debug selectors</button><span className="hint">If something can't be found on the page, run this and send the output to Claude.</span>
         {out && <button className="btn sm" onClick={() => { navigator.clipboard.writeText(out); toast("copied"); }}>copy</button>}</div>
       {out && <pre className="mono" style={{ margin: 0, maxHeight: 320, overflow: "auto", background: "var(--surface2)", padding: 10, borderRadius: 8 }}>{out}</pre>}
     </div>

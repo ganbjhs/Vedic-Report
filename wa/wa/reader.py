@@ -2,7 +2,8 @@
 Read message history from the currently open chat.
 
 Each message is returned as a dict:
-  {id, sender, phone, time (datetime|None), text, links[list], outgoing(bool)}
+  {id, sender, phone, time (datetime|None), text, links[list], outgoing(bool),
+   truncated(bool) — WhatsApp still shows "Read more" on it, i.e. text is incomplete}
 """
 from __future__ import annotations
 
@@ -42,6 +43,9 @@ _JS_EXTRACT = r"""
     if (pre) { const c = pre.querySelector('.selectable-text'); text = textOf(c || pre); }
     if (!text) { const c = r.querySelector('.selectable-text, .copyable-text'); text = c ? textOf(c) : ''; }
     const links = Array.from(r.querySelectorAll('a[href]')).map(a => a.href).filter(h => /^https?:/.test(h));
+    // still cut by WhatsApp? (a "Read more" leaf left in the bubble) — the bot waits for it
+    const truncated = !!pre && Array.from(r.querySelectorAll('[role="button"], span')).some(
+      e => e.children.length === 0 && /^(Read more|Show more)$/.test((e.textContent || '').trim()));
     let outgoing = !!r.querySelector('.message-out') || r.classList.contains('message-out');
     if (!outgoing && !r.querySelector('.message-in') && !r.classList.contains('message-in')) {
       const labels = Array.from(r.querySelectorAll('[aria-label]')).map(e => (e.getAttribute('aria-label') || '').trim().toLowerCase());
@@ -52,7 +56,7 @@ _JS_EXTRACT = r"""
                    outgoing = (rb.right - bb.right) < (bb.left - rb.left); }
       }
     }
-    out.push({id, pre: preText, nameAria: '', text, links, outgoing});
+    out.push({id, pre: preText, nameAria: '', text, links, outgoing, truncated});
   }
   return out;
 }
@@ -67,15 +71,24 @@ _JS_EXPAND = r"""
   // more" link in a system notice (the safety banner shown when someone joins
   // a group, "security code changed", ...) opens a side panel instead of
   // expanding, never disappears, and used to be clicked 25 times per poll —
-  // ~11 s of every poll, with panels flying open. Each element is clicked at
-  // most once, whatever it does.
+  // ~11 s of every poll, with panels flying open.
+  //
+  // Chunking: WhatsApp may keep the SAME button node between chunks, so a
+  // "clicked once" flag cut long lists at ~3000 chars. Instead remember the
+  // bubble's text length at the click: if the text grew, the click expanded
+  // something and the button may be clicked again; if it did not, the button
+  // is a link, not an expander, and is left alone from then on.
   let n = 0;
   for (const row of document.querySelectorAll('#main [role="row"], #main div.message-in, #main div.message-out')) {
-    if (!row.querySelector('[data-pre-plain-text]')) continue;          // system row: leave alone
+    const bubble = row.querySelector('[data-pre-plain-text]');
+    if (!bubble) continue;                                              // system row: leave alone
+    const len = String((bubble.textContent || '').length);
     for (const el of row.querySelectorAll('[role="button"], span, div')) {
-      if (el.children.length !== 0 || el.dataset.waExpanded) continue;
+      if (el.children.length !== 0) continue;
       const t = (el.textContent || '').trim();
-      if (t === 'Read more' || t === 'Show more') { el.dataset.waExpanded = '1'; el.click(); n++; }
+      if (t !== 'Read more' && t !== 'Show more') continue;
+      if (el.dataset.waExpLen === len) continue;                        // clicked before, nothing grew
+      el.dataset.waExpLen = len; el.click(); n++;
     }
   }
   return n;
@@ -146,7 +159,8 @@ def _normalise(raw: dict) -> dict:
     if pm and not phone:
         phone = "+" + pm.group(1)
     return {"id": raw.get("id"), "sender": sender, "phone": phone, "time": ts,
-            "text": text, "links": links, "outgoing": bool(raw.get("outgoing"))}
+            "text": text, "links": links, "outgoing": bool(raw.get("outgoing")),
+            "truncated": bool(raw.get("truncated"))}
 
 
 def read_visible(s: WASession, expand: bool = True) -> list[dict]:
@@ -156,7 +170,7 @@ def read_visible(s: WASession, expand: bool = True) -> list[dict]:
             for _ in range(12):                     # keep clicking until nothing is left to expand
                 if not s.page.evaluate(_JS_EXPAND):
                     break
-                time.sleep(0.45)
+                time.sleep(0.6)                     # let the next chunk render before re-reading
         except Exception:  # noqa: BLE001
             pass
     return [_normalise(r) for r in s.page.evaluate(_JS_EXTRACT)]

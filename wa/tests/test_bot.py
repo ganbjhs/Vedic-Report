@@ -43,11 +43,12 @@ class FakeChat:
         self.fail_next_send = 0
         self.opened: list[str] = []
 
-    def add(self, text, sender="Rahul", outgoing=False, with_id=True, when="10:00"):
+    def add(self, text, sender="Rahul", outgoing=False, with_id=True, when="10:00", truncated=False):
         self.n += 1
         self.msgs.append({"id": f"false_g@g.us_{self.n:04d}" if with_id else None,
                           "sender": sender, "phone": "", "time": when, "text": text,
-                          "links": [], "outgoing": outgoing})
+                          "links": [], "outgoing": outgoing, "truncated": truncated})
+        return self.msgs[-1]
 
     # ---- the three functions bot.py imports
     def read_visible(self, s, expand=True):
@@ -223,3 +224,54 @@ def test_recover_after_repeated_errors(world, monkeypatch):
             if b.errors >= b.max_errors:
                 b.recover()
     assert calls == [1]
+
+
+# --------------------------------------------------------------- the short-count bug (long lists)
+from bot import split_list  # noqa: E402
+
+
+def test_blank_lines_with_invisible_characters_still_split():
+    text = "one\n\ntwo\n \nthree\n\u00a0\nfour\n\u200b\nfive\n\t\n\nsix"
+    assert split_list(text) == ["one", "two", "three", "four", "five", "six"]
+
+
+def test_single_newlines_do_not_split():
+    assert split_list("line a\nline b\n\nline c") == ["line a\nline b", "line c"]
+
+
+def test_truncated_list_is_not_counted_until_read_more_finishes(world):
+    chat, b = world
+    chat.add("/start"); b.poll_once()
+    chat.add("1"); b.poll_once()
+    m = chat.add("\n\n".join(f"msg {i}" for i in range(14)), truncated=True)   # WhatsApp still shows "Read more"
+    b.poll_once()
+    assert b.lists == []                                # waited, not counted
+    m["text"] = "\n\n".join(f"msg {i}" for i in range(20)); m["truncated"] = False
+    b.poll_once()
+    assert len(b.lists) == 1 and len(b.lists[0]["messages"]) == 20
+    assert replies(chat)[-1].startswith("List 1: 20 messages (last: \u201cmsg 19\u2026\u201d)")
+    assert "cut this message off" not in replies(chat)[-1]
+
+
+def test_permanently_truncated_list_is_counted_with_a_warning(world):
+    chat, b = world
+    chat.add("/start"); b.poll_once()
+    chat.add("1"); b.poll_once()
+    chat.add("\n\n".join(f"msg {i}" for i in range(14)), truncated=True)
+    for _ in range(b.max_wait_polls + 1):
+        b.poll_once()
+    assert len(b.lists) == 1 and len(b.lists[0]["messages"]) == 14
+    assert "cut this message off" in replies(chat)[-1]
+
+
+def test_a_later_message_waits_behind_a_truncated_one(world):
+    chat, b = world
+    chat.add("/start"); b.poll_once()
+    chat.add("1"); b.poll_once()
+    m = chat.add("a\n\nb", truncated=True)
+    chat.add("c\n\nd")
+    b.poll_once()
+    assert b.lists == []                                # order preserved: nothing after the cut one is handled yet
+    m["truncated"] = False
+    b.poll_once()
+    assert [l["messages"] for l in b.lists] == [["a", "b"], ["c", "d"]]

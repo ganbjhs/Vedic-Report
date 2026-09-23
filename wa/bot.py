@@ -59,10 +59,16 @@ BOT = "🔹 "   # visible marker on every bot reply (easy to tell apart from you
 URL_RE = re.compile(r"https?://\S+", re.I)
 
 
+_ZW = "\u200b\u200c\u200d\u2060\ufeff"          # zero-width characters phones sneak into "blank" lines
+
+
 def split_list(text: str) -> list[str]:
-    """One WhatsApp message → individual messages, separated by blank lines."""
-    parts = re.split(r"\n[ \t]*\n+", text.strip())
-    return [p.strip() for p in parts if p.strip()]
+    """One WhatsApp message → individual messages, separated by blank lines.
+
+    A "blank" line may hold spaces, tabs, non-breaking spaces or zero-width
+    characters (copy-pasted lists do this) — it still separates messages."""
+    parts = re.split(r"\n(?:[^\S\n]|[" + _ZW + r"])*\n+", text.strip())
+    return [p.strip() for p in parts if p.strip(" \t\r\n" + _ZW)]
 
 
 def is_link_only(text: str) -> bool:
@@ -91,6 +97,8 @@ class Bot:
         self.last_cmd_at = time.time()
         self.seen: dict[str, float] = {}   # message key -> when first seen (bounded, see _trim_seen)
         self.retry: dict[str, int] = {}    # message key -> failed attempts
+        self.waited: dict[str, int] = {}   # message key -> polls spent waiting for "Read more" to finish
+        self.max_wait_polls = 3            # then the message is handled as it is, with a warning
         self.errors = 0                    # consecutive failed polls
         self.polls = 0
 
@@ -169,6 +177,7 @@ class Bot:
             for k in sorted(self.seen, key=self.seen.get)[: len(self.seen) - keep]:
                 self.seen.pop(k, None)
                 self.retry.pop(k, None)
+                self.waited.pop(k, None)
 
     def snapshot_seen(self):
         self._mark_seen(self.keys_for(read_visible(self.s, expand=False)))
@@ -220,6 +229,15 @@ class Bot:
                 if text:
                     print(f"[bot] ignored ({why}): {text[:50]!r} from {m.get('sender')!r}", flush=True)
                 continue
+            if m.get("truncated") and self.waited.get(k, 0) < self.max_wait_polls:
+                # WhatsApp still shows "Read more" on this bubble: the text is
+                # incomplete and counting it now would under-count the list.
+                # Leave it (and everything after it) unseen and try next poll.
+                self.waited[k] = self.waited.get(k, 0) + 1
+                for kk, _ in new[i:]:
+                    self.seen.pop(kk, None)
+                print(f"[bot] message still truncated (Read more) — waiting ({self.waited[k]}/{self.max_wait_polls})", flush=True)
+                break
             print(f"[bot] <- {text[:70]!r} from {m.get('sender')!r}", flush=True)
             try:
                 self.handle(text, m)
@@ -324,7 +342,11 @@ class Bot:
             items = split_list(text)
             self.lists.append({"messages": items, "link": None})
             need = ". Now send its link" if self.mode == 2 else ""
-            return self.say(f"List {len(self.lists)}: {len(items)} message{'s' if len(items) != 1 else ''}{need}. Next list, or /run.")
+            last = items[-1].splitlines()[0][:28] if items else ""
+            tail = f" (last: \u201c{last}\u2026\u201d)" if last else ""
+            warn = (" \u26a0 WhatsApp cut this message off (Read more) \u2014 if the count is short, /cancel and send it as smaller lists."
+                    if (m or {}).get("truncated") else "")
+            return self.say(f"List {len(self.lists)}: {len(items)} message{'s' if len(items) != 1 else ''}{tail}{need}. Next list, or /run.{warn}")
         # idle: ignore normal chatter
 
     def status_text(self) -> str:

@@ -61,7 +61,8 @@ wa_toolkit/
 ├─ packaging/            WAToolkit.spec (PyInstaller), build_windows.bat, build_mac.sh, installer.iss (Inno Setup)
 ├─ packaging/github-build.yml   GitHub Actions workflow (copy to .github/workflows/build.yml) – builds Windows installer + mac dmg
 ├─ README.md RULEBOOK.md BLUEPRINT.md CHECKPOINTS.md
-└─ test_links.py
+├─ test_links.py
+└─ tests/test_bot.py     bot loop + state machine against a fake chat (no browser)
 ```
 
 ## 3. Layer contracts (the redesignable core)
@@ -98,8 +99,9 @@ send_bulk_from_file(session, chat, file_path, text="", delay=1.0, tail=None) -> 
   time: datetime|None,     parsed from data-pre-plain-text  "[6:33 AM, 8/18/2026] Name: "
   text: str,               exact text (emoji kept, single "\n" per line break)
   links: [str],            hrefs + urls found in text
-  outgoing: bool }
-read_visible(session, expand=True) -> [msg]        (expand = click "Read more" until gone)
+  outgoing: bool,
+  truncated: bool }        WhatsApp still shows "Read more" on the bubble → text is incomplete
+read_visible(session, expand=True) -> [msg]        (expand = click "Read more" in bubbles, re-clicking while the text grows, ≤12 rounds × 0.6 s)
 read_history(session, max_messages=300, since=None, days=None) -> [msg]   (scrolls up)
 ```
 
@@ -131,7 +133,8 @@ simple:  login() close_browser() scan(days,n) send_lines(lines,text,delay) colle
          pick_file() groups() set_groups(list) sheets_ready() open_folder() stop() set_keep_browser(bool)
 recipes: list_tasks() get_task(n) save_task(n,json) delete_task(n) actions_help() run_task(n,varsJson)
 config:  get_config() save_config(json)
-bot:     bot_start(group, headed) bot_stop()
+bot:     bot_start(group, headed) bot_stop()   bot_status() → {running, lines, group, last_activity_s, uptime_s, exit_code, worker_busy}
+         bot_start raises while a job is running (the worker holds the profile).
 tools:   debug(chat)
 ```
 Worker: single thread, `jobs` queue, `job_<kind>(**payload)`; `silent` jobs (current_chat) don't touch status/log.
@@ -140,10 +143,16 @@ Bot is a **subprocess** (`bot.py` from source, `WAToolkit --bot` when frozen); s
 ### 3.8 Bot state machine (bot.py)
 ```
 idle ──/start──► mode ──"1"|"2"──► collect ──/run──► (execute) ──► idle
-collect: each non-command message = one list (split on blank lines);  mode 2: a link-only message attaches to the last list
-/status /cancel /target <name> /help work in any state.  Only the newest message is considered; own/outgoing ignored (ignore_own).
+collect: each non-command message = one list (split on blank lines — a blank line may contain spaces/NBSP/zero-width chars);  mode 2: a link-only message attaches to the last list
+         a `truncated` message is left unseen (with everything after it) for up to max_wait_polls polls; then counted with a ⚠ warning.
+         confirmation quotes the last message ("List 1: 20 messages (last: “…”)") so a short count is visible at once.
+/status /cancel /target <name> /help work in any state.  Every new message is handled in DOM order; own/outgoing ignored (ignore_own).
+owner: /start records the sender; while state != idle other senders are ignored except /status /help (lock_owner); job_ttl_seconds of silence → reset + notice.
+seen: dict key→time, bounded (3000). key = "id:<wa id>" | "noid:<time>:<sender>:<text[:60]>#<occurrence>".  burst_limit unseen at once → history, not commands.
+failure: handle() raises → that message and the rest of the batch are un-seen, retried next poll (2×); say() retries once after clearing overlays;
+         max_errors consecutive failed polls → recover(): page.reload, wait_logged_in, open_chat, snapshot_seen.
 execute: for i,list: for msg: send(msg [+ "\n"+link]) ; send(str(i))     → "Done." → snapshot seen
-Replies are prefixed BOT="🔹 " (short, no paragraphs).
+Replies are prefixed BOT="🔹 " (short, no paragraphs). Every ignored message is printed with its reason (the Bot tab's "details").
 ```
 
 ## 4. UI specification (ui-src/app.jsx)
@@ -154,7 +163,8 @@ Sidebar: brand, status pill (bot running / working / open chat / closed), nav
 
 - **Send**: banner "Target: <open chat>" (warn if none) · textarea (one message per line) · Load .txt · "Add under every message" · delay · big *Send to "<chat>"* (confirm count).
 - **Collect**: banner + *Save this group* · saved-group chips + "collect from all my saved groups" · days/max · Post/Comment/metrics checkboxes · *Scan open group for people* → sender chips (toggle) or typed names/numbers · *Collect links* → results table · Copy for Google Sheets (TSV) / Save CSV / Save to Google Sheet (if configured) / Open folder.
-- **Bot**: control group input · show-browser checkbox · Start/Stop · state banner · details toggle/copy · numbered how-to.
+- **Bot**: control group input · show-browser checkbox · Start/Stop · state banner (uptime; "printed nothing for N min"; exit code if it died) · details toggle/copy · numbered how-to.
+- While `bot.running`, Send / Collect / Advanced are shown behind a warning banner and their action buttons are disabled (`locked`) — the profile guard must never surface as an error toast.
 - **Advanced**: tabs Recipes (chips + vars + Run) · Edit JSON (task editor + actions cheat-sheet) · Tools/debug (login, close, keep-open, Debug selectors + copy) · Config (JSON editor).
 Design tokens in `styles.css` (`--brand #128c7e`, light/dark via `prefers-color-scheme`, radius 12, Inter/system font). Build: `cd ui-src && npm i && ./build.sh` → `ui/bundle.js|css`.
 
@@ -163,7 +173,7 @@ Design tokens in `styles.css` (`--brand #128c7e`, light/dark via `prefers-color-
 **Login (once)** `python wa.py login` / app *Open WhatsApp* → QR → profile saved in `wa_profile/`.
 **Send (simple)** user opens chat in WhatsApp window → app reads `current_chat()` → `send_lines` job → `send_text` per line.
 **Collect (simple)** `_need_chat()` → `read_history(days,max)` → filter `sender_matches` → `links_from_messages(kinds)` → dedupe → optional metrics → rows → save (Sheet/CSV/TSV).
-**Bot job** phone: `/start`→`2`→list→link→…→`/run`; bot: poll every 2 s `read_visible` (expand Read more) → newest unseen non-own message → `handle()` → replies; `execute()` sends and numbers; `snapshot_seen()` so its own output is never re-read.
+**Bot job** phone: `/start`→`2`→list→link→…→`/run`; bot: poll every 2 s `read_visible` (expand Read more) → every unseen non-own message, in order, from the job's owner → `handle()` → replies; `execute()` sends and numbers; `snapshot_seen()` so its own output is never re-read.
 **Recipe** `wa.py run name --var k=v` or Advanced → Recipes: `Engine.run(steps)`.
 
 ## 6. Data schemas
@@ -175,7 +185,8 @@ Design tokens in `styles.css` (`--brand #128c7e`, light/dark via `prefers-color-
   "collect": { "groups": [], "senders": [], "include_me": false, "days": 7, "max_messages": 400,
                "kinds": ["post","comment"], "platforms": [], "metrics": false, "metrics_delay": 4 },
   "sheets":  { "mode": "gspread|csv", "sheet_id": "", "worksheet": "links", "creds": "service_account.json", "csv_path": "links.csv" },
-  "bot":     { "group": "", "headless": true, "delay": 1.5, "poll": 2.0, "target": null, "ignore_own": true } }
+  "bot":     { "group": "", "headless": true, "delay": 1.5, "poll": 2.0, "target": null, "ignore_own": true,
+               "lock_owner": true, "job_ttl_seconds": 1800 } }
 ```
 **tasks.json** `{ "<name>": { "description": str, "vars": {…}, "steps": [ {"action": str, …} ] } }`
 **Sheet row** = HEADERS above. **Sender matching**: ≥7 digits → digits-suffix match; else case-insensitive contains (leading `~` ignored).
@@ -203,7 +214,7 @@ Design tokens in `styles.css` (`--brand #128c7e`, light/dark via `prefers-color-
 | New UI framework / look | `ui-src/` (rebuild bundle) | Api contract §3.7 |
 | Different desktop shell (Electron, Tauri) | replace `app.py` window code, talk to the same Worker via HTTP/IPC | Worker + jobs, contracts §3.1-3.6 |
 | Support another messenger | new `session/chat/reader` implementing §3.1-3.3 | links/sheets/engine/bot untouched |
-| New bot commands / flow | `bot.py handle()` + docs | `ignore_own`, newest-only, marker prefix, snapshot after execute |
+| New bot commands / flow | `bot.py handle()` + docs + `tests/test_bot.py` | `ignore_own`, in-order handling, owner lock, marker prefix, snapshot after execute |
 | New link platform | `PLATFORMS` in `wa/links.py` + `test_links.py` | classify() shape |
 | New output (Notion, Excel…) | new writer with `existing_urls()/append()` | HEADERS |
 | Node.js instead of Python | port §3 contracts; whatsapp-web.js gives §3.1-3.3 for free | schemas §6, bot state machine §3.8 |

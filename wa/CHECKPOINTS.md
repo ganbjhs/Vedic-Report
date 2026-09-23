@@ -44,3 +44,19 @@ of the build-out (2026-08-17 → 2026-08-18) so nothing is lost.
 *2026-08-18 15:52* · `checkpoints/004-macos-build-don-t-bundle-chromium-downlo.zip`
 
 - **modified:** `CHECKPOINTS.md`, `packaging/build_mac.sh`, `packaging/github-build.yml`, `wa/paths.py`, `wa/session.py`
+
+## 005 — bot handles every message in order, job locked to whoever sent /start, self-recovery + heartbeat; UI locks Send/Collect/Advanced while the bot owns the session; expander scoped to bubbles; tests/test_bot.py
+*2026-09-23 13:55* · `checkpoints/005-bot-handles-every-message-in-order-job-l.zip`
+
+- **added:** `.dockerignore`, `DEPLOY.md`, `Dockerfile`, `config.yaml`, `deploy-wa.sh`, `nginx-wa.conf`, `requirements-web.txt`, `server.py`, `tests/test_bot.py`
+- **modified:** `.gitignore`, `BLUEPRINT.md`, `CHECKPOINTS.md`, `README.md`, `RULEBOOK.md`, `app.py`, `bot.py`, `config.json`, `ui-src/app.jsx`, `ui-src/styles.css`, `ui/bundle.css`, `ui/bundle.js`, `wa/chat.py`, `wa/paths.py`, `wa/reader.py`, `wa/session.py`
+
+## 006 — long lists under-counted: chunk-aware Read more expander (re-click while text grows), truncated flag in message dict, bot waits for expansion then warns, blank lines with NBSP/zero-width chars split, confirmation quotes last message; docs
+*2026-09-23 13:56* · `checkpoints/006-long-lists-under-counted-chunk-aware-rea.zip`
+
+- **modified:** `BLUEPRINT.md`, `CHECKPOINTS.md`, `README.md`, `RULEBOOK.md`, `bot.py`, `tests/test_bot.py`, `wa/reader.py`
+
+## 007 — RULEBOOK rule 23: docs first, then code, then docs again; never override an earlier fix without checking its checkpoint/git history
+*2026-09-23 13:59* · `checkpoints/007-rulebook-rule-23-docs-first-then-code-th.zip`
+
+- **modified:** `CHECKPOINTS.md`, `RULEBOOK.md`

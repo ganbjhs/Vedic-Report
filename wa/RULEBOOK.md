@@ -12,7 +12,7 @@ person or AI editing it) must follow. Read this before changing anything.
 |---|---|---|---|
 | **Session** | `wa/session.py` | launching Chromium with the persistent login profile; every CSS selector (`SEL`); reading the open chat's name (`current_chat`); the "logged-in" check; headless user-agent | contain business logic; be launched twice on the same profile |
 | **Chat actions** | `wa/chat.py` | opening a chat by name (`open_chat`), typing/sending text (`send_text`), attaching files, the old line-by-line sender | read history; decide *what* to send |
-| **Reader** | `wa/reader.py` | turning the DOM into message dicts (`read_visible`, `read_history`), expanding "Read more", incoming/outgoing detection, timestamps | send anything; click anything except "Read more" |
+| **Reader** | `wa/reader.py` | turning the DOM into message dicts (`read_visible`, `read_history`), expanding "Read more" (chunk-aware), the `truncated` flag, incoming/outgoing detection, timestamps | send anything; click anything except "Read more" inside a message bubble |
 | **Links** | `wa/links.py` | URL cleaning + platform/kind classification (pure functions) | touch the browser |
 | **Sheets** | `wa/sheets.py` | Google Sheets / CSV output with de-duplication on `clean_url` | contain WhatsApp logic |
 | **Metrics** | `wa/metrics.py` | best-effort likes/comments/shares/views from the source platform | be required for anything else to work; claim "reach" for other people's posts |
@@ -20,7 +20,7 @@ person or AI editing it) must follow. Read this before changing anything.
 | **Paths** | `wa/paths.py` | where read-only resources vs writable data live (source vs frozen app) | be bypassed with `Path(__file__)` tricks elsewhere |
 | **CLI** | `wa.py` | power-user commands (`login/send/collect/read/metrics/debug/tasks/run`) | be required by end users |
 | **Desktop app** | `app.py` + `ui/` (React source in `ui-src/`) | the non-programmer experience: Send / Collect / Bot / Advanced; one worker thread owning Playwright; job queue; log | run Playwright from more than one thread; block the UI thread |
-| **Command bot** | `bot.py` | the phone-driven workflow (`/start`, 1/2, lists, `/run` …), running headless as its own process | react to its own messages; run while the app's browser is open on the same profile |
+| **Command bot** | `bot.py` | the phone-driven workflow (`/start`, 1/2, lists, `/run` …), running headless as its own process; who owns a job; recovering from a stuck page | react to its own messages; run while the app's browser is open on the same profile; drop a message it has not handled |
 | **Config** | `config.json` | every user-tunable value (profile dir, headless, delays, groups, senders, sheets, bot) | contain secrets other than the sheet id (credentials live in `service_account.json`) |
 | **Recipes** | `tasks.json`, `plugins/` | user-defined automations | require code changes to add a new job |
 | **Docs** | `README.md`, `RULEBOOK.md`, `BLUEPRINT.md`, `CHECKPOINTS.md` | truth about the project | fall behind the code (see rule 6) |
@@ -30,19 +30,23 @@ person or AI editing it) must follow. Read this before changing anything.
 
 ## 2. Strict rules — WhatsApp & the browser
 
-1. **One browser per login profile.** `wa_profile/` may be used by exactly one Chromium at a time. The app closes its window before starting the bot; the app refuses to open the browser while the bot runs. Never weaken this.
+1. **One browser per login profile.** `wa_profile/` may be used by exactly one Chromium at a time. The app closes its window before starting the bot; the app refuses to open the browser while the bot runs (and the UI locks Send / Collect / Advanced with a banner rather than letting the guard fire as an error); `bot_start` refuses while a job holds the browser. Never weaken this.
 2. **Every selector lives in `wa/session.py → SEL` or in the JS inside `wa/reader.py`.** No selector strings anywhere else. When WhatsApp changes its DOM, that is the only place to fix, and `Debug selectors` (Advanced → Tools) is the way to find out what changed.
 3. **Known DOM facts (Aug 2026)** — keep this list current when you learn something new:
    - messages: `#main [role="row"]` → bubble `[data-pre-plain-text="[6:33 AM, 8/18/2026] Sender: "]`, id from `[data-testid="conv-msg-<ID>"]`, text inside `.selectable-text`
    - `.message-in / .message-out` classes are gone → outgoing = a delivery tick aria-label (Delivered/Read/Sent/Pending) or a right-aligned bubble
    - emoji are `<img alt="…">` and single line-breaks are text `\n` → **never use `innerText`** for message text; walk nodes (see `textOf` in reader.py)
-   - long messages need **"Read more" clicked repeatedly** (≈3000 chars per click) until the button disappears
+   - long messages need **"Read more" clicked repeatedly** (≈3000 chars per click) until the button disappears; WhatsApp may reuse the same button node between chunks, so "click each element once" is wrong — re-click while the bubble's text keeps growing, stop when a click changed nothing (`data-wa-exp-len` in reader.py)
+   - a bubble that still shows "Read more" is **incomplete**: the reader flags it `truncated`, and the bot must not count a list from it until the flag clears (up to `max_wait_polls`), then count with a warning
+   - system notices (the safety banner when someone joins, "security code changed") also carry a "Read more"/"Learn more" link that **opens a panel and never disappears** — only click "Read more" inside a bubble that has `[data-pre-plain-text]`
    - header: line 1 = chat name, `span[title]` = members list (not the name)
    - search box: `input[data-tab="3"]`; composer: `#main footer div[contenteditable][data-tab="10"]` (Lexical); chat list: `#pane-side [data-testid="cell-frame-title"] span[title]`
 4. **Headless is allowed only with a real desktop user-agent** (set in `WASession`) and only after a headed login has been saved. If headless can't see the chat list, fall back to headed; never loop forever.
 5. **Never type into the search box when the target chat is already open** (`open_chat` checks `current_chat()` first) — search-typing every poll cycle is a bug, not a retry strategy.
 6. **Be gentle with WhatsApp**: minimum 1 s between sent messages (`delay`, default 1.5), no bulk blasts to strangers, only your own chats/groups. Automation can get a number banned; the tool must never encourage abuse.
-7. **The bot processes only the newest message** in the control group, only from *other* people (`ignore_own`), and marks its own replies with `BOT` (`🔹 `). It must never answer itself; a self-reply loop is a release-blocking bug.
+7. **The bot handles every new message, in order**, only from *other* people (`ignore_own`), and marks its own replies with `BOT` (`🔹 `). It must never answer itself; a self-reply loop is a release-blocking bug. A message is "seen" by WhatsApp's id when the DOM gives one, else by time+sender+text plus an occurrence index — never by text alone. A message whose handling fails is un-seen and retried (twice), never silently dropped. More unseen messages than `burst_limit` in one poll is a re-render, not commands.
+7a. **A job belongs to whoever sent `/start`** (`lock_owner`). Until `/run`, `/cancel` or `job_ttl_seconds` of silence, other senders are ignored (logged with the reason); `/status` and `/help` are open to all. Group-name matching is on letters+digits only (emoji vanish from `innerText`) and symmetric.
+7b. **The bot heals itself before it asks for help**: `max_errors` failed polls in a row → reload the page, re-open the group, snapshot seen. It must still surface the problem: heartbeat/exit code in `bot_status()`, shown on the Bot tab.
 8. **Read before you act**: any job that acts on "the open chat" must call `current_chat()` and refuse (`_need_chat`) when nothing is open.
 
 ## 3. Strict rules — data & privacy
@@ -67,11 +71,18 @@ person or AI editing it) must follow. Read this before changing anything.
 20. **Every behaviour change updates the docs in the same checkpoint**: README (how to use), BLUEPRINT (how it works / DOM facts / contracts), RULEBOOK (if a rule changes).
 21. **Selector fix = verify live first** (Debug selectors output or a browser probe), then patch `SEL`/reader JS, then checkpoint. No guessing selectors blind.
 22. **Releases** are built by `packaging/` scripts or the GitHub Action, never by hand-copying files. Version bump goes in `packaging/installer.iss` (`AppVersion`) and CHECKPOINTS.
+23. **Docs first, then code, then docs again — no exceptions.** Before changing *any* behaviour (a person or an AI alike):
+    1. read `RULEBOOK.md`, `BLUEPRINT.md`, `README.md` and `CHECKPOINTS.md`, and the `git log` / checkpoint entry for every line you are about to touch — every existing line was put there to fix something (see H10, H11, 005, 006); understand *why* before you change it;
+    2. if those docs have fallen behind the code that is already committed, bring them in line with it **first** and checkpoint that on its own;
+    3. only then make the change, keeping every earlier fix intact unless the docs say it is superseded — and say so in CHECKPOINTS when you do;
+    4. update README / BLUEPRINT / RULEBOOK for the new behaviour and checkpoint again.
+    A change that silently overrides an earlier fix (006 undid part of H11 without noticing) is a bug even when it works, and must be reverted or re-done through this rule.
 
 ## 6. Definition of done for any task
 
 - works from source (`python app.py` / `python bot.py`) **and** does not break the frozen-app path (`wa/paths.py`)
-- unit tests still pass (`python test_links.py`, bot/engine offline tests)
+- unit tests still pass (`python test_links.py`, `python3 -m pytest tests -q` for the bot — fake chat, no browser)
 - no new selector strings outside `wa/session.py` / `wa/reader.py`
+- rule 23 followed: docs read and brought up to date *before* the change, updated again *after* it, earlier fixes checked against CHECKPOINTS/git log
 - README / BLUEPRINT updated
 - `checkpoint.py save` done

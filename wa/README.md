@@ -231,10 +231,32 @@ From your phone, in the group: `/start` → reply `1` (messages only) or `2`
 **blank line between messages** (mode 2: send the list's link as the next
 message) → `/run`. The bot sends list 1 message by message, then `1`, list 2 …
 then `2`, etc. `/status`, `/cancel`, `/target Other Chat`, `/help`. Bot replies
-start with 🤖. Only one browser can use the login at a time, so the app closes
+start with 🔹. Only one browser can use the login at a time, so the app closes
 its WhatsApp window when the bot starts (and vice-versa: stop the bot before
-using Send/Collect in the app). If headless can't see WhatsApp on your machine,
-start once with `--headed`.
+using Send/Collect in the app — those pages are locked with a banner while the
+bot runs). If headless can't see WhatsApp on your machine, start once with
+`--headed`.
+
+**Who may drive it.** A job belongs to whoever sent `/start`. Until it ends
+(`/run`, `/cancel`, or 30 min of silence) other people's messages in the group
+are ignored, so someone added to the group cannot turn their "hi" into a list.
+`/status` and `/help` work for everyone. (`bot.lock_owner`, `bot.job_ttl_seconds`
+in `config.json`.)
+
+**Long lists.** WhatsApp cuts long messages behind "Read more"; the bot expands
+them chunk by chunk before counting, and waits a few polls if a message is still
+cut. The confirmation quotes the last message — `List 1: 20 messages (last:
+“…”)` — so you can see at once whether the whole list arrived. If it says ⚠ the
+message was cut off, `/cancel` and send it as two or three smaller lists. A
+blank line between messages may contain spaces or invisible characters; it
+still counts as a separator.
+
+**What it does on its own.** Every new message is handled in order — two
+messages sent quickly, or a command sent while the bot is still typing, are
+not dropped. A reply that fails is retried; after several failed polls in a row
+the bot reloads WhatsApp Web and re-opens the group. The Bot tab shows uptime, a
+warning when the bot has printed nothing for a while, and the exit code if it
+stopped by itself; *show details* lists every ignored message with the reason.
 
 ## UI source (`ui-src/`)
 

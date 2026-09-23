@@ -60,3 +60,13 @@ of the build-out (2026-08-17 → 2026-08-18) so nothing is lost.
 *2026-09-23 13:59* · `checkpoints/007-rulebook-rule-23-docs-first-then-code-th.zip`
 
 - **modified:** `CHECKPOINTS.md`, `RULEBOOK.md`
+
+## 008 — owner lock guards list content only: commands open to all, @mention bypasses the lock, /ping liveness check; docs
+*2026-09-23 15:14* · `checkpoints/008-owner-lock-guards-list-content-only-comm.zip`
+
+- **modified:** `BLUEPRINT.md`, `CHECKPOINTS.md`, `README.md`, `RULEBOOK.md`, `bot.py`, `tests/test_bot.py`
+
+## 009 — frozen headless tab: dead_reason()/row_stats() in session, heartbeat reloads on dead page or 15 min idle silence, logs rows/parsed/last + unparsed row sample
+*2026-09-23 15:22* · `checkpoints/009-frozen-headless-tab-dead-reason-row-stat.zip`
+
+- **modified:** `BLUEPRINT.md`, `CHECKPOINTS.md`, `README.md`, `RULEBOOK.md`, `bot.py`, `tests/test_bot.py`, `wa/session.py`

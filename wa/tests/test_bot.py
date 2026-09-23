@@ -76,6 +76,9 @@ class FakeSession:
 
     def dismiss_dialogs(self): return True
     def clear_overlays(self): return 0
+    dead = ""
+    def dead_reason(self): return self.dead
+    def row_stats(self): return {"rows": len(self.chat.msgs), "parsed": len(self.chat.msgs), "last": "", "sample": ""}
 
 
 @pytest.fixture
@@ -168,12 +171,31 @@ def test_other_people_cannot_hijack_an_open_job(world):
     chat.add("1", sender="Rahul"); b.poll_once()
     chat.add("hi everyone!", sender="New Member"); b.poll_once()
     assert b.lists == []                # the newcomer's chatter is not a list
-    chat.add("/cancel", sender="New Member"); b.poll_once()
-    assert b.state == "collect"         # nor can they cancel it
     chat.add("/status", sender="New Member"); b.poll_once()
     assert replies(chat)[-1].startswith("Mode: messages only (job by Rahul)")
     chat.add("line one\n\nline two", sender="Rahul"); b.poll_once()
     assert len(b.lists) == 1
+    chat.add("@Bot a\n\nb", sender="New Member"); b.poll_once()
+    assert len(b.lists) == 2            # tagging the bot overrides the lock
+    chat.add("/cancel", sender="New Member"); b.poll_once()
+    assert b.state == "idle"            # commands are open to everyone — the group is never locked out
+
+
+def test_commands_from_anyone_and_ping(world):
+    chat, b = world
+    chat.add("/start", sender="Rahul"); b.poll_once()
+    chat.add("2", sender="Priya"); b.poll_once()          # a command from someone else still counts
+    assert b.state == "collect" and b.mode == 2
+    chat.add("@Bot /ping", sender="Someone"); b.poll_once()
+    assert replies(chat)[-1].startswith("pong · state=collect · owner=Rahul")
+
+
+def test_strip_mentions():
+    from bot import strip_mentions
+    assert strip_mentions("@Bot /start") == ("/start", True)
+    assert strip_mentions("@919876543210 @Bot  hello\n\nworld") == ("hello\n\nworld", True)
+    assert strip_mentions("/start") == ("/start", False)
+    assert strip_mentions("mail me at x@y.com") == ("mail me at x@y.com", False)
 
 
 def test_job_is_free_again_after_it_ends(world):
@@ -275,3 +297,39 @@ def test_a_later_message_waits_behind_a_truncated_one(world):
     m["truncated"] = False
     b.poll_once()
     assert [l["messages"] for l in b.lists] == [["a", "b"], ["c", "d"]]
+
+
+# --------------------------------------------------------------- the frozen-tab bug ("alive, 28 msgs visible" for ever)
+def test_dead_page_triggers_reload(world):
+    chat, b = world
+    calls = []
+    b.recover = lambda: calls.append("reload")
+    b.s.dead = "Computer not connected"
+    b.polls = 29                                       # the heartbeat runs every 30th poll
+    b.poll_once()
+    assert calls == ["reload"]
+
+
+def test_idle_and_quiet_for_too_long_triggers_reload(world):
+    chat, b = world
+    calls = []
+    b.recover = lambda: calls.append("reload")
+    b.last_new_at -= 16 * 60
+    b.polls = 29
+    b.poll_once()
+    assert calls == ["reload"]
+    calls.clear()
+    b.last_new_at = time.time(); b.polls = 29
+    b.poll_once()
+    assert calls == []                                 # recently active: left alone
+
+
+def test_open_job_is_not_interrupted_by_the_idle_reload(world):
+    chat, b = world
+    calls = []
+    b.recover = lambda: calls.append("reload")
+    chat.add("/start"); b.poll_once()
+    b.last_new_at -= 16 * 60
+    b.polls = 29
+    b.poll_once()
+    assert calls == []

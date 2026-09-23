@@ -237,11 +237,12 @@ using Send/Collect in the app — those pages are locked with a banner while the
 bot runs). If headless can't see WhatsApp on your machine, start once with
 `--headed`.
 
-**Who may drive it.** A job belongs to whoever sent `/start`. Until it ends
-(`/run`, `/cancel`, or 30 min of silence) other people's messages in the group
-are ignored, so someone added to the group cannot turn their "hi" into a list.
-`/status` and `/help` work for everyone. (`bot.lock_owner`, `bot.job_ttl_seconds`
-in `config.json`.)
+**Who may drive it.** Lists are taken from whoever sent `/start` until the job
+ends (`/run`, `/cancel`, or 30 min of silence), so someone added to the group
+cannot turn their "hi" into a list. Commands (`/start`, `/cancel`, `1`, `2` …)
+work from anyone, and tagging the bot — `@Bot /start`, or `@Bot` in front of a
+list — always gets through. `/ping` answers with the bot's state if you wonder
+whether it is listening. (`bot.lock_owner`, `bot.job_ttl_seconds` in `config.json`.)
 
 **Long lists.** WhatsApp cuts long messages behind "Read more"; the bot expands
 them chunk by chunk before counting, and waits a few polls if a message is still
@@ -254,7 +255,10 @@ still counts as a separator.
 **What it does on its own.** Every new message is handled in order — two
 messages sent quickly, or a command sent while the bot is still typing, are
 not dropped. A reply that fails is retried; after several failed polls in a row
-the bot reloads WhatsApp Web and re-opens the group. The Bot tab shows uptime, a
+the bot reloads WhatsApp Web and re-opens the group. It also reloads when
+WhatsApp Web shows it has lost the phone link ("Computer not connected", a
+Refresh screen…) and, while idle, whenever nothing new has appeared for 15
+minutes — a headless tab left alone can freeze while still looking alive. The Bot tab shows uptime, a
 warning when the bot has printed nothing for a while, and the exit code if it
 stopped by itself; *show details* lists every ignored message with the reason.
 

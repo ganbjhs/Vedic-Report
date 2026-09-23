@@ -79,6 +79,8 @@ WASession(profile_dir=".\/wa_profile", headless=False, slow_mo=0)   # context ma
   .new_tab()               -> Page (same login; used for metrics)
   .dump_editors()          -> [ {tag, attrs…} ]  (debug)
   .screenshot(path)
+  .dead_reason()           -> str  ('' when live; else the banner text: phone link lost / refresh / log in / other computer)
+  .row_stats()             -> {rows, parsed, last, sample}  (#main rows vs rows the reader can parse; sample = one unparsed row's HTML)
 SEL = { search_box, composer, chat_title, logged_in, qr, msg_*, attach_btn, file_input, send_btn }  # lists of CSS alternatives
 ```
 Headless: sets a desktop Chrome UA and tries `channel="chromium"` (new headless), falls back to default.
@@ -147,10 +149,11 @@ collect: each non-command message = one list (split on blank lines — a blank l
          a `truncated` message is left unseen (with everything after it) for up to max_wait_polls polls; then counted with a ⚠ warning.
          confirmation quotes the last message ("List 1: 20 messages (last: “…”)") so a short count is visible at once.
 /status /cancel /target <name> /help work in any state.  Every new message is handled in DOM order; own/outgoing ignored (ignore_own).
-owner: /start records the sender; while state != idle other senders are ignored except /status /help (lock_owner); job_ttl_seconds of silence → reset + notice.
+owner: /start records the sender; while state != idle other senders' plain (non-command, untagged) messages are ignored (lock_owner); commands and "@…"-tagged messages always count (strip_mentions); job_ttl_seconds of silence → reset + notice. /ping → "pong · state · owner · polls".
 seen: dict key→time, bounded (3000). key = "id:<wa id>" | "noid:<time>:<sender>:<text[:60]>#<occurrence>".  burst_limit unseen at once → history, not commands.
 failure: handle() raises → that message and the rest of the batch are un-seen, retried next poll (2×); say() retries once after clearing overlays;
          max_errors consecutive failed polls → recover(): page.reload, wait_logged_in, open_chat, snapshot_seen.
+heartbeat (every 30 polls): prints msgs/rows/parsed/state/owner/quiet-minutes/last message; dead_reason() → recover(); idle and quiet ≥ idle_reload_minutes (15) → recover(); one UNPARSED ROW SAMPLE per run.
 execute: for i,list: for msg: send(msg [+ "\n"+link]) ; send(str(i))     → "Done." → snapshot seen
 Replies are prefixed BOT="🔹 " (short, no paragraphs). Every ignored message is printed with its reason (the Bot tab's "details").
 ```

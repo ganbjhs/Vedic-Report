@@ -71,6 +71,23 @@ def split_list(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip(" \t\r\n" + _ZW)]
 
 
+_MENTION_RE = re.compile(r"^(?:@\S+[ \t]*)+")
+
+
+def strip_mentions(text: str) -> tuple[str, bool]:
+    """'@Bot /start' -> ('/start', True). Tagging the bot is an explicit request:
+    it bypasses the job-owner lock, whoever sends it."""
+    m = _MENTION_RE.match(text.strip())
+    if not m:
+        return text, False
+    return text.strip()[m.end():].strip(), True
+
+
+def is_command(text: str) -> bool:
+    low = text.strip().lower()
+    return low.startswith("/") or low in ("1", "2")
+
+
 def is_link_only(text: str) -> bool:
     t = text.strip()
     return bool(URL_RE.fullmatch(t)) or (len(t.split()) == 1 and t.lower().startswith(("http://", "https://", "www.")))
@@ -101,6 +118,9 @@ class Bot:
         self.max_wait_polls = 3            # then the message is handled as it is, with a warning
         self.errors = 0                    # consecutive failed polls
         self.polls = 0
+        self.last_new_at = time.time()     # when a new message was last seen
+        self.idle_reload_minutes = 15      # idle + nothing new for this long -> reload the page (stale tab)
+        self._sample_shown = False
 
     # ---------------------------------------------------------------- io
     def say(self, text: str):
@@ -209,11 +229,29 @@ class Bot:
         keys = self.keys_for(msgs)
         self.polls += 1
         if self.polls % 30 == 0:
-            print(f"[bot] alive, {len(msgs)} msgs visible, state={self.state}, owner={self.owner!r}", flush=True)
+            st = self.s.row_stats()
+            quiet = int((time.time() - self.last_new_at) // 60)
+            print(f"[bot] alive, {len(msgs)} msgs visible (rows={st.get('rows')} parsed={st.get('parsed')}), "
+                  f"state={self.state}, owner={self.owner!r}, quiet={quiet}m, last={st.get('last', '')!r}", flush=True)
+            if st.get("sample") and not self._sample_shown:
+                # rows the reader cannot parse: WhatsApp changed its DOM. Print one
+                # so the fix (reader.py, rule 2/21) can be made from the log.
+                self._sample_shown = True
+                print(f"[bot] UNPARSED ROW SAMPLE: {st['sample']}", flush=True)
+            dead = self.s.dead_reason()
+            if dead:
+                print(f"[bot] page is not live: {dead!r} — reloading", flush=True)
+                self.recover()
+                return
+            if self.state == "idle" and quiet >= self.idle_reload_minutes:
+                print(f"[bot] nothing new for {quiet} min while idle — reloading to be safe", flush=True)
+                self.recover()
+                return
         self.expire_job()
         new = [(k, m) for k, m in zip(keys, msgs) if k not in self.seen]
         if not new:
             return
+        self.last_new_at = time.time()
         if len(new) > self.burst_limit:
             # A reload or re-render shows the whole window as "new". Commands
             # from before are history; only the tail could be live, and there
@@ -223,8 +261,8 @@ class Bot:
             return
         for i, (k, m) in enumerate(new):
             self.seen[k] = time.time()
-            text = (m.get("text") or "").strip()
-            why = self.skip_reason(m, text)
+            text, tagged = strip_mentions((m.get("text") or "").strip())
+            why = self.skip_reason(m, text, tagged)
             if why:
                 if text:
                     print(f"[bot] ignored ({why}): {text[:50]!r} from {m.get('sender')!r}", flush=True)
@@ -257,19 +295,20 @@ class Bot:
                 raise
         self._trim_seen()
 
-    def skip_reason(self, m: dict, text: str) -> str | None:
+    def skip_reason(self, m: dict, text: str, tagged: bool = False) -> str | None:
         if not text:
             return "no text"                      # media-only or system row
         if self.ignore_own and m.get("outgoing"):
             return "own message"
         if text.startswith(BOT.strip()):
             return "bot reply"
-        if self.lock_owner and self.owner and self.state != "idle":
+        # The owner lock guards LIST CONTENT only: a newcomer's "hi" must not
+        # become a list. Commands are open to everyone, and so is anything that
+        # tags the bot — the group must never be locked out of its own bot.
+        if self.lock_owner and self.owner and self.state != "idle" and not tagged and not is_command(text):
             sender = m.get("sender") or ""
-            low = text.lower()
-            if sender and self._norm(sender) != self._norm(self.owner) \
-                    and not low.startswith(("/status", "/help")):
-                return f"job belongs to {self.owner!r}"
+            if sender and self._norm(sender) != self._norm(self.owner):
+                return f"job belongs to {self.owner!r} (tag the bot to override)"
         return None
 
     def expire_job(self):
@@ -288,6 +327,7 @@ class Bot:
             self.s.dismiss_dialogs()
             open_chat(self.s, self.group)
             self.snapshot_seen()
+            self.last_new_at = time.time()
             print("[bot] recovered", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[bot] recovery failed: {type(e).__name__}: {e}", flush=True)
@@ -299,7 +339,10 @@ class Bot:
         if low.startswith("/help"):
             return self.say("/start – new job\n1 or 2 – messages only / messages + link\n"
                             "then send lists (blank line between messages; in mode 2 send the link after each list)\n"
-                            "/run – send everything\n/status · /cancel · /target <chat>")
+                            "/run – send everything\n/status · /cancel · /target <chat> · /ping\n"
+                            "Lists are taken from whoever sent /start; tag me (@…) to send one as someone else.")
+        if low.startswith("/ping"):
+            return self.say(f"pong · state={self.state} · owner={self.owner or '-'} · polls={self.polls}")
         if low.startswith("/cancel"):
             self.reset()
             return self.say("Cleared. Send /start to begin again.")
@@ -315,6 +358,7 @@ class Bot:
             self.reset()
             self.state = "mode"
             self.owner = (m or {}).get("sender") or None
+            print(f"[bot] job owner = {self.owner!r}", flush=True)
             return self.say("New job. Reply 1 for messages only, 2 for messages + link.")
         if low.startswith("/run"):
             if self.state != "collect" or not self.lists:

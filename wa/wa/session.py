@@ -298,6 +298,49 @@ class WASession:
             log(f"[wa] {n} floating popover(s) were covering the page — clicks let through")
         return n
 
+    # -- liveness ---------------------------------------------------------
+    # A headless WhatsApp Web tab left alone for long enough ends up in one of
+    # a few dead states that look perfectly "alive" to a DOM poll: the phone
+    # link dropped ("Computer not connected", "Trying to reach phone"), a
+    # "Refresh" / "Log in" screen, or "WhatsApp is open on another computer".
+    # Nothing new ever renders, so a bot polling it sees the same N messages
+    # for ever. This probe names that state so the caller can reload.
+    DEAD_TEXTS = ("computer not connected", "phone not connected", "trying to reach phone",
+                  "trying to reach your phone", "make sure your phone", "open on another computer",
+                  "click to reload", "reload whatsapp", "refresh whatsapp", "log in to whatsapp",
+                  "couldn't load", "connection lost", "reconnecting")
+
+    def dead_reason(self) -> str:
+        """'' when the page looks live, else the banner/dialog text that says it is not."""
+        js = """(needles) => {
+          const pick = (sel) => Array.from(document.querySelectorAll(sel)).map(e => (e.innerText || '').trim()).filter(Boolean);
+          const texts = [].concat(pick('[role="alert"]'), pick('[role="dialog"][aria-modal="true"]'),
+                                  pick('#side header'), pick('#side [role="button"]'),
+                                  pick('[data-testid*="alert" i]'), pick('[data-icon="alert-phone"], [data-icon="alert-computer"]'));
+          if (!document.querySelector('#pane-side, #side')) texts.push('NO_CHAT_LIST ' + (document.body.innerText || '').slice(0, 200));
+          for (const t of texts) { const low = t.toLowerCase(); for (const n of needles) if (low.includes(n)) return t.slice(0, 160); }
+          if (texts.some(t => t.startsWith('NO_CHAT_LIST'))) return texts.find(t => t.startsWith('NO_CHAT_LIST'));
+          return ''; }"""
+        try:
+            return self.page.evaluate(js, list(self.DEAD_TEXTS)) or ""
+        except Exception as e:  # noqa: BLE001  page mid-navigation or gone
+            return f"page not answering: {type(e).__name__}"
+
+    def row_stats(self) -> dict:
+        """How many message rows the open chat renders vs how many the reader can parse —
+        when these drift apart WhatsApp changed its DOM (fix in reader.py, rule 2)."""
+        js = """() => { const main = document.querySelector('#main'); if (!main) return {rows: -1, parsed: -1, last: ''};
+          const rows = Array.from(main.querySelectorAll('[role="row"]'));
+          const parsed = rows.filter(r => r.querySelector('[data-pre-plain-text]') || r.querySelector('[data-testid^="conv-msg-"]'));
+          const last = parsed.length ? (parsed[parsed.length - 1].innerText || '').replace(/\s+/g, ' ').slice(0, 60) : '';
+          const unparsed = rows.filter(r => !parsed.includes(r) && (r.innerText || '').trim().length > 40);
+          return {rows: rows.length, parsed: parsed.length, last,
+                  sample: unparsed.length ? unparsed[unparsed.length - 1].outerHTML.slice(0, 600) : ''}; }"""
+        try:
+            return self.page.evaluate(js) or {}
+        except Exception:  # noqa: BLE001
+            return {}
+
     def new_tab(self) -> Page:
         """A second tab in the same logged-in profile (used for metrics scraping)."""
         return self.ctx.new_page()
